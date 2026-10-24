@@ -1,0 +1,21 @@
+name: LuciolaRadar
+options:
+  bundleIdPrefix: com.kapp.luciola.demo
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  LuciolaRadar:
+    type: application
+    platform: iOS
+    sources:
+      - path: LuciolaRadar
+      - path: ../../bindings/luciola-swift/luciola_uniffi.swift
+    dependencies:
+      - framework: ../../bindings/luciola-swift/LuciolaUniFFI.xcframework
+        embed: false
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
