@@ -45,12 +45,23 @@ export function isVirtualNic(name: string): boolean;
  */
 export function isPhysicalNic(name: string): boolean;
 
+/**
+ * Render a standard vector SVG QR code string for HTML/Web/Mobile display.
+ */
+export function renderQrSvg(content: string): string | null;
+
+/**
+ * Render a UTF-8 compact terminal QR code with proper dark terminal optical contrast.
+ */
+export function renderQrAscii(content: string): string | null;
+
 export interface JsDeviceMeta {
   deviceType: 'mobile' | 'tablet' | 'laptop' | 'desktop' | 'server' | 'wsl' | 'unknown';
   icon: string;
   os: string;
   arch: string;
   model?: string;
+  hostname?: string;
 }
 
 /**

@@ -356,16 +356,18 @@ impl DeviceDetector {
                 os: "Linux (WSL)".to_string(),
                 arch,
                 model: Some("WSL2 Virtual Machine".to_string()),
+                hostname: Self::friendly_computer_name(),
             };
         }
 
         let (device_type, model) = match os.as_str() {
             "macos" => {
-                let model = Self::macos_model();
-                let dtype = if let Some(ref m) = model {
-                    if m.contains("MacBook") {
+                let raw_model = Self::macos_model();
+                let friendly_model = raw_model.as_deref().map(Self::humanize_macos_model);
+                let dtype = if let Some(ref m) = raw_model {
+                    if m.contains("MacBook") || m.starts_with("Mac14,2") || m.starts_with("Mac15,2") {
                         DeviceType::Laptop
-                    } else if m.contains("Macmini") || m.contains("iMac") || m.contains("MacPro") || m.contains("MacStudio") {
+                    } else if m.contains("Macmini") || m.contains("iMac") || m.contains("MacPro") || m.contains("MacStudio") || m.starts_with("Mac16,") {
                         DeviceType::Desktop
                     } else {
                         DeviceType::Desktop
@@ -373,7 +375,7 @@ impl DeviceDetector {
                 } else {
                     DeviceType::Desktop
                 };
-                (dtype, model)
+                (dtype, friendly_model)
             }
             "linux" => {
                 let model = Self::linux_model();
@@ -386,11 +388,67 @@ impl DeviceDetector {
             _ => (DeviceType::Unknown, None),
         };
 
+        let hostname = Self::friendly_computer_name();
+
         DeviceMeta {
             device_type,
             os,
             arch,
             model,
+            hostname,
+        }
+    }
+
+    /// Retrieve the friendly device nickname / computer name (e.g. "ke的Mac mini").
+    pub fn friendly_computer_name() -> Option<String> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = std::process::Command::new("scutil").arg("--get").arg("ComputerName").output() {
+                if output.status.success() {
+                    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !s.is_empty() {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new("hostname").output() {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+
+        std::env::var("COMPUTERNAME").ok().filter(|s| !s.is_empty())
+    }
+
+    /// Map raw Apple Model Identifiers (e.g. `Mac16,11`, `MacBookPro18,1`) to friendly product names.
+    fn humanize_macos_model(raw: &str) -> String {
+        if raw.starts_with("MacBookPro") {
+            "MacBook Pro".to_string()
+        } else if raw.starts_with("MacBookAir") || raw.starts_with("Mac14,2") || raw.starts_with("Mac15,2") {
+            "MacBook Air".to_string()
+        } else if raw.starts_with("MacBook") {
+            "MacBook".to_string()
+        } else if raw.starts_with("Macmini") || raw == "Mac16,10" || raw == "Mac16,11" || raw == "Mac14,3" || raw == "Mac14,12" {
+            "Mac mini".to_string()
+        } else if raw.starts_with("iMac") || raw == "Mac15,4" || raw == "Mac15,5" {
+            "iMac".to_string()
+        } else if raw.starts_with("MacStudio") || raw == "Mac14,13" || raw == "Mac14,14" {
+            "Mac Studio".to_string()
+        } else if raw.starts_with("MacPro") || raw == "Mac14,8" {
+            "Mac Pro".to_string()
+        } else if raw.starts_with("Mac16,") {
+            "Mac (M4)".to_string()
+        } else if raw.starts_with("Mac15,") {
+            "Mac (M3)".to_string()
+        } else if raw.starts_with("Mac14,") {
+            "Mac (M2)".to_string()
+        } else {
+            raw.to_string()
         }
     }
 

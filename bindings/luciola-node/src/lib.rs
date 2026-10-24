@@ -63,6 +63,29 @@ pub fn is_physical_nic(name: String) -> bool {
     is_physical_interface_name(&name)
 }
 
+/// Render a standard vector SVG QR code string for HTML/Web/Mobile display.
+#[napi]
+pub fn render_qr_svg(content: String) -> Option<String> {
+    use qrcode::QrCode;
+    let code = QrCode::new(content.as_bytes()).ok()?;
+    let svg = code.render::<qrcode::render::svg::Color>().build();
+    Some(svg)
+}
+
+/// Render a UTF-8 compact terminal QR code with proper dark terminal optical contrast.
+#[napi]
+pub fn render_qr_ascii(content: String) -> Option<String> {
+    use qrcode::render::unicode;
+    use qrcode::QrCode;
+    let code = QrCode::new(content.as_bytes()).ok()?;
+    let string = code
+        .render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .build();
+    Some(string)
+}
+
 /// Device hardware and platform identity.
 #[napi(object)]
 #[derive(Clone)]
@@ -72,6 +95,7 @@ pub struct JsDeviceMeta {
     pub os: String,
     pub arch: String,
     pub model: Option<String>,
+    pub hostname: Option<String>,
 }
 
 /// Detect the current local device hardware profile, OS, and form factor.
@@ -84,6 +108,7 @@ pub fn get_device_meta() -> JsDeviceMeta {
         os: meta.os,
         arch: meta.arch,
         model: meta.model,
+        hostname: meta.hostname,
     }
 }
 
@@ -145,6 +170,9 @@ impl DiscoverySession {
                     if let Some(ref m) = d.model {
                         dev.set_named_property("model", m)?;
                     }
+                    if let Some(ref h) = d.hostname {
+                        dev.set_named_property("hostname", h)?;
+                    }
                     obj.set_named_property("device", dev)?;
                 }
                 Ok(vec![obj])
@@ -198,6 +226,7 @@ impl DiscoverySession {
                                         os: d.os,
                                         arch: d.arch,
                                         model: d.model,
+                                        hostname: d.hostname,
                                     });
                                     let record = JsPeerRecord {
                                         node_id: p.node_id,

@@ -156,15 +156,17 @@ pub struct DiscoveryConfig {
 
 impl Default for DiscoveryConfig {
     fn default() -> Self {
+        let meta = luciola_net::DeviceDetector::detect();
+        let default_name = meta.hostname.clone().unwrap_or_else(|| "Luciola Node".to_string());
         Self {
             self_profile: Profile {
                 node_id: "anonymous".to_string(),
-                name: "Luciola Node".to_string(),
+                name: default_name,
                 profile_rev: 1,
                 addresses: Vec::new(),
                 udp_port: 17878,
                 tcp_port: 17879,
-                device: Some(luciola_net::DeviceDetector::detect()),
+                device: Some(meta),
             },
             listen_port: 17878,
             broadcast_port: 17878,

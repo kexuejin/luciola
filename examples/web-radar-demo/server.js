@@ -88,6 +88,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/qr.svg') {
+    const targetUrl = url.searchParams.get('url') || (lanIp ? `http://${lanIp}:${PORT}` : `http://localhost:${PORT}`);
+    const svg = luciola.renderQrSvg(targetUrl);
+    if (svg) {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8' });
+      res.end(svg);
+    } else {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Failed to render QR');
+    }
+    return;
+  }
+
   if (url.pathname === '/api/events') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',

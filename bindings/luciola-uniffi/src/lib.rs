@@ -115,13 +115,16 @@ pub fn is_physical_nic(name: String) -> bool {
 }
 
 /// Render a compact terminal QR code for a given URL or text content.
+///
+/// In dark terminals, swaps dark and light colors so that white background border
+/// and black QR modules are rendered correctly for optical scanning.
 #[uniffi::export]
 pub fn render_qr_ascii(content: String) -> Option<String> {
     let code = QrCode::new(content.as_bytes()).ok()?;
     let string = code
         .render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Dark)
-        .light_color(unicode::Dense1x2::Light)
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
         .build();
     Some(string)
 }

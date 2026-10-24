@@ -67,6 +67,8 @@ pub struct DeviceMeta {
     pub arch: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
 }
 
 /// Node presence profile exchanged across the network.
@@ -288,6 +290,7 @@ mod tests {
                 os: "macOS".to_string(),
                 arch: "aarch64".to_string(),
                 model: Some("MacBookPro18,1".to_string()),
+                hostname: Some("Alex's Laptop".to_string()),
             }),
         };
 

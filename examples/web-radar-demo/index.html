@@ -106,11 +106,11 @@
 
         <!-- QR Code Card -->
         <div class="w-full mt-6 pt-4 border-t border-neutral-700/60 flex items-center gap-4">
-          <canvas id="qrCanvas" width="90" height="90" class="rounded-lg bg-white p-1 shadow"></canvas>
+          <img id="qrImg" src="/api/qr.svg" width="90" height="90" class="rounded-lg bg-white p-1 shadow" alt="Scan QR Code" />
           <div class="flex-1 text-xs">
             <div class="font-semibold text-white">手机扫码同网直连</div>
             <div class="font-mono text-emerald-400 truncate mt-0.5" id="qrUrlLabel">http://...</div>
-            <div class="text-neutral-500 mt-1">自动排除 Docker / Tailscale 虚拟网卡</div>
+            <div class="text-neutral-500 mt-1">真实 SVG 矢量标准码 · 自动排除 Docker/WSL</div>
           </div>
         </div>
       </div>
@@ -159,14 +159,14 @@
         // Local identity
         if (data.localDevice) {
           document.getElementById('localIcon').innerText = data.localDevice.icon || '🖥️';
-          document.getElementById('localModel').innerText = data.localDevice.model || data.localDevice.deviceType;
-          document.getElementById('localArch').innerText = `${data.localDevice.os} (${data.localDevice.arch})`;
+          document.getElementById('localModel').innerText = data.localDevice.hostname || data.localDevice.model || data.localDevice.deviceType;
+          document.getElementById('localArch').innerText = `${data.localDevice.model || ''} · ${data.localDevice.os} (${data.localDevice.arch})`;
         }
         if (data.lanIp) {
           document.getElementById('localIp').innerText = `${data.lanIp}:17878`;
           const qrUrl = `http://${data.lanIp}:3000`;
           document.getElementById('qrUrlLabel').innerText = qrUrl;
-          drawSimpleQr(qrUrl);
+          document.getElementById('qrImg').src = `/api/qr.svg?url=${encodeURIComponent(qrUrl)}`;
         }
         if (data.subnetBroadcasts && data.subnetBroadcasts.length > 0) {
           document.getElementById('subnetLabel').innerText = data.subnetBroadcasts.join(' / ');
@@ -288,36 +288,6 @@
         document.getElementById('sseStatus').innerText = 'SSE: Connected';
         document.getElementById('sseStatus').className = 'text-xs text-emerald-400 font-mono';
       };
-    }
-
-    function drawSimpleQr(text) {
-      const canvas = document.getElementById('qrCanvas');
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, 90, 90);
-      ctx.fillStyle = '#111827';
-      const cell = 90 / 21;
-
-      function finder(x, y) {
-        ctx.fillRect(x*cell, y*cell, 7*cell, 7*cell);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect((x+1)*cell, (y+1)*cell, 5*cell, 5*cell);
-        ctx.fillStyle = '#111827';
-        ctx.fillRect((x+2)*cell, (y+2)*cell, 3*cell, 3*cell);
-      }
-      finder(1, 1);
-      finder(13, 1);
-      finder(1, 13);
-
-      for (let r = 0; r < 21; r++) {
-        for (let c = 0; c < 21; c++) {
-          if ((r < 8 && c < 8) || (r < 8 && c >= 13) || (r >= 13 && c < 8)) continue;
-          if ((r * 11 + c * 17) % 3 === 0) {
-            ctx.fillRect(c * cell, r * cell, cell, cell);
-          }
-        }
-      }
     }
 
     window.onload = () => {

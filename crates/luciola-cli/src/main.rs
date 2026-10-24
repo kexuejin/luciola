@@ -8,12 +8,16 @@ use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 /// Render a UTF-8 compact QR code for terminal display.
+///
+/// In standard dark-background developer terminals, foreground is white/light and background is black/dark.
+/// Therefore, QR dark modules must be mapped to Dense1x2::Light (spaces/background = black) and
+/// QR light modules/margins must be mapped to Dense1x2::Dark (full blocks/foreground = white).
 pub fn render_qr_terminal(content: &str) -> Option<String> {
     let code = QrCode::new(content.as_bytes()).ok()?;
     let string = code
         .render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Dark)
-        .light_color(unicode::Dense1x2::Light)
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
         .build();
     Some(string)
 }
@@ -168,11 +172,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let device_meta = luciola_net::DeviceDetector::detect();
             println!("\n[0] Local Device Hardware Identity:");
-            println!("  {} Form Factor: {:?} ({})", device_meta.device_type.icon(), device_meta.device_type, device_meta.device_type.as_str());
-            println!("  💻 OS & Platform: {} ({})", device_meta.os, device_meta.arch);
-            if let Some(ref model) = device_meta.model {
-                println!("  🏷️  Hardware Model: {}", model);
+            if let Some(ref name) = device_meta.hostname {
+                println!("  🏷️  Friendly Device Name: {}", name);
             }
+            if let Some(ref model) = device_meta.model {
+                println!("  💻 Hardware Model: {}", model);
+            }
+            println!("  {} Form Factor: {:?} ({})", device_meta.device_type.icon(), device_meta.device_type, device_meta.device_type.as_str());
+            println!("  🌐 OS & Architecture: {} ({})", device_meta.os, device_meta.arch);
 
             println!("\n[1] Subnet Broadcast Targets (Bypassing Clash/TUN 0.0.0.0/1 capture):");
             let broadcasts = NetworkDetector::subnet_broadcast_addresses();
@@ -201,9 +208,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         format!("http://{}:{}", best_ip, port)
                     };
-                    println!("\n📱 QR Code for Top LAN IP (Port {}):", port);
+                    println!("\n📱 [Single-Subnet Web QR] Primary Wi-Fi Direct URL (Port {}):", port);
                     println!("👉 Direct URL: {}", url);
                     if let Some(qr_art) = render_qr_terminal(&url) {
+                        println!("\n{}", qr_art);
+                    }
+                }
+
+                if candidates.len() > 1 {
+                    println!("💡 Multi-Subnet Notice: This device is connected to {} candidate network interfaces.", candidates.len());
+                    println!("   If the scanning device is on a different subnet/dock, use these direct URLs:");
+                    for (i, c) in candidates.iter().enumerate().skip(1) {
+                        let u = if c.contains(':') { format!("http://[{}]:{}", c, port) } else { format!("http://{}:{}", c, port) };
+                        println!("   [{}] Subnet candidate: {}", i + 1, u);
+                    }
+
+                    let clean_name = device_meta.hostname.as_deref().unwrap_or("node").replace(' ', "%20");
+                    let pair_payload = format!("luciola://pair?name={}&port={}&addrs={}", clean_name, port, candidates.join(","));
+                    println!("\n⚡ [Multi-Subnet Universal QR] (For Apps: dials all subnets in parallel via Happy Eyeballs):");
+                    println!("👉 Universal Pairing URI: {}", pair_payload);
+                    if let Some(qr_art) = render_qr_terminal(&pair_payload) {
                         println!("\n{}", qr_art);
                     }
                 }

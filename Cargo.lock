@@ -443,6 +443,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "qrcode",
  "rand",
  "tokio",
 ]
