@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Luciola Live Radar Demo</title>
+  <title>Luciola 桌面雷达中控台 (Desktop Web Console)</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
   <style>
     @keyframes sweep {
@@ -11,246 +11,456 @@
       100% { transform: rotate(360deg); }
     }
     .radar-sweep {
-      animation: sweep 4s linear infinite;
+      animation: sweep 3.6s linear infinite;
       transform-origin: center center;
     }
-    @keyframes pulse-ring {
-      0% { transform: scale(0.9); opacity: 0.8; }
-      100% { transform: scale(2.2); opacity: 0; }
+    @keyframes pulse-dot {
+      0% { transform: scale(0.9); opacity: 1; }
+      100% { transform: scale(2.4); opacity: 0; }
     }
-    .pulse-effect::before {
+    .pulse-ring::before {
       content: '';
       position: absolute;
       inset: -4px;
       border-radius: 9999px;
       border: 2px solid currentColor;
-      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+      animation: pulse-dot 1.8s cubic-bezier(0, 0.2, 0.8, 1) infinite;
     }
   </style>
 </head>
-<body class="bg-neutral-900 text-neutral-100 antialiased p-6 min-h-screen">
+<body class="bg-neutral-950 text-neutral-100 antialiased p-4 md:p-6 min-h-screen">
 
-  <div class="max-w-6xl mx-auto space-y-6">
+  <div class="max-w-5xl mx-auto space-y-6">
 
-    <!-- Header bar -->
-    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-neutral-800">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-xl shadow-inner">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-neutral-800">
+      <div class="flex items-start gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-xl shadow-inner shrink-0">
           ✨
         </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-xl font-bold tracking-tight">Luciola (萤火) 实时局域网雷达</h1>
-            <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live UDP Engine
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h1 class="text-base sm:text-lg md:text-xl font-bold tracking-tight">Luciola (萤火) 桌面雷达中控台</h1>
+            <span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
+              @luciola/core
             </span>
           </div>
-          <p class="text-xs text-neutral-400">真实运行于 Node.js (@luciola/core) · 物理网卡感知 · 防代理 TUN 截流</p>
-        </div>
-      </div>
-
-      <!-- Local Machine Identity Card -->
-      <div class="flex items-center gap-3 bg-neutral-800/80 px-4 py-2.5 rounded-xl border border-neutral-700/80 text-xs shadow-sm">
-        <div class="text-2xl" id="localIcon">🖥️</div>
-        <div>
-          <div class="font-semibold text-white flex items-center gap-1.5">
-            <span id="localModel">Mac16,11</span>
-            <span class="text-neutral-400 font-normal">(本机真实探测)</span>
-          </div>
-          <div class="text-neutral-400 flex items-center gap-2 mt-0.5">
-            <span class="font-mono text-emerald-400" id="localIp">192.168.2.82:17878</span>
-            <span>•</span>
-            <span id="localArch">macOS (aarch64)</span>
-          </div>
+          <p class="text-xs text-neutral-400 mt-0.5">真实 UDP 引擎 · 手机端请使用 Luciola Android App 扫码接入</p>
         </div>
       </div>
     </header>
 
-    <!-- Main Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <!-- Desktop Console -->
+    <div class="space-y-5 bg-neutral-900/90 border border-neutral-800 rounded-3xl p-4 sm:p-6 shadow-2xl">
 
-      <!-- Left: Radar Screen -->
-      <div class="lg:col-span-5 bg-neutral-800/60 border border-neutral-800 rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden shadow-sm">
-        <div class="w-full flex items-center justify-between mb-4">
-          <span class="text-xs font-semibold uppercase tracking-wider text-neutral-400">实时广播网段</span>
-          <span class="text-xs font-mono text-emerald-400" id="subnetLabel">--</span>
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-800">
+        <div class="flex items-center gap-2.5 flex-wrap min-w-0">
+          <span class="text-xs font-bold uppercase tracking-wider text-amber-400 whitespace-nowrap">🖥️ 实时网段中控台</span>
+          <span class="text-[11px] sm:text-xs px-2 py-0.5 rounded-md bg-neutral-800 text-neutral-300 font-mono truncate max-w-full" id="desktopUrlLabel">http://...</span>
         </div>
+        <div class="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+          <span id="engineStatusDot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-xs font-medium" id="engineStatusLabel">@luciola/core 在线</span>
+        </div>
+      </div>
 
+      <!-- Local Machine Card -->
+      <div class="bg-neutral-800/60 border border-neutral-700/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-2xl shrink-0" id="localIcon">
+            🖥️
+          </div>
+          <div class="min-w-0">
+            <div class="font-bold text-sm text-white flex items-center gap-2 flex-wrap">
+              <span id="localName">本机</span>
+              <span class="text-xs font-normal px-2 py-0.5 rounded bg-neutral-700 text-neutral-300" id="localModel">...</span>
+            </div>
+            <div class="text-xs text-neutral-400 flex items-center gap-2 mt-1 flex-wrap">
+              <span class="font-mono text-emerald-400" id="localIp">...</span>
+              <span>•</span>
+              <span id="localOs">...</span>
+              <span>•</span>
+              <span class="text-emerald-400" id="localNicInfo">...</span>
+            </div>
+          </div>
+        </div>
+        <button onclick="triggerDesktopBeacon()" class="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium text-xs rounded-xl shadow-md transition-transform active:scale-95 flex items-center justify-center gap-1.5 self-start sm:self-auto">
+          <span>📡</span> 广播心跳
+        </button>
+      </div>
+
+      <!-- Radar & QR -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5 items-center">
         <!-- Radar Canvas -->
-        <div class="relative w-64 h-64 rounded-full border border-emerald-500/20 bg-emerald-950/20 flex items-center justify-center my-2 shadow-inner">
-          <div class="absolute w-48 h-48 rounded-full border border-emerald-500/15"></div>
-          <div class="absolute w-32 h-32 rounded-full border border-emerald-500/20"></div>
-          <div class="absolute w-16 h-16 rounded-full border border-emerald-500/25"></div>
-          <div class="absolute inset-0 flex items-center justify-center">
-            <div class="w-full h-px bg-emerald-500/15"></div>
+        <div class="bg-neutral-950 border border-neutral-800 rounded-2xl p-5 flex flex-col items-center justify-center relative overflow-hidden">
+          <div class="w-full flex items-center justify-between text-xs text-neutral-400 mb-2">
+            <span class="font-semibold">实时网段对等雷达</span>
+            <span class="font-mono text-emerald-400 text-[10px] text-right" id="subnetLabel">--</span>
           </div>
-          <div class="absolute inset-0 flex items-center justify-center">
-            <div class="h-full w-px bg-emerald-500/15"></div>
+          <div class="relative w-48 h-48 rounded-full border border-emerald-500/20 bg-emerald-950/20 flex items-center justify-center shadow-inner my-2">
+            <div class="absolute w-36 h-36 rounded-full border border-emerald-500/15"></div>
+            <div class="absolute w-24 h-24 rounded-full border border-emerald-500/20"></div>
+            <div class="absolute w-12 h-12 rounded-full border border-emerald-500/25"></div>
+            <div class="absolute inset-0 flex items-center justify-center">
+              <div class="w-full h-px bg-emerald-500/15"></div>
+            </div>
+            <div class="absolute inset-0 flex items-center justify-center">
+              <div class="h-full w-px bg-emerald-500/15"></div>
+            </div>
+            <div class="absolute inset-0 radar-sweep pointer-events-none">
+              <div class="w-1/2 h-1/2 ml-auto origin-bottom-left" style="background: conic-gradient(from 180deg at 0% 100%, rgba(16, 185, 129, 0.35) 0deg, transparent 60deg);"></div>
+            </div>
+            <div class="relative z-10 w-3.5 h-3.5 rounded-full bg-emerald-500 shadow pulse-ring text-emerald-400" id="radarCenter" title="本机"></div>
+            <div id="radarBlips"></div>
           </div>
-          <!-- Sweep Line -->
-          <div class="absolute inset-0 radar-sweep pointer-events-none">
-            <div class="w-1/2 h-1/2 ml-auto origin-bottom-left" style="background: conic-gradient(from 180deg at 0% 100%, rgba(16, 185, 129, 0.35) 0deg, transparent 60deg);"></div>
+          <div class="text-[11px] text-neutral-400 flex items-center gap-3 mt-1">
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> 本机</span>
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-400"></span> 发现的对端</span>
           </div>
-          <!-- Local Center -->
-          <div class="relative z-10 w-4 h-4 rounded-full bg-emerald-500 shadow-md pulse-effect text-emerald-400"></div>
-
-          <!-- Dynamic Blips Container -->
-          <div id="radarBlips"></div>
         </div>
 
-        <div class="mt-4 flex items-center justify-center gap-4 text-xs text-neutral-400">
-          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> 本机</div>
-          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> 发现的邻居节点</div>
+        <!-- Pairing QR Card -->
+        <div class="bg-neutral-950 border border-neutral-800 rounded-2xl p-5 flex flex-col justify-between h-full space-y-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-bold text-white">手机扫码直连配对</span>
+            <button onclick="toggleQrMode()" id="qrModeBadge" class="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-medium">
+              ⚡ Happy Eyeballs 竞速码
+            </button>
+          </div>
+
+          <div class="flex items-center gap-4">
+            <div class="p-2 bg-white rounded-xl shadow shrink-0">
+              <img id="qrImg" src="/api/qr.svg" width="92" height="92" class="block" alt="Scan QR Code">
+            </div>
+            <div class="text-xs space-y-1.5 flex-1 min-w-0">
+              <div class="font-mono text-emerald-400 text-[11px] break-all line-clamp-3" id="qrPayloadLabel">
+                luciola://pair?...
+              </div>
+              <div class="text-[11px] text-neutral-400 leading-snug" id="qrSubnetDesc">
+                包含多网段候选地址，彻底解决跨网段死锁。
+              </div>
+            </div>
+          </div>
+
+          <button onclick="demoRace()" id="btnDemoRace" class="w-full py-2 bg-neutral-800 hover:bg-neutral-700 text-amber-300 font-medium text-xs rounded-xl border border-neutral-700 transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+            <span>⚡</span> 演示此竞速码的并发拨号
+          </button>
+
+          <!-- Race result panel (real /api/race dials) -->
+          <div id="deskRaceBox" class="hidden space-y-1.5 font-mono text-[11px]"></div>
+        </div>
+      </div>
+
+      <!-- Discovered Peers -->
+      <div class="space-y-3 pt-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-white">已连接局域网对端 (Live Connected Peers)</span>
+          <span class="text-neutral-400 font-mono" id="desktopPeerCount">0 活跃节点</span>
         </div>
 
-        <!-- QR Code Card -->
-        <div class="w-full mt-6 pt-4 border-t border-neutral-700/60 flex items-center gap-4">
-          <img id="qrImg" src="/api/qr.svg" width="90" height="90" class="rounded-lg bg-white p-1 shadow" alt="Scan QR Code" />
-          <div class="flex-1 text-xs">
-            <div class="font-semibold text-white">手机扫码同网直连</div>
-            <div class="font-mono text-emerald-400 truncate mt-0.5" id="qrUrlLabel">http://...</div>
-            <div class="text-neutral-500 mt-1">真实 SVG 矢量标准码 · 自动排除 Docker/WSL</div>
+        <div id="desktopPeerList" class="space-y-2">
+          <div id="desktopEmptyNotice" class="p-6 text-center border border-dashed border-neutral-800 rounded-2xl text-xs text-neutral-500">
+            正在监听局域网对等广播...<br>
+            <span class="text-[11px] text-neutral-600">手机打开 Luciola App 即可被发现 · 另一终端可运行 <code class="text-amber-400">cargo run -p luciola-cli -- beacon</code> 进行真实对等互联</span>
           </div>
         </div>
       </div>
 
-      <!-- Right: Peer Node List & Event Log -->
-      <div class="lg:col-span-7 space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-base font-semibold">局域网发现的对等节点 (Real-time Peers)</h2>
-          <span class="text-xs text-neutral-400" id="peerCountLabel">0 个活跃节点</span>
+      <!-- Event Log -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-white">协议通信事件流 (Live Event Stream)</span>
+          <span class="text-emerald-400 font-mono text-[10px]" id="sseStatus">SSE: Connected</span>
         </div>
-
-        <!-- Peer List -->
-        <div class="space-y-3" id="peerContainer">
-          <div id="emptyPeerNotice" class="p-8 text-center border border-dashed border-neutral-700 rounded-xl text-neutral-500 text-xs">
-            <div class="text-2xl mb-1">📡</div>
-            正在持续监听局域网对等广播包...<br>
-            可在终端另起一个实例运行 <code class="text-amber-400 bg-neutral-800 px-1.5 py-0.5 rounded">cargo run -p luciola-cli -- beacon</code> 进行对等互联。
-          </div>
+        <div id="logBox" class="p-3 bg-neutral-950 font-mono text-[11px] text-neutral-300 rounded-xl h-32 overflow-y-auto space-y-1 border border-neutral-800">
+          <div class="text-neutral-500">Waiting for live network events...</div>
         </div>
-
-        <!-- Event Logs -->
-        <div class="space-y-2 pt-2">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold uppercase tracking-wider text-neutral-400">协议通信事件流 (Live Event Stream)</span>
-            <span class="text-xs text-emerald-400 font-mono" id="sseStatus">SSE: Connected</span>
-          </div>
-          <div id="logBox" class="p-4 bg-neutral-950 font-mono text-xs text-neutral-300 rounded-xl h-48 overflow-y-auto space-y-1 border border-neutral-800">
-            <div class="text-neutral-500">Waiting for live network events...</div>
-          </div>
-        </div>
-
       </div>
-
     </div>
 
   </div>
 
+  <!-- Toast -->
+  <div id="toastBox" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 space-y-2 flex flex-col items-center"></div>
+
   <script>
+    // ---------------- State ----------------
+    const status = {
+      localDevice: null, lanIp: null, candidates: [], subnetBroadcasts: [],
+      pairingUri: '', httpUrl: '', discoveryPort: 17878,
+    };
     const peers = new Map();
+    let isUniversalQr = true;
+
+    // ---------------- Boot ----------------
+    window.onload = async () => {
+      await loadStatus();
+      initSSE();
+    };
 
     async function loadStatus() {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
-
-        // Local identity
-        if (data.localDevice) {
-          document.getElementById('localIcon').innerText = data.localDevice.icon || '🖥️';
-          document.getElementById('localModel').innerText = data.localDevice.hostname || data.localDevice.model || data.localDevice.deviceType;
-          document.getElementById('localArch').innerText = `${data.localDevice.model || ''} · ${data.localDevice.os} (${data.localDevice.arch})`;
-        }
-        if (data.lanIp) {
-          document.getElementById('localIp').innerText = `${data.lanIp}:17878`;
-          const qrUrl = `http://${data.lanIp}:3000`;
-          document.getElementById('qrUrlLabel').innerText = qrUrl;
-          document.getElementById('qrImg').src = `/api/qr.svg?url=${encodeURIComponent(qrUrl)}`;
-        }
-        if (data.subnetBroadcasts && data.subnetBroadcasts.length > 0) {
-          document.getElementById('subnetLabel').innerText = data.subnetBroadcasts.join(' / ');
-        }
-
-        if (data.peers && data.peers.length > 0) {
-          for (const p of data.peers) {
-            peers.set(p.nodeId, p);
-          }
-          renderPeers();
-        }
+        Object.assign(status, data);
+        for (const p of data.peers || []) peers.set(p.nodeId, p);
+        renderIdentity();
+        renderQr();
+        renderPeers();
       } catch (e) {
-        console.error('Failed to load status:', e);
+        appendLog('⚠️ 加载 /api/status 失败: ' + e.message, 'text-red-400');
       }
     }
 
-    function renderPeers() {
-      const container = document.getElementById('peerContainer');
-      const blipsContainer = document.getElementById('radarBlips');
-      const emptyNotice = document.getElementById('emptyPeerNotice');
+    // ---------------- Identity / QR ----------------
+    function renderIdentity() {
+      const d = status.localDevice || {};
+      document.getElementById('localIcon').innerText = d.icon || '🖥️';
+      document.getElementById('localName').innerText = d.hostname || d.model || 'Luciola Node';
+      document.getElementById('localModel').innerText = d.model || d.deviceType || '';
+      document.getElementById('localIp').innerText = `${status.lanIp || '127.0.0.1'}:${status.discoveryPort}`;
+      document.getElementById('localOs').innerText = `${d.os} (${d.arch})`;
+      const ipv4 = status.candidates.filter(c => !c.includes(':')).length;
+      const ipv6 = status.candidates.filter(c => c.includes(':')).length;
+      document.getElementById('localNicInfo').innerText = `${ipv4} IPv4 + ${ipv6} IPv6 候选地址`;
+      document.getElementById('radarCenter').title = d.hostname || '本机';
+      document.getElementById('desktopUrlLabel').innerText = status.httpUrl;
+      document.getElementById('subnetLabel').innerText =
+        (status.subnetBroadcasts || []).join(' / ') || '--';
+    }
 
-      if (peers.size === 0) {
-        if (emptyNotice) emptyNotice.style.display = 'block';
-        document.getElementById('peerCountLabel').innerText = '0 个活跃节点';
-        blipsContainer.innerHTML = '';
+    function renderQr() {
+      const img = document.getElementById('qrImg');
+      const label = document.getElementById('qrPayloadLabel');
+      const badge = document.getElementById('qrModeBadge');
+      const payload = isUniversalQr ? status.pairingUri : status.httpUrl;
+      if (isUniversalQr) {
+        badge.innerText = '⚡ Happy Eyeballs 竞速码';
+        badge.className = 'px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px] font-medium';
+      } else {
+        badge.innerText = '🌐 单网段直接 HTTP 码';
+        badge.className = 'px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-medium';
+      }
+      label.innerText = payload;
+      const ipv4 = status.candidates.filter(c => !c.includes(':')).length;
+      const ipv6 = status.candidates.filter(c => c.includes(':')).length;
+      document.getElementById('qrSubnetDesc').innerText =
+        `包含 ${ipv4} 个 IPv4 子网 + ${ipv6} 个国内宽带 IPv6 GUA，彻底解决跨网段死锁。`;
+      img.src = `/api/qr.svg?url=${encodeURIComponent(payload)}&t=${Date.now()}`;
+    }
+
+    function toggleQrMode() {
+      isUniversalQr = !isUniversalQr;
+      renderQr();
+    }
+
+    // ---------------- Race demo (real dials, no fake phone UI) ----------------
+    async function demoRace() {
+      const btn = document.getElementById('btnDemoRace');
+      const box = document.getElementById('deskRaceBox');
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span> 正在并发拨号竞速...';
+      box.classList.remove('hidden');
+      box.innerHTML = (heChannelList()).map(c => `
+        <div class="flex items-center justify-between p-1.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-400" data-addr="${escapeHtml(c.addr)}">
+          <span class="truncate">• ${escapeHtml(c.label)} <span class="text-neutral-600">${escapeHtml(c.addr)}</span></span>
+          <span class="text-neutral-500 shrink-0 ml-2" data-state>DIALING...</span>
+        </div>
+      `).join('');
+
+      let race;
+      try {
+        race = await fetch('/api/race', { method: 'POST' }).then(r => r.json());
+      } catch (e) {
+        box.innerHTML = `<div class="text-red-400">⚠️ 竞速失败: ${escapeHtml(e.message)}</div>`;
+        btn.disabled = false;
+        btn.innerHTML = '<span>⚡</span> 重试竞速拨号';
         return;
       }
 
-      if (emptyNotice) emptyNotice.style.display = 'none';
-      document.getElementById('peerCountLabel').innerText = `${peers.size} 个活跃节点`;
+      const resultByAddr = new Map(race.channels.map(c => [c.addr, c]));
+      for (const el of box.querySelectorAll('[data-addr]')) {
+        const result = resultByAddr.get(el.dataset.addr);
+        const stateEl = el.querySelector('[data-state]');
+        if (!result) continue;
+        if (result.status === 'won') {
+          el.className = 'flex items-center justify-between p-1.5 rounded bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 font-bold';
+          stateEl.innerText = `WON (${result.rttMs}ms)`;
+        } else if (result.status === 'timeout') {
+          el.className = 'flex items-center justify-between p-1.5 rounded bg-red-500/5 border border-red-500/30 text-red-400';
+          stateEl.innerText = 'TIMEOUT';
+        } else {
+          el.className = 'flex items-center justify-between p-1.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-600 line-through';
+          stateEl.innerText = 'CANCELLED';
+        }
+      }
 
-      container.innerHTML = '';
-      blipsContainer.innerHTML = '';
+      const winner = race.channels.find(c => c.status === 'won');
+      appendLog(`⚡ Happy Eyeballs 竞速: ${race.winner || '无'} 胜出${winner ? ` (${winner.rttMs}ms)` : ''}`, 'text-emerald-400');
+      btn.disabled = false;
+      btn.innerHTML = '<span>⚡</span> 重新竞速拨号';
+    }
 
-      let idx = 0;
-      for (const [nodeId, p] of peers.entries()) {
-        const icon = (p.device && p.device.icon) || '🌐';
-        const model = (p.device && (p.device.model || p.device.deviceType)) || 'Neighbor Node';
-        const os = (p.device && `${p.device.os} (${p.device.arch})`) || 'LAN Peer';
+    function heChannelList() {
+      const ipv4 = status.candidates.filter(c => !c.includes(':'));
+      const ipv6 = status.candidates.filter(c => c.includes(':'));
+      const list = [];
+      if (ipv4[0]) list.push({ addr: ipv4[0], label: 'Wi-Fi 主网卡' });
+      if (ipv4[1]) list.push({ addr: ipv4[1], label: '备用网卡' });
+      if (ipv4[2]) list.push({ addr: ipv4[2], label: '备用网卡' });
+      if (ipv6[0]) list.push({ addr: `[${ipv6[0]}]`, label: 'IPv6 GUA' });
+      return list.slice(0, 4);
+    }
 
+    // ---------------- Beacon ----------------
+    async function triggerDesktopBeacon() {
+      toast('📡 正在向物理网卡子网定向广播 entry 心跳...');
+      try {
+        const res = await fetch('/api/beacon', { method: 'POST' }).then(r => r.json());
+        const targets = (res.targets || []).filter(t => t.sent).map(t => t.target);
+        toast(`✅ 真实 entry 包已发出至 ${targets.length} 个目标 (广播 + 单播对账)`);
+        appendLog(`📡 定向广播/单播 entry: ${targets.join(' , ')}`, 'text-amber-400');
+      } catch (e) {
+        toast('⚠️ 心跳广播失败: ' + e.message);
+      }
+    }
+
+    async function pingPeer(nodeId) {
+      toast('📡 发送直连信标 (单播 entry → 等待 alive)...');
+      try {
+        const res = await fetch('/api/ping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nodeId }),
+        }).then(r => r.json());
+        if (res.rttMs !== null && res.rttMs !== undefined) {
+          toast(`✅ 对端应答 alive, 往返 RTT ${res.rttMs}ms`);
+        } else {
+          toast('💤 对端 1.5s 内无 alive 应答');
+        }
+        renderPeers();
+      } catch (e) {
+        toast('⚠️ 直连信标失败: ' + e.message);
+      }
+    }
+
+    // ---------------- Peers rendering ----------------
+    function renderPeers() {
+      renderDesktopPeers();
+      renderRadarBlips();
+    }
+
+    function renderDesktopPeers() {
+      const list = document.getElementById('desktopPeerList');
+      const empty = document.getElementById('desktopEmptyNotice');
+      const all = [...peers.values()];
+
+      document.getElementById('desktopPeerCount').innerText = `${all.length} 活跃节点`;
+      if (all.length === 0) {
+        if (empty) empty.style.display = 'block';
+        list.querySelectorAll('[data-peer-row]').forEach(el => el.remove());
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+      list.querySelectorAll('[data-peer-row]').forEach(el => el.remove());
+
+      for (const p of all) {
+        const dev = p.device || {};
         const row = document.createElement('div');
-        row.className = 'bg-neutral-800/80 border border-neutral-700/80 rounded-xl p-4 flex items-center justify-between shadow-sm';
+        row.setAttribute('data-peer-row', '');
+        row.className = 'bg-neutral-800/80 border border-emerald-500/40 rounded-2xl p-4 flex items-center justify-between shadow-sm';
         row.innerHTML = `
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-xl">
-              ${icon}
-            </div>
-            <div>
-              <div class="font-semibold text-sm flex items-center gap-2">
-                <span>${p.name}</span>
-                <span class="text-xs font-normal px-2 py-0.5 rounded bg-neutral-700 text-neutral-300">${model}</span>
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center text-xl shrink-0">${dev.icon || '🌐'}</div>
+            <div class="min-w-0">
+              <div class="font-bold text-sm text-white flex items-center gap-2 flex-wrap">
+                <span>${escapeHtml(p.name)}</span>
+                <span class="text-xs font-normal px-2 py-0.5 rounded bg-neutral-700 text-neutral-300">${escapeHtml(dev.model || dev.deviceType || 'Neighbor')}</span>
+                ${p.rttMs ? `<span class="text-xs font-mono text-emerald-400">RTT ${p.rttMs}ms</span>` : ''}
               </div>
-              <div class="text-xs text-neutral-400 flex items-center gap-2 mt-1">
-                <span class="font-mono">${p.ip}:${p.udpPort}</span>
+              <div class="text-xs text-neutral-400 flex items-center gap-2 mt-1 flex-wrap">
+                <span class="font-mono">${escapeHtml(String(p.ip))}:${p.udpPort}</span>
                 <span>•</span>
-                <span>${os}</span>
+                <span>${escapeHtml(dev.os || '')} (${escapeHtml(dev.arch || '')})</span>
+                <span>•</span>
+                <span class="text-neutral-500 text-[11px]">${p.source === 'engine' ? '引擎实时发现' : '子网广播应答'}</span>
                 <span>•</span>
                 <span class="text-emerald-400 font-medium">Online</span>
               </div>
             </div>
           </div>
-          <button class="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-700 hover:bg-neutral-700 transition-colors">
-            Ping
+          <button onclick="pingPeer('${escapeJs(p.nodeId)}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-700 hover:bg-neutral-700 transition-colors shrink-0 ml-2">
+            直连信标
           </button>
         `;
-        container.appendChild(row);
-
-        // Blip on radar
-        const angle = (idx * 137.5) * (Math.PI / 180);
-        const radius = 40 + (idx % 3) * 25;
-        const x = 128 + Math.cos(angle) * radius;
-        const y = 128 + Math.sin(angle) * radius;
-
-        const blip = document.createElement('div');
-        blip.className = 'absolute w-3.5 h-3.5 rounded-full bg-amber-400 border border-white shadow';
-        blip.style.left = `${x - 7}px`;
-        blip.style.top = `${y - 7}px`;
-        blip.title = `${p.name} (${p.ip})`;
-        blipsContainer.appendChild(blip);
-
-        idx++;
+        list.appendChild(row);
       }
     }
 
+    function renderRadarBlips() {
+      const box = document.getElementById('radarBlips');
+      box.innerHTML = '';
+      const all = [...peers.values()];
+      const C = 96; // center of the 192px radar
+      all.forEach((p, idx) => {
+        const angle = (idx * 137.5) * (Math.PI / 180);
+        const radius = 30 + (idx % 3) * 24;
+        const x = C + Math.cos(angle) * radius;
+        const y = C + Math.sin(angle) * radius;
+        const blip = document.createElement('div');
+        blip.className = 'absolute w-3.5 h-3.5 rounded-full bg-amber-400 border border-white shadow scale-110 transition-all';
+        blip.style.left = `${x - 7}px`;
+        blip.style.top = `${y - 7}px`;
+        blip.title = `${p.name} (${p.ip})`;
+        box.appendChild(blip);
+      });
+    }
+
+    // ---------------- SSE ----------------
+    function initSSE() {
+      const evtSource = new EventSource('/api/events');
+      evtSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'peer_found') {
+            const isNew = !peers.has(data.peer.nodeId);
+            peers.set(data.peer.nodeId, data.peer);
+            renderPeers();
+            if (isNew) {
+              appendLog(`✨ 发现对端: ${data.peer.name} @ ${data.peer.ip}:${data.peer.udpPort}`, 'text-amber-400');
+              toast(`👋 发现新对端 ${data.peer.name}`);
+            } else {
+              appendLog(`🔄 对端心跳刷新: ${data.peer.name}`, 'text-neutral-500');
+            }
+          } else if (data.type === 'peer_expired') {
+            const p = peers.get(data.nodeId);
+            peers.delete(data.nodeId);
+            renderPeers();
+            appendLog(`💨 对端离线: ${p ? p.name : data.nodeId}`, 'text-neutral-500');
+          } else if (data.type === 'beacon_sent') {
+            appendLog(`📡 entry 心跳定向广播 → ${(data.targets || []).join(' , ')}`, 'text-sky-400');
+          } else if (data.type === 'race_done') {
+            appendLog(`⚡ Happy Eyeballs 竞速结束, 胜出通道: ${data.winner || '无'}`, 'text-emerald-400');
+          }
+        } catch (e) { /* ignore malformed */ }
+      };
+      evtSource.onerror = () => {
+        const el = document.getElementById('sseStatus');
+        el.innerText = 'SSE: Reconnecting...';
+        el.className = 'text-emerald-400 font-mono text-[10px] text-amber-500';
+        document.getElementById('engineStatusDot').className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+        document.getElementById('engineStatusLabel').innerText = '引擎重连中';
+      };
+      evtSource.onopen = () => {
+        const el = document.getElementById('sseStatus');
+        el.innerText = 'SSE: Connected';
+        el.className = 'text-emerald-400 font-mono text-[10px]';
+        document.getElementById('engineStatusDot').className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+        document.getElementById('engineStatusLabel').innerText = '@luciola/core 在线';
+      };
+    }
+
+    // ---------------- Utilities ----------------
     function appendLog(text, color = 'text-neutral-300') {
       const box = document.getElementById('logBox');
       const line = document.createElement('div');
@@ -258,42 +468,28 @@
       const time = new Date().toTimeString().split(' ')[0];
       line.innerText = `[${time}] ${text}`;
       box.appendChild(line);
+      while (box.children.length > 60) box.removeChild(box.firstChild);
       box.scrollTop = box.scrollHeight;
     }
 
-    // Connect SSE
-    function initSSE() {
-      const evtSource = new EventSource('/api/events');
-      evtSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'peer_found') {
-            peers.set(data.peer.nodeId, data.peer);
-            renderPeers();
-            appendLog(`✨ Found peer: ${data.peer.name} @ ${data.peer.ip}`, 'text-amber-400');
-          } else if (data.type === 'peer_expired') {
-            peers.delete(data.nodeId);
-            renderPeers();
-            appendLog(`👋 Peer expired: ${data.nodeId}`, 'text-neutral-500');
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      };
-      evtSource.onerror = () => {
-        document.getElementById('sseStatus').innerText = 'SSE: Reconnecting...';
-        document.getElementById('sseStatus').className = 'text-xs text-amber-500 font-mono';
-      };
-      evtSource.onopen = () => {
-        document.getElementById('sseStatus').innerText = 'SSE: Connected';
-        document.getElementById('sseStatus').className = 'text-xs text-emerald-400 font-mono';
-      };
+    function toast(text, ms = 2600) {
+      const box = document.getElementById('toastBox');
+      const el = document.createElement('div');
+      el.className = 'px-4 py-2 bg-neutral-800/95 border border-neutral-600 text-xs text-white rounded-xl shadow-lg backdrop-blur transition-opacity';
+      el.innerText = text;
+      box.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 300);
+      }, ms);
     }
 
-    window.onload = () => {
-      loadStatus();
-      initSSE();
-    };
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function escapeJs(s) {
+      return String(s).replace(/['\\]/g, '\\$&');
+    }
   </script>
 </body>
 </html>

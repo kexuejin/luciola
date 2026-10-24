@@ -49,6 +49,15 @@ cargo run -p luciola-cli -- scan
 cargo run -p luciola-cli -- beacon --name "My Laptop"
 ```
 
+### Web Dual-End Demo (Desktop Console + Mobile Simulator)
+
+```bash
+cd examples/web-radar-demo
+node server.js   # open http://localhost:3000
+```
+
+Real UDP heartbeat protocol, subnet-directed broadcasts, Happy Eyeballs multi-subnet racing, and a live radar — see [examples/web-radar-demo](examples/web-radar-demo).
+
 ---
 
 ## Architecture

@@ -27,7 +27,7 @@
 
 ## 为什么需要 Luciola？（对比传统方案）
 
-| 真实世界痛点 | 传统 mDNS / Bonjour | 脚本粗糙选网卡（如手工脚本） | **Luciola (萤火)** |
+| 真实世界痛点 | 传统 mDNS / Bonjour | 手写正则 / ipconfig 粗糙选网卡脚本 | **Luciola (萤火)** |
 | :--- | :--- | :--- | :--- |
 | **企业/校园/酒店 Wi-Fi** | 组播（Multicast）被路由器强制丢弃，完全失联 | — | **子网定向广播 + 单播对账**，多网卡冗余兜底 |
 | **家庭宽带 IPv6 (GUA)** | 误判为公网 WAN，安全策略误拦截 | 完全忽略 IPv6，只做 IPv4 | **`/64` 同前缀同 LAN 算法**，优先直连 |
@@ -65,6 +65,15 @@ console.log(`请用手机扫描直连: http://${bestIp}:3000`);
 const broadcasts = subnetBroadcastAddresses();
 console.log('子网广播地址:', broadcasts);
 ```
+
+### 3. Web 双端联动演示（桌面中控台 + 移动端模拟器）
+
+```bash
+cd examples/web-radar-demo
+node server.js   # 打开 http://localhost:3000
+```
+
+真实 UDP 协议心跳、子网定向广播、Happy Eyeballs 多网段竞速与实时雷达，详见 [examples/web-radar-demo](examples/web-radar-demo)。
 
 ---
 
