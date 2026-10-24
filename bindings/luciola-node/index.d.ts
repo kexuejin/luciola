@@ -84,6 +84,10 @@ export interface JsPeerRecord {
 export class DiscoverySession {
   constructor(name?: string, port?: number);
   /**
+   * This session's engine node id (available after `start`).
+   */
+  nodeId(): string | null;
+  /**
    * Start discovery session and listen for discovered peers via callback.
    */
   start(callback: (peer: JsPeerRecord) => void): void;

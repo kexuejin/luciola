@@ -327,7 +327,15 @@ impl DiscoveryEngine {
         for (host, port) in self.compute_targets().await {
             let target = format!("{}:{}", host, port);
             if let Ok(addr) = target.parse::<SocketAddr>() {
-                if active_socket.send_to(&bytes, addr).await.is_ok() {
+                // A destination whose interface is still settling (VPN tunnel
+                // up/down, route table churn) can leave send_to pending forever
+                // on Android; cap each dial so one dead target cannot stall the
+                // whole engine loop.
+                let send = active_socket.send_to(&bytes, addr);
+                if matches!(
+                    tokio::time::timeout(Duration::from_millis(300), send).await,
+                    Ok(Ok(_))
+                ) {
                     sent += 1;
                 }
             }

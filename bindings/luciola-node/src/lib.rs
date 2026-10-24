@@ -137,6 +137,7 @@ pub struct DiscoverySession {
     name: String,
     port: u16,
     shutdown_tx: Option<oneshot::Sender<()>>,
+    node_id: std::sync::Mutex<Option<String>>,
 }
 
 #[napi]
@@ -147,7 +148,16 @@ impl DiscoverySession {
             name: name.unwrap_or_else(|| "NodeJS Peer".to_string()),
             port: port.unwrap_or(17878) as u16,
             shutdown_tx: None,
+            node_id: std::sync::Mutex::new(None),
         }
+    }
+
+    /// This session's engine node id (available after `start`), so companion
+    /// sockets (sweeps, unicast reconciliation) can present the SAME identity
+    /// instead of appearing as a duplicate peer on remote devices.
+    #[napi]
+    pub fn node_id(&self) -> Option<String> {
+        self.node_id.lock().unwrap().clone()
     }
 
     /// Start discovery session and listen for discovered peers via callback.
@@ -184,6 +194,7 @@ impl DiscoverySession {
         let name = self.name.clone();
         let port = self.port;
         let node_id = format!("node_{:x}", rand::random::<u32>());
+        *self.node_id.lock().unwrap() = Some(node_id.clone());
 
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {

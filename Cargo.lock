@@ -467,6 +467,8 @@ dependencies = [
  "luciola-net",
  "luciola-proto",
  "qrcode",
+ "rand",
+ "tokio",
  "uniffi",
 ]
 
