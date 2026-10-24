@@ -20,6 +20,55 @@ pub enum ProtoError {
     InvalidEnvelope(String),
 }
 
+/// Device form factor classification (used for UI icons and hardware context).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceType {
+    Mobile,
+    Tablet,
+    Laptop,
+    Desktop,
+    Server,
+    Wsl,
+    Unknown,
+}
+
+impl DeviceType {
+    pub fn icon(&self) -> &'static str {
+        match self {
+            DeviceType::Mobile => "📱",
+            DeviceType::Tablet => "📱",
+            DeviceType::Laptop => "💻",
+            DeviceType::Desktop => "🖥️",
+            DeviceType::Server => "🗄️",
+            DeviceType::Wsl => "🐧",
+            DeviceType::Unknown => "🌐",
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DeviceType::Mobile => "mobile",
+            DeviceType::Tablet => "tablet",
+            DeviceType::Laptop => "laptop",
+            DeviceType::Desktop => "desktop",
+            DeviceType::Server => "server",
+            DeviceType::Wsl => "wsl",
+            DeviceType::Unknown => "unknown",
+        }
+    }
+}
+
+/// Lightweight device metadata broadcast to peers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceMeta {
+    pub device_type: DeviceType,
+    pub os: String,
+    pub arch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
 /// Node presence profile exchanged across the network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -29,6 +78,8 @@ pub struct Profile {
     pub addresses: Vec<String>,
     pub udp_port: u16,
     pub tcp_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<DeviceMeta>,
 }
 
 /// Message types in the Luciola discovery protocol.
@@ -232,6 +283,12 @@ mod tests {
             addresses: vec!["192.168.1.10".to_string()],
             udp_port: 17878,
             tcp_port: 17879,
+            device: Some(DeviceMeta {
+                device_type: DeviceType::Laptop,
+                os: "macOS".to_string(),
+                arch: "aarch64".to_string(),
+                model: Some("MacBookPro18,1".to_string()),
+            }),
         };
 
         let env = Codec::make_entry(&profile, Some("probe_1"));

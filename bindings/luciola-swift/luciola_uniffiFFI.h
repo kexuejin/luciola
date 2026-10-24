@@ -257,6 +257,12 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GET_DEVICE_META
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GET_DEVICE_META
+RustBuffer uniffi_luciola_uniffi_fn_func_get_device_meta(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IS_LAN_PEER
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IS_LAN_PEER
 int8_t uniffi_luciola_uniffi_fn_func_is_lan_peer(RustBuffer peer_address, RustBuffer local_addresses, RustCallStatus *_Nonnull out_status
@@ -583,6 +589,12 @@ void ffi_luciola_uniffi_rust_future_complete_void(uint64_t handle, RustCallStatu
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_ADVERTISED_ADDRESSES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_ADVERTISED_ADDRESSES
 uint16_t uniffi_luciola_uniffi_checksum_func_advertised_addresses(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GET_DEVICE_META
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GET_DEVICE_META
+uint16_t uniffi_luciola_uniffi_checksum_func_get_device_meta(void
     
 );
 #endif

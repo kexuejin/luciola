@@ -8,6 +8,7 @@
 
 use std::net::Ipv4Addr;
 use luciola_ip::{get_ipv6_scope, is_private_or_local, is_proxy_tun_address, Ipv6Scope};
+use luciola_proto::{DeviceMeta, DeviceType};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use thiserror::Error;
 
@@ -336,6 +337,103 @@ impl NetworkDetector {
     }
 }
 
+/// Automatically inspect and classify the local machine's device hardware profile.
+pub struct DeviceDetector;
+
+impl DeviceDetector {
+    /// Detect the current machine's device metadata:
+    /// - form factor (Laptop, Desktop, Mobile, WSL, etc.)
+    /// - operating system family (macOS, Windows, Linux, Android, iOS)
+    /// - architecture (x86_64, aarch64, etc.)
+    /// - hardware model (e.g. `MacBookPro18,1`)
+    pub fn detect() -> DeviceMeta {
+        let os = std::env::consts::OS.to_string();
+        let arch = std::env::consts::ARCH.to_string();
+
+        if detect_wsl() {
+            return DeviceMeta {
+                device_type: DeviceType::Wsl,
+                os: "Linux (WSL)".to_string(),
+                arch,
+                model: Some("WSL2 Virtual Machine".to_string()),
+            };
+        }
+
+        let (device_type, model) = match os.as_str() {
+            "macos" => {
+                let model = Self::macos_model();
+                let dtype = if let Some(ref m) = model {
+                    if m.contains("MacBook") {
+                        DeviceType::Laptop
+                    } else if m.contains("Macmini") || m.contains("iMac") || m.contains("MacPro") || m.contains("MacStudio") {
+                        DeviceType::Desktop
+                    } else {
+                        DeviceType::Desktop
+                    }
+                } else {
+                    DeviceType::Desktop
+                };
+                (dtype, model)
+            }
+            "linux" => {
+                let model = Self::linux_model();
+                let dtype = Self::linux_device_type();
+                (dtype, model)
+            }
+            "windows" => (DeviceType::Desktop, None),
+            "android" => (DeviceType::Mobile, None),
+            "ios" => (DeviceType::Mobile, None),
+            _ => (DeviceType::Unknown, None),
+        };
+
+        DeviceMeta {
+            device_type,
+            os,
+            arch,
+            model,
+        }
+    }
+
+    /// Retrieve macOS hardware model via `sysctl -n hw.model`
+    fn macos_model() -> Option<String> {
+        let output = std::process::Command::new("sysctl")
+            .arg("-n")
+            .arg("hw.model")
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+        None
+    }
+
+    /// Retrieve Linux hardware model from `/sys/class/dmi/id/product_name`
+    fn linux_model() -> Option<String> {
+        std::fs::read_to_string("/sys/class/dmi/id/product_name")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Infer Linux device form factor from chassis type
+    fn linux_device_type() -> DeviceType {
+        if let Ok(chassis) = std::fs::read_to_string("/sys/class/dmi/id/chassis_type") {
+            if let Ok(code) = chassis.trim().parse::<u32>() {
+                return match code {
+                    8 | 9 | 10 | 11 | 14 | 30 | 31 | 32 => DeviceType::Laptop,
+                    3 | 4 | 6 | 7 => DeviceType::Desktop,
+                    23 | 28 | 29 => DeviceType::Server,
+                    _ => DeviceType::Unknown,
+                };
+            }
+        }
+        DeviceType::Unknown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +476,14 @@ Windows IP 配置
 
         let parsed = parse_ipconfig_output(sample_output);
         assert_eq!(parsed, vec!["192.168.2.100"]);
+    }
+
+    #[test]
+    fn test_device_detector_detects_current_machine() {
+        let meta = DeviceDetector::detect();
+        println!("Detected Device Meta: {:?}", meta);
+        assert!(!meta.os.is_empty());
+        assert!(!meta.arch.is_empty());
     }
 
     #[test]

@@ -63,6 +63,30 @@ pub fn is_physical_nic(name: String) -> bool {
     is_physical_interface_name(&name)
 }
 
+/// Device hardware and platform identity.
+#[napi(object)]
+#[derive(Clone)]
+pub struct JsDeviceMeta {
+    pub device_type: String,
+    pub icon: String,
+    pub os: String,
+    pub arch: String,
+    pub model: Option<String>,
+}
+
+/// Detect the current local device hardware profile, OS, and form factor.
+#[napi]
+pub fn get_device_meta() -> JsDeviceMeta {
+    let meta = luciola_net::DeviceDetector::detect();
+    JsDeviceMeta {
+        device_type: meta.device_type.as_str().to_string(),
+        icon: meta.device_type.icon().to_string(),
+        os: meta.os,
+        arch: meta.arch,
+        model: meta.model,
+    }
+}
+
 /// Discovered peer record returned to JavaScript.
 #[napi(object)]
 pub struct JsPeerRecord {
@@ -71,6 +95,7 @@ pub struct JsPeerRecord {
     pub ip: String,
     pub udp_port: u32,
     pub tcp_port: u32,
+    pub device: Option<JsDeviceMeta>,
 }
 
 use napi::bindgen_prelude::*;
@@ -106,11 +131,22 @@ impl DiscoverySession {
         let tsfn: ThreadsafeFunction<JsPeerRecord, ErrorStrategy::Fatal> = callback
             .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<JsPeerRecord>| {
                 let mut obj = ctx.env.create_object()?;
-                obj.set_named_property("nodeId", ctx.value.node_id)?;
-                obj.set_named_property("name", ctx.value.name)?;
-                obj.set_named_property("ip", ctx.value.ip)?;
+                obj.set_named_property("nodeId", &ctx.value.node_id)?;
+                obj.set_named_property("name", &ctx.value.name)?;
+                obj.set_named_property("ip", &ctx.value.ip)?;
                 obj.set_named_property("udpPort", ctx.value.udp_port)?;
                 obj.set_named_property("tcpPort", ctx.value.tcp_port)?;
+                if let Some(ref d) = ctx.value.device {
+                    let mut dev = ctx.env.create_object()?;
+                    dev.set_named_property("deviceType", &d.device_type)?;
+                    dev.set_named_property("icon", &d.icon)?;
+                    dev.set_named_property("os", &d.os)?;
+                    dev.set_named_property("arch", &d.arch)?;
+                    if let Some(ref m) = d.model {
+                        dev.set_named_property("model", m)?;
+                    }
+                    obj.set_named_property("device", dev)?;
+                }
                 Ok(vec![obj])
             })?;
 
@@ -135,6 +171,7 @@ impl DiscoverySession {
                     addresses: luciola::net::NetworkDetector::local_candidate_addresses(),
                     udp_port: port,
                     tcp_port: port + 1,
+                    device: Some(luciola_net::DeviceDetector::detect()),
                 };
 
                 let mut config = luciola::DiscoveryConfig::default();
@@ -155,12 +192,20 @@ impl DiscoverySession {
                             }
                             Ok(event) = events.recv() => {
                                 if let luciola::PeerEvent::Found(p) = event {
+                                    let device = p.device.map(|d| JsDeviceMeta {
+                                        device_type: d.device_type.as_str().to_string(),
+                                        icon: d.device_type.icon().to_string(),
+                                        os: d.os,
+                                        arch: d.arch,
+                                        model: d.model,
+                                    });
                                     let record = JsPeerRecord {
                                         node_id: p.node_id,
                                         name: p.name,
                                         ip: p.ip,
                                         udp_port: p.udp_port as u32,
                                         tcp_port: p.tcp_port as u32,
+                                        device,
                                     };
                                     tsfn.call(record, ThreadsafeFunctionCallMode::NonBlocking);
                                 }

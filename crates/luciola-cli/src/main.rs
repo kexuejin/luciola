@@ -84,7 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(event) = events.recv() => {
                         match event {
                             PeerEvent::Found(peer) => {
-                                println!("✨ [FOUND] Node: {} ({}) @ {}:{}", peer.name, peer.node_id, peer.ip, peer.udp_port);
+                                let (icon, desc) = match &peer.device {
+                                    Some(d) => (d.device_type.icon(), format!(" [{} / {}]", d.os, d.model.as_deref().unwrap_or(&d.arch))),
+                                    None => ("✨", String::new()),
+                                };
+                                println!("{} [FOUND] Node: {}{} ({}) @ {}:{}", icon, peer.name, desc, peer.node_id, peer.ip, peer.udp_port);
                             }
                             PeerEvent::Updated(peer) => {
                                 println!("🔄 [UPDATED] Node: {} ({}) @ {}:{}", peer.name, peer.node_id, peer.ip, peer.udp_port);
@@ -113,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 addresses: candidates.clone(),
                 udp_port: port,
                 tcp_port: port + 1,
+                device: Some(luciola_net::DeviceDetector::detect()),
             };
 
             if qr {
@@ -160,6 +165,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("========================================================");
             println!("       Luciola Network Interface & Route Intelligence    ");
             println!("========================================================");
+
+            let device_meta = luciola_net::DeviceDetector::detect();
+            println!("\n[0] Local Device Hardware Identity:");
+            println!("  {} Form Factor: {:?} ({})", device_meta.device_type.icon(), device_meta.device_type, device_meta.device_type.as_str());
+            println!("  💻 OS & Platform: {} ({})", device_meta.os, device_meta.arch);
+            if let Some(ref model) = device_meta.model {
+                println!("  🏷️  Hardware Model: {}", model);
+            }
 
             println!("\n[1] Subnet Broadcast Targets (Bypassing Clash/TUN 0.0.0.0/1 capture):");
             let broadcasts = NetworkDetector::subnet_broadcast_addresses();

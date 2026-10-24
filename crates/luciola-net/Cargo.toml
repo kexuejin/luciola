@@ -8,6 +8,7 @@ description = "Network interface intelligence, physical/virtual scoring, WSL2 pa
 
 [dependencies]
 luciola-ip = { path = "../luciola-ip" }
+luciola-proto = { path = "../luciola-proto" }
 network-interface = "2.0"
 thiserror.workspace = true
 tracing.workspace = true

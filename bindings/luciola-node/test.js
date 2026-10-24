@@ -17,6 +17,9 @@ console.log('✅ isVirtualNic("en0"):', luciola.isVirtualNic('en0'));
 const isTun = luciola.isTunVirtualIp('198.18.0.1');
 console.log('✅ isTunVirtualIp("198.18.0.1"):', isTun);
 
+const device = luciola.getDeviceMeta();
+console.log('✅ Device Metadata:', `${device.icon} ${device.deviceType} | ${device.os} (${device.arch}) | Model: ${device.model || 'N/A'}`);
+
 console.log('\n--- Testing DiscoverySession in Node.js ---');
 const session = new luciola.DiscoverySession('NodeJS-Tester', 19876);
 session.start((peer) => {

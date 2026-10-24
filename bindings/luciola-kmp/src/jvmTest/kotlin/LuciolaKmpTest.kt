@@ -16,5 +16,9 @@ class LuciolaKmpTest {
 
         val qr = renderQrAscii("http://192.168.2.82:8080")
         assertNotNull(qr, "Terminal QR code should be generated")
+
+        val meta = getDeviceMeta()
+        assertNotNull(meta.os)
+        assertNotNull(meta.arch)
     }
 }

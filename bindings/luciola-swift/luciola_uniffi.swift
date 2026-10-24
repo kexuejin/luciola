@@ -479,6 +479,99 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 /**
+ * Device hardware and OS metadata.
+ */
+public struct DeviceMeta {
+    public var deviceType: DeviceType
+    public var icon: String
+    public var os: String
+    public var arch: String
+    public var model: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceType: DeviceType, icon: String, os: String, arch: String, model: String?) {
+        self.deviceType = deviceType
+        self.icon = icon
+        self.os = os
+        self.arch = arch
+        self.model = model
+    }
+}
+
+
+
+extension DeviceMeta: Equatable, Hashable {
+    public static func ==(lhs: DeviceMeta, rhs: DeviceMeta) -> Bool {
+        if lhs.deviceType != rhs.deviceType {
+            return false
+        }
+        if lhs.icon != rhs.icon {
+            return false
+        }
+        if lhs.os != rhs.os {
+            return false
+        }
+        if lhs.arch != rhs.arch {
+            return false
+        }
+        if lhs.model != rhs.model {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(deviceType)
+        hasher.combine(icon)
+        hasher.combine(os)
+        hasher.combine(arch)
+        hasher.combine(model)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceMeta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceMeta {
+        return
+            try DeviceMeta(
+                deviceType: FfiConverterTypeDeviceType.read(from: &buf), 
+                icon: FfiConverterString.read(from: &buf), 
+                os: FfiConverterString.read(from: &buf), 
+                arch: FfiConverterString.read(from: &buf), 
+                model: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DeviceMeta, into buf: inout [UInt8]) {
+        FfiConverterTypeDeviceType.write(value.deviceType, into: &buf)
+        FfiConverterString.write(value.icon, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.arch, into: &buf)
+        FfiConverterOptionString.write(value.model, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceMeta_lift(_ buf: RustBuffer) throws -> DeviceMeta {
+    return try FfiConverterTypeDeviceMeta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceMeta_lower(_ value: DeviceMeta) -> RustBuffer {
+    return FfiConverterTypeDeviceMeta.lower(value)
+}
+
+
+/**
  * A discovered peer node in the local network.
  */
 public struct DiscoveredPeer {
@@ -487,15 +580,17 @@ public struct DiscoveredPeer {
     public var ip: String
     public var udpPort: UInt16
     public var tcpPort: UInt16
+    public var device: DeviceMeta?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeId: String, name: String, ip: String, udpPort: UInt16, tcpPort: UInt16) {
+    public init(nodeId: String, name: String, ip: String, udpPort: UInt16, tcpPort: UInt16, device: DeviceMeta?) {
         self.nodeId = nodeId
         self.name = name
         self.ip = ip
         self.udpPort = udpPort
         self.tcpPort = tcpPort
+        self.device = device
     }
 }
 
@@ -518,6 +613,9 @@ extension DiscoveredPeer: Equatable, Hashable {
         if lhs.tcpPort != rhs.tcpPort {
             return false
         }
+        if lhs.device != rhs.device {
+            return false
+        }
         return true
     }
 
@@ -527,6 +625,7 @@ extension DiscoveredPeer: Equatable, Hashable {
         hasher.combine(ip)
         hasher.combine(udpPort)
         hasher.combine(tcpPort)
+        hasher.combine(device)
     }
 }
 
@@ -542,7 +641,8 @@ public struct FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer {
                 name: FfiConverterString.read(from: &buf), 
                 ip: FfiConverterString.read(from: &buf), 
                 udpPort: FfiConverterUInt16.read(from: &buf), 
-                tcpPort: FfiConverterUInt16.read(from: &buf)
+                tcpPort: FfiConverterUInt16.read(from: &buf), 
+                device: FfiConverterOptionTypeDeviceMeta.read(from: &buf)
         )
     }
 
@@ -552,6 +652,7 @@ public struct FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer {
         FfiConverterString.write(value.ip, into: &buf)
         FfiConverterUInt16.write(value.udpPort, into: &buf)
         FfiConverterUInt16.write(value.tcpPort, into: &buf)
+        FfiConverterOptionTypeDeviceMeta.write(value.device, into: &buf)
     }
 }
 
@@ -569,6 +670,108 @@ public func FfiConverterTypeDiscoveredPeer_lift(_ buf: RustBuffer) throws -> Dis
 public func FfiConverterTypeDiscoveredPeer_lower(_ value: DiscoveredPeer) -> RustBuffer {
     return FfiConverterTypeDiscoveredPeer.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Device form factor classification.
+ */
+
+public enum DeviceType {
+    
+    case mobile
+    case tablet
+    case laptop
+    case desktop
+    case server
+    case wsl
+    case unknown
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceType: FfiConverterRustBuffer {
+    typealias SwiftType = DeviceType
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceType {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .mobile
+        
+        case 2: return .tablet
+        
+        case 3: return .laptop
+        
+        case 4: return .desktop
+        
+        case 5: return .server
+        
+        case 6: return .wsl
+        
+        case 7: return .unknown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DeviceType, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .mobile:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .tablet:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .laptop:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .desktop:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .server:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .wsl:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceType_lift(_ buf: RustBuffer) throws -> DeviceType {
+    return try FfiConverterTypeDeviceType.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceType_lower(_ value: DeviceType) -> RustBuffer {
+    return FfiConverterTypeDeviceType.lower(value)
+}
+
+
+
+extension DeviceType: Equatable, Hashable {}
+
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -589,6 +792,30 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeDeviceMeta: FfiConverterRustBuffer {
+    typealias SwiftType = DeviceMeta?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDeviceMeta.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDeviceMeta.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -624,6 +851,15 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 public func advertisedAddresses() -> [String] {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_advertised_addresses($0
+    )
+})
+}
+/**
+ * Detect the current machine's hardware profile, OS, architecture, and form factor.
+ */
+public func getDeviceMeta() -> DeviceMeta {
+    return try!  FfiConverterTypeDeviceMeta.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_get_device_meta($0
     )
 })
 }
@@ -725,6 +961,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_get_device_meta() != 13951) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_is_lan_peer() != 63646) {

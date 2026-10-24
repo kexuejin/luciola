@@ -729,6 +729,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -745,6 +747,8 @@ internal interface UniffiLib : Library {
     }
 
     fun uniffi_luciola_uniffi_fn_func_advertised_addresses(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_get_device_meta(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_is_lan_peer(`peerAddress`: RustBuffer.ByValue,`localAddresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -876,6 +880,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_checksum_func_advertised_addresses(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_func_get_device_meta(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_func_is_lan_peer(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_is_physical_nic(
@@ -910,6 +916,9 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_get_device_meta() != 13951.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_is_lan_peer() != 63646.toShort()) {
@@ -1089,6 +1098,53 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
 
 
 /**
+ * Device hardware and OS metadata.
+ */
+data class DeviceMeta (
+    var `deviceType`: DeviceType, 
+    var `icon`: kotlin.String, 
+    var `os`: kotlin.String, 
+    var `arch`: kotlin.String, 
+    var `model`: kotlin.String?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta> {
+    override fun read(buf: ByteBuffer): DeviceMeta {
+        return DeviceMeta(
+            FfiConverterTypeDeviceType.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DeviceMeta) = (
+            FfiConverterTypeDeviceType.allocationSize(value.`deviceType`) +
+            FfiConverterString.allocationSize(value.`icon`) +
+            FfiConverterString.allocationSize(value.`os`) +
+            FfiConverterString.allocationSize(value.`arch`) +
+            FfiConverterOptionalString.allocationSize(value.`model`)
+    )
+
+    override fun write(value: DeviceMeta, buf: ByteBuffer) {
+            FfiConverterTypeDeviceType.write(value.`deviceType`, buf)
+            FfiConverterString.write(value.`icon`, buf)
+            FfiConverterString.write(value.`os`, buf)
+            FfiConverterString.write(value.`arch`, buf)
+            FfiConverterOptionalString.write(value.`model`, buf)
+    }
+}
+
+
+
+/**
  * A discovered peer node in the local network.
  */
 data class DiscoveredPeer (
@@ -1096,7 +1152,8 @@ data class DiscoveredPeer (
     var `name`: kotlin.String, 
     var `ip`: kotlin.String, 
     var `udpPort`: kotlin.UShort, 
-    var `tcpPort`: kotlin.UShort
+    var `tcpPort`: kotlin.UShort, 
+    var `device`: DeviceMeta?
 ) {
     
     companion object
@@ -1113,6 +1170,7 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterString.read(buf),
             FfiConverterUShort.read(buf),
             FfiConverterUShort.read(buf),
+            FfiConverterOptionalTypeDeviceMeta.read(buf),
         )
     }
 
@@ -1121,7 +1179,8 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterString.allocationSize(value.`name`) +
             FfiConverterString.allocationSize(value.`ip`) +
             FfiConverterUShort.allocationSize(value.`udpPort`) +
-            FfiConverterUShort.allocationSize(value.`tcpPort`)
+            FfiConverterUShort.allocationSize(value.`tcpPort`) +
+            FfiConverterOptionalTypeDeviceMeta.allocationSize(value.`device`)
     )
 
     override fun write(value: DiscoveredPeer, buf: ByteBuffer) {
@@ -1130,8 +1189,47 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterString.write(value.`ip`, buf)
             FfiConverterUShort.write(value.`udpPort`, buf)
             FfiConverterUShort.write(value.`tcpPort`, buf)
+            FfiConverterOptionalTypeDeviceMeta.write(value.`device`, buf)
     }
 }
+
+
+
+/**
+ * Device form factor classification.
+ */
+
+enum class DeviceType {
+    
+    MOBILE,
+    TABLET,
+    LAPTOP,
+    DESKTOP,
+    SERVER,
+    WSL,
+    UNKNOWN;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDeviceType: FfiConverterRustBuffer<DeviceType> {
+    override fun read(buf: ByteBuffer) = try {
+        DeviceType.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: DeviceType) = 4UL
+
+    override fun write(value: DeviceType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -1171,6 +1269,38 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta?> {
+    override fun read(buf: ByteBuffer): DeviceMeta? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeDeviceMeta.read(buf)
+    }
+
+    override fun allocationSize(value: DeviceMeta?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeDeviceMeta.allocationSize(value)
+        }
+    }
+
+    override fun write(value: DeviceMeta?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeDeviceMeta.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -1198,6 +1328,18 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
             return FfiConverterSequenceString.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_advertised_addresses(
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * Detect the current machine's hardware profile, OS, architecture, and form factor.
+         */ fun `getDeviceMeta`(): DeviceMeta {
+            return FfiConverterTypeDeviceMeta.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_get_device_meta(
         _status)
 }
     )

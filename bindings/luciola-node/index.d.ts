@@ -45,12 +45,26 @@ export function isVirtualNic(name: string): boolean;
  */
 export function isPhysicalNic(name: string): boolean;
 
+export interface JsDeviceMeta {
+  deviceType: 'mobile' | 'tablet' | 'laptop' | 'desktop' | 'server' | 'wsl' | 'unknown';
+  icon: string;
+  os: string;
+  arch: string;
+  model?: string;
+}
+
+/**
+ * Detect the current machine's hardware profile, OS, architecture, and form factor.
+ */
+export function getDeviceMeta(): JsDeviceMeta;
+
 export interface JsPeerRecord {
   nodeId: string;
   name: string;
   ip: string;
   udpPort: number;
   tcpPort: number;
+  device?: JsDeviceMeta;
 }
 
 /**

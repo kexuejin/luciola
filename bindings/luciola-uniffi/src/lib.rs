@@ -5,6 +5,28 @@ use luciola_net::{is_physical_interface_name, is_virtual_interface_name, Network
 use qrcode::render::unicode;
 use qrcode::QrCode;
 
+/// Device form factor classification.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceType {
+    Mobile,
+    Tablet,
+    Laptop,
+    Desktop,
+    Server,
+    Wsl,
+    Unknown,
+}
+
+/// Device hardware and OS metadata.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct DeviceMeta {
+    pub device_type: DeviceType,
+    pub icon: String,
+    pub os: String,
+    pub arch: String,
+    pub model: Option<String>,
+}
+
 /// A discovered peer node in the local network.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveredPeer {
@@ -13,6 +35,29 @@ pub struct DiscoveredPeer {
     pub ip: String,
     pub udp_port: u16,
     pub tcp_port: u16,
+    pub device: Option<DeviceMeta>,
+}
+
+/// Detect the current machine's hardware profile, OS, architecture, and form factor.
+#[uniffi::export]
+pub fn get_device_meta() -> DeviceMeta {
+    let meta = luciola_net::DeviceDetector::detect();
+    let dtype = match meta.device_type {
+        luciola_proto::DeviceType::Mobile => DeviceType::Mobile,
+        luciola_proto::DeviceType::Tablet => DeviceType::Tablet,
+        luciola_proto::DeviceType::Laptop => DeviceType::Laptop,
+        luciola_proto::DeviceType::Desktop => DeviceType::Desktop,
+        luciola_proto::DeviceType::Server => DeviceType::Server,
+        luciola_proto::DeviceType::Wsl => DeviceType::Wsl,
+        luciola_proto::DeviceType::Unknown => DeviceType::Unknown,
+    };
+    DeviceMeta {
+        device_type: dtype,
+        icon: meta.device_type.icon().to_string(),
+        os: meta.os,
+        arch: meta.arch,
+        model: meta.model,
+    }
 }
 
 /// Select the best local IPv4 address for QR code / LAN access.

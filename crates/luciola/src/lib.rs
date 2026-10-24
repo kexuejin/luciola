@@ -38,6 +38,7 @@ pub struct PeerRecord {
     pub tcp_port: u16,
     pub online: bool,
     pub last_seen: Instant,
+    pub device: Option<luciola_proto::DeviceMeta>,
 }
 
 /// Discovery events emitted by the engine.
@@ -84,6 +85,7 @@ impl PeerRegistry {
                     existing.name = p.name.clone();
                     existing.profile_rev = p.profile_rev;
                     existing.tcp_port = p.tcp_port;
+                    existing.device = p.device.clone();
                 }
             }
 
@@ -99,6 +101,7 @@ impl PeerRegistry {
                 tcp_port: p.tcp_port,
                 online: true,
                 last_seen: now,
+                device: p.device.clone(),
             };
             self.peers.insert(node_id.to_string(), record.clone());
             (Some(record), true)
@@ -161,6 +164,7 @@ impl Default for DiscoveryConfig {
                 addresses: Vec::new(),
                 udp_port: 17878,
                 tcp_port: 17879,
+                device: Some(luciola_net::DeviceDetector::detect()),
             },
             listen_port: 17878,
             broadcast_port: 17878,
@@ -509,6 +513,7 @@ mod tests {
             addresses: vec!["127.0.0.1".to_string()],
             udp_port: 0,
             tcp_port: 8081,
+            device: None,
         };
         let mut config_a = DiscoveryConfig::default();
         config_a.self_profile = profile_a;
@@ -523,6 +528,7 @@ mod tests {
             addresses: vec!["127.0.0.1".to_string()],
             udp_port: 0,
             tcp_port: 8082,
+            device: None,
         };
         let mut config_b = DiscoveryConfig::default();
         config_b.self_profile = profile_b;

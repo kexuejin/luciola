@@ -426,6 +426,7 @@ name = "luciola-net"
 version = "0.1.0"
 dependencies = [
  "luciola-ip",
+ "luciola-proto",
  "network-interface",
  "thiserror 2.0.21",
  "tracing",
