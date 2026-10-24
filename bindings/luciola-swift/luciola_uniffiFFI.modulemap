@@ -1,0 +1,4 @@
+module luciola_uniffiFFI {
+    header "luciola_uniffiFFI.h"
+    export *
+}

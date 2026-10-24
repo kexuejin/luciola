@@ -7,6 +7,7 @@ members = [
     "crates/luciola",
     "crates/luciola-cli",
     "bindings/luciola-node",
+    "bindings/luciola-uniffi",
 ]
 
 [workspace.package]

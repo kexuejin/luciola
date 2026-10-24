@@ -16,3 +16,4 @@ rand.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+qrcode = "0.14"

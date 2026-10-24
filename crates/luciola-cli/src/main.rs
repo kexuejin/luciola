@@ -2,8 +2,21 @@ use clap::{Parser, Subcommand};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
 use luciola_net::NetworkDetector;
 use luciola_proto::Profile;
+use qrcode::render::unicode;
+use qrcode::QrCode;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
+
+/// Render a UTF-8 compact QR code for terminal display.
+pub fn render_qr_terminal(content: &str) -> Option<String> {
+    let code = QrCode::new(content.as_bytes()).ok()?;
+    let string = code
+        .render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Dark)
+        .light_color(unicode::Dense1x2::Light)
+        .build();
+    Some(string)
+}
 
 #[derive(Parser)]
 #[command(name = "luciola")]
@@ -28,9 +41,19 @@ enum Commands {
         name: String,
         #[arg(short, long, default_value_t = 17878)]
         port: u16,
+        /// Print terminal QR code for instant mobile pairing
+        #[arg(long)]
+        qr: bool,
     },
     /// Inspect local network interfaces, TUN detection, and candidate IPs
-    Ip,
+    Ip {
+        /// Render terminal QR code for the top local LAN IP
+        #[arg(long)]
+        qr: bool,
+        /// Port to use in QR URL (default: 8080)
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+    },
 }
 
 #[tokio::main]
@@ -78,18 +101,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Beacon { name, port } => {
+        Commands::Beacon { name, port, qr } => {
             let node_id = format!("luciola_{:x}", rand::random::<u32>());
             println!("📢 Broadcasting beacon as '{}' ({}) on port {}...", name, node_id, port);
 
+            let candidates = NetworkDetector::local_candidate_addresses();
             let profile = Profile {
                 node_id: node_id.clone(),
                 name,
                 profile_rev: 1,
-                addresses: NetworkDetector::local_candidate_addresses(),
+                addresses: candidates.clone(),
                 udp_port: port,
                 tcp_port: port + 1,
             };
+
+            if qr {
+                if let Some(best_ip) = candidates.first() {
+                    let url = if best_ip.contains(':') {
+                        format!("http://[{}]:{}", best_ip, port + 1)
+                    } else {
+                        format!("http://{}:{}", best_ip, port + 1)
+                    };
+                    println!("\n📱 Scan with your phone to connect:");
+                    println!("👉 URL: {}", url);
+                    if let Some(qr_art) = render_qr_terminal(&url) {
+                        println!("\n{}", qr_art);
+                    }
+                }
+            }
 
             let mut config = DiscoveryConfig::default();
             config.self_profile = profile;
@@ -117,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine.announce_exit().await;
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Commands::Ip => {
+        Commands::Ip { qr, port } => {
             println!("========================================================");
             println!("       Luciola Network Interface & Route Intelligence    ");
             println!("========================================================");
@@ -139,6 +178,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 for (idx, c) in candidates.iter().enumerate() {
                     println!("  [{}] {}", idx + 1, c);
+                }
+            }
+
+            if qr {
+                if let Some(best_ip) = candidates.first() {
+                    let url = if best_ip.contains(':') {
+                        format!("http://[{}]:{}", best_ip, port)
+                    } else {
+                        format!("http://{}:{}", best_ip, port)
+                    };
+                    println!("\n📱 QR Code for Top LAN IP (Port {}):", port);
+                    println!("👉 Direct URL: {}", url);
+                    if let Some(qr_art) = render_qr_terminal(&url) {
+                        println!("\n{}", qr_art);
+                    }
                 }
             }
 

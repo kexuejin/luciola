@@ -1,0 +1,25 @@
+[package]
+name = "luciola-uniffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UniFFI bindings for Kotlin (Android/JVM) and Swift (iOS/macOS)"
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+uniffi = { version = "0.28", features = ["cli"] }
+luciola-ip = { path = "../../crates/luciola-ip" }
+luciola-net = { path = "../../crates/luciola-net" }
+luciola-proto = { path = "../../crates/luciola-proto" }
+luciola = { path = "../../crates/luciola" }
+qrcode = "0.14"
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
