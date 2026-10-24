@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Luciola Live Radar Demo</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes sweep {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .radar-sweep {
+      animation: sweep 4s linear infinite;
+      transform-origin: center center;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.9); opacity: 0.8; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    .pulse-effect::before {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 9999px;
+      border: 2px solid currentColor;
+      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-neutral-900 text-neutral-100 antialiased p-6 min-h-screen">
+
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- Header bar -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-neutral-800">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-xl shadow-inner">
+          ✨
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-xl font-bold tracking-tight">Luciola (萤火) 实时局域网雷达</h1>
+            <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Live UDP Engine
+            </span>
+          </div>
+          <p class="text-xs text-neutral-400">真实运行于 Node.js (@luciola/core) · 物理网卡感知 · 防代理 TUN 截流</p>
+        </div>
+      </div>
+
+      <!-- Local Machine Identity Card -->
+      <div class="flex items-center gap-3 bg-neutral-800/80 px-4 py-2.5 rounded-xl border border-neutral-700/80 text-xs shadow-sm">
+        <div class="text-2xl" id="localIcon">🖥️</div>
+        <div>
+          <div class="font-semibold text-white flex items-center gap-1.5">
+            <span id="localModel">Mac16,11</span>
+            <span class="text-neutral-400 font-normal">(本机真实探测)</span>
+          </div>
+          <div class="text-neutral-400 flex items-center gap-2 mt-0.5">
+            <span class="font-mono text-emerald-400" id="localIp">192.168.2.82:17878</span>
+            <span>•</span>
+            <span id="localArch">macOS (aarch64)</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left: Radar Screen -->
+      <div class="lg:col-span-5 bg-neutral-800/60 border border-neutral-800 rounded-2xl p-6 flex flex-col items-center justify-center relative overflow-hidden shadow-sm">
+        <div class="w-full flex items-center justify-between mb-4">
+          <span class="text-xs font-semibold uppercase tracking-wider text-neutral-400">实时广播网段</span>
+          <span class="text-xs font-mono text-emerald-400" id="subnetLabel">--</span>
+        </div>
+
+        <!-- Radar Canvas -->
+        <div class="relative w-64 h-64 rounded-full border border-emerald-500/20 bg-emerald-950/20 flex items-center justify-center my-2 shadow-inner">
+          <div class="absolute w-48 h-48 rounded-full border border-emerald-500/15"></div>
+          <div class="absolute w-32 h-32 rounded-full border border-emerald-500/20"></div>
+          <div class="absolute w-16 h-16 rounded-full border border-emerald-500/25"></div>
+          <div class="absolute inset-0 flex items-center justify-center">
+            <div class="w-full h-px bg-emerald-500/15"></div>
+          </div>
+          <div class="absolute inset-0 flex items-center justify-center">
+            <div class="h-full w-px bg-emerald-500/15"></div>
+          </div>
+          <!-- Sweep Line -->
+          <div class="absolute inset-0 radar-sweep pointer-events-none">
+            <div class="w-1/2 h-1/2 ml-auto origin-bottom-left" style="background: conic-gradient(from 180deg at 0% 100%, rgba(16, 185, 129, 0.35) 0deg, transparent 60deg);"></div>
+          </div>
+          <!-- Local Center -->
+          <div class="relative z-10 w-4 h-4 rounded-full bg-emerald-500 shadow-md pulse-effect text-emerald-400"></div>
+
+          <!-- Dynamic Blips Container -->
+          <div id="radarBlips"></div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-center gap-4 text-xs text-neutral-400">
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> 本机</div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> 发现的邻居节点</div>
+        </div>
+
+        <!-- QR Code Card -->
+        <div class="w-full mt-6 pt-4 border-t border-neutral-700/60 flex items-center gap-4">
+          <canvas id="qrCanvas" width="90" height="90" class="rounded-lg bg-white p-1 shadow"></canvas>
+          <div class="flex-1 text-xs">
+            <div class="font-semibold text-white">手机扫码同网直连</div>
+            <div class="font-mono text-emerald-400 truncate mt-0.5" id="qrUrlLabel">http://...</div>
+            <div class="text-neutral-500 mt-1">自动排除 Docker / Tailscale 虚拟网卡</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Peer Node List & Event Log -->
+      <div class="lg:col-span-7 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-base font-semibold">局域网发现的对等节点 (Real-time Peers)</h2>
+          <span class="text-xs text-neutral-400" id="peerCountLabel">0 个活跃节点</span>
+        </div>
+
+        <!-- Peer List -->
+        <div class="space-y-3" id="peerContainer">
+          <div id="emptyPeerNotice" class="p-8 text-center border border-dashed border-neutral-700 rounded-xl text-neutral-500 text-xs">
+            <div class="text-2xl mb-1">📡</div>
+            正在持续监听局域网对等广播包...<br>
+            可在终端另起一个实例运行 <code class="text-amber-400 bg-neutral-800 px-1.5 py-0.5 rounded">cargo run -p luciola-cli -- beacon</code> 进行对等互联。
+          </div>
+        </div>
+
+        <!-- Event Logs -->
+        <div class="space-y-2 pt-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold uppercase tracking-wider text-neutral-400">协议通信事件流 (Live Event Stream)</span>
+            <span class="text-xs text-emerald-400 font-mono" id="sseStatus">SSE: Connected</span>
+          </div>
+          <div id="logBox" class="p-4 bg-neutral-950 font-mono text-xs text-neutral-300 rounded-xl h-48 overflow-y-auto space-y-1 border border-neutral-800">
+            <div class="text-neutral-500">Waiting for live network events...</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    const peers = new Map();
+
+    async function loadStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        // Local identity
+        if (data.localDevice) {
+          document.getElementById('localIcon').innerText = data.localDevice.icon || '🖥️';
+          document.getElementById('localModel').innerText = data.localDevice.model || data.localDevice.deviceType;
+          document.getElementById('localArch').innerText = `${data.localDevice.os} (${data.localDevice.arch})`;
+        }
+        if (data.lanIp) {
+          document.getElementById('localIp').innerText = `${data.lanIp}:17878`;
+          const qrUrl = `http://${data.lanIp}:3000`;
+          document.getElementById('qrUrlLabel').innerText = qrUrl;
+          drawSimpleQr(qrUrl);
+        }
+        if (data.subnetBroadcasts && data.subnetBroadcasts.length > 0) {
+          document.getElementById('subnetLabel').innerText = data.subnetBroadcasts.join(' / ');
+        }
+
+        if (data.peers && data.peers.length > 0) {
+          for (const p of data.peers) {
+            peers.set(p.nodeId, p);
+          }
+          renderPeers();
+        }
+      } catch (e) {
+        console.error('Failed to load status:', e);
+      }
+    }
+
+    function renderPeers() {
+      const container = document.getElementById('peerContainer');
+      const blipsContainer = document.getElementById('radarBlips');
+      const emptyNotice = document.getElementById('emptyPeerNotice');
+
+      if (peers.size === 0) {
+        if (emptyNotice) emptyNotice.style.display = 'block';
+        document.getElementById('peerCountLabel').innerText = '0 个活跃节点';
+        blipsContainer.innerHTML = '';
+        return;
+      }
+
+      if (emptyNotice) emptyNotice.style.display = 'none';
+      document.getElementById('peerCountLabel').innerText = `${peers.size} 个活跃节点`;
+
+      container.innerHTML = '';
+      blipsContainer.innerHTML = '';
+
+      let idx = 0;
+      for (const [nodeId, p] of peers.entries()) {
+        const icon = (p.device && p.device.icon) || '🌐';
+        const model = (p.device && (p.device.model || p.device.deviceType)) || 'Neighbor Node';
+        const os = (p.device && `${p.device.os} (${p.device.arch})`) || 'LAN Peer';
+
+        const row = document.createElement('div');
+        row.className = 'bg-neutral-800/80 border border-neutral-700/80 rounded-xl p-4 flex items-center justify-between shadow-sm';
+        row.innerHTML = `
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-xl">
+              ${icon}
+            </div>
+            <div>
+              <div class="font-semibold text-sm flex items-center gap-2">
+                <span>${p.name}</span>
+                <span class="text-xs font-normal px-2 py-0.5 rounded bg-neutral-700 text-neutral-300">${model}</span>
+              </div>
+              <div class="text-xs text-neutral-400 flex items-center gap-2 mt-1">
+                <span class="font-mono">${p.ip}:${p.udpPort}</span>
+                <span>•</span>
+                <span>${os}</span>
+                <span>•</span>
+                <span class="text-emerald-400 font-medium">Online</span>
+              </div>
+            </div>
+          </div>
+          <button class="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-700 hover:bg-neutral-700 transition-colors">
+            Ping
+          </button>
+        `;
+        container.appendChild(row);
+
+        // Blip on radar
+        const angle = (idx * 137.5) * (Math.PI / 180);
+        const radius = 40 + (idx % 3) * 25;
+        const x = 128 + Math.cos(angle) * radius;
+        const y = 128 + Math.sin(angle) * radius;
+
+        const blip = document.createElement('div');
+        blip.className = 'absolute w-3.5 h-3.5 rounded-full bg-amber-400 border border-white shadow';
+        blip.style.left = `${x - 7}px`;
+        blip.style.top = `${y - 7}px`;
+        blip.title = `${p.name} (${p.ip})`;
+        blipsContainer.appendChild(blip);
+
+        idx++;
+      }
+    }
+
+    function appendLog(text, color = 'text-neutral-300') {
+      const box = document.getElementById('logBox');
+      const line = document.createElement('div');
+      line.className = color;
+      const time = new Date().toTimeString().split(' ')[0];
+      line.innerText = `[${time}] ${text}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    // Connect SSE
+    function initSSE() {
+      const evtSource = new EventSource('/api/events');
+      evtSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'peer_found') {
+            peers.set(data.peer.nodeId, data.peer);
+            renderPeers();
+            appendLog(`✨ Found peer: ${data.peer.name} @ ${data.peer.ip}`, 'text-amber-400');
+          } else if (data.type === 'peer_expired') {
+            peers.delete(data.nodeId);
+            renderPeers();
+            appendLog(`👋 Peer expired: ${data.nodeId}`, 'text-neutral-500');
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      evtSource.onerror = () => {
+        document.getElementById('sseStatus').innerText = 'SSE: Reconnecting...';
+        document.getElementById('sseStatus').className = 'text-xs text-amber-500 font-mono';
+      };
+      evtSource.onopen = () => {
+        document.getElementById('sseStatus').innerText = 'SSE: Connected';
+        document.getElementById('sseStatus').className = 'text-xs text-emerald-400 font-mono';
+      };
+    }
+
+    function drawSimpleQr(text) {
+      const canvas = document.getElementById('qrCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 90, 90);
+      ctx.fillStyle = '#111827';
+      const cell = 90 / 21;
+
+      function finder(x, y) {
+        ctx.fillRect(x*cell, y*cell, 7*cell, 7*cell);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect((x+1)*cell, (y+1)*cell, 5*cell, 5*cell);
+        ctx.fillStyle = '#111827';
+        ctx.fillRect((x+2)*cell, (y+2)*cell, 3*cell, 3*cell);
+      }
+      finder(1, 1);
+      finder(13, 1);
+      finder(1, 13);
+
+      for (let r = 0; r < 21; r++) {
+        for (let c = 0; c < 21; c++) {
+          if ((r < 8 && c < 8) || (r < 8 && c >= 13) || (r >= 13 && c < 8)) continue;
+          if ((r * 11 + c * 17) % 3 === 0) {
+            ctx.fillRect(c * cell, r * cell, cell, cell);
+          }
+        }
+      }
+    }
+
+    window.onload = () => {
+      loadStatus();
+      initSSE();
+    };
+  </script>
+</body>
+</html>
