@@ -1,0 +1,9 @@
+[package]
+name = "luciola-ip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure algorithms for RFC IPv6 scoping, domestic broadband GUA LAN detection, and proxy TUN IP filtering"
+
+[dependencies]

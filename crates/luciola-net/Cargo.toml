@@ -1,0 +1,13 @@
+[package]
+name = "luciola-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Network interface intelligence, physical/virtual scoring, WSL2 passthrough, and subnet broadcast calculation"
+
+[dependencies]
+luciola-ip = { path = "../luciola-ip" }
+network-interface = "2.0"
+thiserror.workspace = true
+tracing.workspace = true

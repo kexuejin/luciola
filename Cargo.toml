@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/luciola-ip",
+    "crates/luciola-net",
+    "crates/luciola-proto",
+    "crates/luciola-core",
+    "crates/luciola-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Luciola Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luciola-p2p/luciola"
+readme = "README.md"
+keywords = ["p2p", "discovery", "lan", "ipv6", "peer-to-peer"]
+categories = ["network-programming", "asynchronous"]
+
+[workspace.dependencies]
+tokio = { version = "1.43", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+clap = { version = "4.5", features = ["derive"] }

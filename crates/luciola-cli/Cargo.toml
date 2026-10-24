@@ -1,0 +1,18 @@
+[package]
+name = "luciola-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line interface and diagnostic radar for the Luciola P2P discovery engine"
+
+[dependencies]
+luciola-ip = { path = "../luciola-ip" }
+luciola-net = { path = "../luciola-net" }
+luciola-proto = { path = "../luciola-proto" }
+luciola-core = { path = "../luciola-core" }
+clap.workspace = true
+rand.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
