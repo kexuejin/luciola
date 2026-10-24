@@ -30,6 +30,7 @@ import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
 // A rust-owned buffer is represented by its capacity, its current length, and a
@@ -653,6 +654,43 @@ internal open class UniffiForeignFutureStructVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceOnPeerDiscoveredMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`peer`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("onPeerDiscovered", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceOnPeerDiscovered(
+    @JvmField internal var `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0? = null,
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+) : Structure() {
+    class UniffiByValue(
+        `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0? = null,
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    ): UniffiVTableCallbackInterfaceOnPeerDiscovered(`onPeerDiscovered`,`uniffiFree`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceOnPeerDiscovered) {
+        `onPeerDiscovered` = other.`onPeerDiscovered`
+        `uniffiFree` = other.`uniffiFree`
+    }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -741,11 +779,36 @@ internal interface UniffiLib : Library {
             .also { lib: UniffiLib ->
                 uniffiCheckContractApiVersion(lib)
                 uniffiCheckApiChecksums(lib)
+                uniffiCallbackInterfaceOnPeerDiscovered.register(lib)
                 }
         }
         
+        // The Cleaner for the whole library
+        internal val CLEANER: UniffiCleaner by lazy {
+            UniffiCleaner.create()
+        }
     }
 
+    fun uniffi_luciola_uniffi_fn_clone_discoverysession(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_luciola_uniffi_fn_free_discoverysession(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_node_id(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_restart(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Double
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_start(`ptr`: Pointer,`listener`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_stop(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(`vtable`: UniffiVTableCallbackInterfaceOnPeerDiscovered,
+    ): Unit
     fun uniffi_luciola_uniffi_fn_func_advertised_addresses(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_get_device_meta(uniffi_out_err: UniffiRustCallStatus, 
@@ -898,6 +961,22 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_node_id(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_restart(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idle(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_start(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_stop(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered(
+    ): Short
     fun ffi_luciola_uniffi_uniffi_contract_version(
     ): Int
     
@@ -936,13 +1015,37 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 26274.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 34654.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_select_lan_ip() != 61023.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses() != 6105.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound() != 50984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_node_id() != 23559.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_restart() != 7511.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idle() != 7024.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_start() != 53880.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 2971.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1012,6 +1115,29 @@ public object FfiConverterUShort: FfiConverter<UShort, Short> {
 
     override fun write(value: UShort, buf: ByteBuffer) {
         buf.putShort(value.toShort())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterDouble: FfiConverter<Double, Double> {
+    override fun lift(value: Double): Double {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Double {
+        return buf.getDouble()
+    }
+
+    override fun lower(value: Double): Double {
+        return value
+    }
+
+    override fun allocationSize(value: Double) = 8UL
+
+    override fun write(value: Double, buf: ByteBuffer) {
+        buf.putDouble(value)
     }
 }
 
@@ -1092,6 +1218,461 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
         val byteBuf = toUtf8(value)
         buf.putInt(byteBuf.limit())
         buf.put(byteBuf)
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * The cleaner interface for Object finalization code to run.
+ * This is the entry point to any implementation that we're using.
+ *
+ * The cleaner registers objects and returns cleanables, so now we are
+ * defining a `UniffiCleaner` with a `UniffiClenaer.Cleanable` to abstract the
+ * different implmentations available at compile time.
+ *
+ * @suppress
+ */
+interface UniffiCleaner {
+    interface Cleanable {
+        fun clean()
+    }
+
+    fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable
+
+    companion object
+}
+
+// The fallback Jna cleaner, which is available for both Android, and the JVM.
+private class UniffiJnaCleaner : UniffiCleaner {
+    private val cleaner = com.sun.jna.internal.Cleaner.getCleaner()
+
+    override fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable =
+        UniffiJnaCleanable(cleaner.register(value, cleanUpTask))
+}
+
+private class UniffiJnaCleanable(
+    private val cleanable: com.sun.jna.internal.Cleaner.Cleanable,
+) : UniffiCleaner.Cleanable {
+    override fun clean() = cleanable.clean()
+}
+
+// We decide at uniffi binding generation time whether we were
+// using Android or not.
+// There are further runtime checks to chose the correct implementation
+// of the cleaner.
+private fun UniffiCleaner.Companion.create(): UniffiCleaner =
+    try {
+        // For safety's sake: if the library hasn't been run in android_cleaner = true
+        // mode, but is being run on Android, then we still need to think about
+        // Android API versions.
+        // So we check if java.lang.ref.Cleaner is there, and use that…
+        java.lang.Class.forName("java.lang.ref.Cleaner")
+        JavaLangRefCleaner()
+    } catch (e: ClassNotFoundException) {
+        // … otherwise, fallback to the JNA cleaner.
+        UniffiJnaCleaner()
+    }
+
+private class JavaLangRefCleaner : UniffiCleaner {
+    val cleaner = java.lang.ref.Cleaner.create()
+
+    override fun register(value: Any, cleanUpTask: Runnable): UniffiCleaner.Cleanable =
+        JavaLangRefCleanable(cleaner.register(value, cleanUpTask))
+}
+
+private class JavaLangRefCleanable(
+    val cleanable: java.lang.ref.Cleaner.Cleanable
+) : UniffiCleaner.Cleanable {
+    override fun clean() = cleanable.clean()
+}
+/**
+ * Active P2P discovery session backed by the Luciola UDP broadcast engine.
+ *
+ * The engine announces this device's presence (`entry`), replies to probes
+ * (`alive`), keeps a periodic heartbeat (`presence`), and reports every newly
+ * discovered LAN peer through the `OnPeerDiscovered` callback.
+ *
+ * Supervision is built in so hosts do not re-implement it per platform:
+ * - `node_id` is stable for the session's lifetime — engine restarts keep the
+ * same identity and remote registries do not see a "new" device.
+ * - `start` retries the UDP bind so a restart racing the old socket's release
+ * does not silently fall back to an ephemeral port.
+ * - `restart()` rebuilds the engine with the same listener (hosts call this on
+ * network changes); `seconds_since_idle()` feeds host-side watchdogs.
+ */
+public interface DiscoverySessionInterface {
+    
+    /**
+     * Whether the last engine start actually bound the requested discovery
+     * port. False means the port was occupied and never freed within the
+     * retry window — the UI should not claim "online".
+     */
+    fun `isBound`(): kotlin.Boolean
+    
+    /**
+     * This session's stable engine node id. Companion sockets (sweeps, unicast
+     * reconciliation on the host side) should present the SAME identity so
+     * remote devices see ONE node, not a duplicate peer.
+     */
+    fun `nodeId`(): kotlin.String
+    
+    /**
+     * Stop the engine (announcing `exit` to neighbors) and rebuild it with the
+     * same listener and identity. Hosts call this when the network set changes;
+     * the internal bind-retry tolerates the old socket still releasing.
+     */
+    fun `restart`()
+    
+    /**
+     * Seconds since the last peer discovery (or session start). Host watchdogs
+     * treat a long idle on a networked device as "engine stalled".
+     */
+    fun `secondsSinceIdle`(): kotlin.Double
+    
+    /**
+     * Start the engine on a dedicated background thread.
+     */
+    fun `start`(`listener`: OnPeerDiscovered)
+    
+    /**
+     * Stop the session and broadcast `exit` to neighbors.
+     */
+    fun `stop`()
+    
+    companion object
+}
+
+/**
+ * Active P2P discovery session backed by the Luciola UDP broadcast engine.
+ *
+ * The engine announces this device's presence (`entry`), replies to probes
+ * (`alive`), keeps a periodic heartbeat (`presence`), and reports every newly
+ * discovered LAN peer through the `OnPeerDiscovered` callback.
+ *
+ * Supervision is built in so hosts do not re-implement it per platform:
+ * - `node_id` is stable for the session's lifetime — engine restarts keep the
+ * same identity and remote registries do not see a "new" device.
+ * - `start` retries the UDP bind so a restart racing the old socket's release
+ * does not silently fall back to an ephemeral port.
+ * - `restart()` rebuilds the engine with the same listener (hosts call this on
+ * network changes); `seconds_since_idle()` feeds host-side watchdogs.
+ */
+open class DiscoverySession: Disposable, AutoCloseable, DiscoverySessionInterface {
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+    /**
+     * Create a session announcing `name` on the given UDP discovery port.
+     */
+    constructor(`name`: kotlin.String, `port`: kotlin.UShort) :
+        this(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
+        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),_status)
+}
+    )
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_free_discoverysession(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_clone_discoverysession(pointer!!, status)
+        }
+    }
+
+    
+    /**
+     * Whether the last engine start actually bound the requested discovery
+     * port. False means the port was occupied and never freed within the
+     * retry window — the UI should not claim "online".
+     */override fun `isBound`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * This session's stable engine node id. Companion sockets (sweeps, unicast
+     * reconciliation on the host side) should present the SAME identity so
+     * remote devices see ONE node, not a duplicate peer.
+     */override fun `nodeId`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_node_id(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Stop the engine (announcing `exit` to neighbors) and rebuild it with the
+     * same listener and identity. Hosts call this when the network set changes;
+     * the internal bind-retry tolerates the old socket still releasing.
+     */override fun `restart`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_restart(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Seconds since the last peer discovery (or session start). Host watchdogs
+     * treat a long idle on a networked device as "engine stalled".
+     */override fun `secondsSinceIdle`(): kotlin.Double {
+            return FfiConverterDouble.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Start the engine on a dedicated background thread.
+     */override fun `start`(`listener`: OnPeerDiscovered)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_start(
+        it, FfiConverterTypeOnPeerDiscovered.lower(`listener`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Stop the session and broadcast `exit` to neighbors.
+     */override fun `stop`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_stop(
+        it, _status)
+}
+    }
+    
+    
+
+    
+
+    
+    
+    companion object
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDiscoverySession: FfiConverter<DiscoverySession, Pointer> {
+
+    override fun lower(value: DiscoverySession): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): DiscoverySession {
+        return DiscoverySession(value)
+    }
+
+    override fun read(buf: ByteBuffer): DiscoverySession {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: DiscoverySession) = 8UL
+
+    override fun write(value: DiscoverySession, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
     }
 }
 
@@ -1230,6 +1811,93 @@ public object FfiConverterTypeDeviceType: FfiConverterRustBuffer<DeviceType> {
 }
 
 
+
+
+
+
+
+/**
+ * Callback invoked from a background engine thread whenever a new peer is discovered.
+ */
+public interface OnPeerDiscovered {
+    
+    fun `onPeerDiscovered`(`peer`: DiscoveredPeer)
+    
+    companion object
+}
+
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+/**
+ * @suppress
+ */
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceOnPeerDiscovered {
+    internal object `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0 {
+        override fun callback(`uniffiHandle`: Long,`peer`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeOnPeerDiscovered.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPeerDiscovered`(
+                    FfiConverterTypeDiscoveredPeer.lift(`peer`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeOnPeerDiscovered.handleMap.remove(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceOnPeerDiscovered.UniffiByValue(
+        `onPeerDiscovered`,
+        uniffiFree,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeOnPeerDiscovered: FfiConverterCallbackInterface<OnPeerDiscovered>()
 
 
 
@@ -1409,6 +2077,9 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 
         /**
          * Render a compact terminal QR code for a given URL or text content.
+         *
+         * In dark terminals, swaps dark and light colors so that white background border
+         * and black QR modules are rendered correctly for optical scanning.
          */ fun `renderQrAscii`(`content`: kotlin.String): kotlin.String? {
             return FfiConverterOptionalString.lift(
     uniffiRustCall() { _status ->
