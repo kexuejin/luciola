@@ -1,0 +1,23 @@
+{
+  "name": "@luciola/core",
+  "version": "0.1.0",
+  "description": "Lightweight, resilient LAN peer discovery and interface intelligence for Node.js",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "luciola"
+  },
+  "keywords": [
+    "lan",
+    "discovery",
+    "p2p",
+    "ipv6",
+    "network-interface",
+    "peer-to-peer"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luciola-p2p/luciola.git"
+  }
+}
