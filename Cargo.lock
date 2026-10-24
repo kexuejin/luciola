@@ -237,22 +237,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
-name = "luciola-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "luciola-core",
- "luciola-ip",
- "luciola-net",
- "luciola-proto",
- "rand",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "luciola-core"
+name = "luciola"
 version = "0.1.0"
 dependencies = [
  "luciola-ip",
@@ -261,6 +246,21 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "luciola-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "luciola",
+ "luciola-ip",
+ "luciola-net",
+ "luciola-proto",
+ "rand",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -281,7 +281,7 @@ dependencies = [
 name = "luciola-node"
 version = "0.1.0"
 dependencies = [
- "luciola-core",
+ "luciola",
  "luciola-ip",
  "luciola-net",
  "luciola-proto",

@@ -15,7 +15,7 @@ napi-derive = "2.16"
 luciola-ip = { path = "../../crates/luciola-ip" }
 luciola-net = { path = "../../crates/luciola-net" }
 luciola-proto = { path = "../../crates/luciola-proto" }
-luciola-core = { path = "../../crates/luciola-core" }
+luciola = { path = "../../crates/luciola" }
 tokio = { workspace = true }
 
 [build-dependencies]

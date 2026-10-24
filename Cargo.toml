@@ -4,7 +4,7 @@ members = [
     "crates/luciola-ip",
     "crates/luciola-net",
     "crates/luciola-proto",
-    "crates/luciola-core",
+    "crates/luciola",
     "crates/luciola-cli",
     "bindings/luciola-node",
 ]

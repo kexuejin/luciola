@@ -1,10 +1,10 @@
-//! # luciola-core
+//! # luciola
 //!
-//! Async discovery engine for Luciola:
-//! - Multi-target UDP socket management (Subnet Broadcasts + Limited Broadcast + Unicast)
-//! - Peer registry tracking online status, dynamic IP drift, and profile revisions
-//! - Jittered response to prevent broadcast storm
-//! - Self-healing socket restart on stalled networks
+//! Lightweight, resilient peer discovery & interface intelligence for the real-world LAN.
+
+pub use luciola_ip as ip;
+pub use luciola_net as net;
+pub use luciola_proto as proto;
 
 use luciola_net::NetworkDetector;
 use luciola_proto::{

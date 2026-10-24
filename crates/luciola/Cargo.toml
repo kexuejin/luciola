@@ -1,10 +1,10 @@
 [package]
-name = "luciola-core"
+name = "luciola"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Async Tokio discovery engine for Luciola: UDP multi-target broadcast, peer registry, and self-healing"
+description = "Lightweight, resilient LAN peer discovery and interface intelligence engine"
 
 [dependencies]
 luciola-ip = { path = "../luciola-ip" }

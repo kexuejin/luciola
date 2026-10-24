@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use luciola_core::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
+use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
 use luciola_net::NetworkDetector;
 use luciola_proto::Profile;
 use std::time::Duration;
