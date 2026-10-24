@@ -17,6 +17,7 @@ luciola-net = { path = "../../crates/luciola-net" }
 luciola-proto = { path = "../../crates/luciola-proto" }
 luciola = { path = "../../crates/luciola" }
 tokio = { workspace = true }
+rand = { workspace = true }
 
 [build-dependencies]
 napi-build = "2.1"

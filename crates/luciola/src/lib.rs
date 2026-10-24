@@ -176,7 +176,7 @@ pub struct DiscoveryEngine {
     config: DiscoveryConfig,
     registry: Arc<RwLock<PeerRegistry>>,
     event_tx: broadcast::Sender<PeerEvent>,
-    socket: Arc<UdpSocket>,
+    socket: Arc<RwLock<Arc<UdpSocket>>>,
 }
 
 impl DiscoveryEngine {
@@ -196,7 +196,7 @@ impl DiscoveryEngine {
         std_socket.set_broadcast(true)?;
         std_socket.set_nonblocking(true)?;
 
-        let socket = Arc::new(UdpSocket::from_std(std_socket)?);
+        let socket = Arc::new(RwLock::new(Arc::new(UdpSocket::from_std(std_socket)?)));
         let registry = Arc::new(RwLock::new(PeerRegistry::new()));
         let (event_tx, _) = broadcast::channel(128);
 
@@ -208,6 +208,35 @@ impl DiscoveryEngine {
         });
 
         Ok(engine)
+    }
+
+    /// Retrieve currently bound local UDP port.
+    pub async fn local_port(&self) -> Result<u16, std::io::Error> {
+        let sock = self.socket.read().await;
+        sock.local_addr().map(|a| a.port())
+    }
+
+    /// Self-healing mechanism: Rebind and rebuild the UDP socket if network changed or stalled.
+    pub async fn restart_socket(&self) -> Result<(), CoreError> {
+        tracing::warn!("Network stalled or socket died, rebuilding UDP discovery socket...");
+        let bind_addr = SocketAddr::from(([0, 0, 0, 0], self.config.listen_port));
+        let std_socket = match std::net::UdpSocket::bind(bind_addr) {
+            Ok(s) => s,
+            Err(_) => {
+                let fallback_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+                std::net::UdpSocket::bind(fallback_addr)
+                    .map_err(|e| CoreError::BindFailed(self.config.listen_port, e))?
+            }
+        };
+
+        std_socket.set_broadcast(true)?;
+        std_socket.set_nonblocking(true)?;
+        let new_socket = Arc::new(UdpSocket::from_std(std_socket)?);
+
+        let mut sock_guard = self.socket.write().await;
+        *sock_guard = new_socket;
+        tracing::info!("UDP discovery socket successfully rebuilt!");
+        Ok(())
     }
 
     /// Subscribe to real-time peer discovery events.
@@ -278,21 +307,26 @@ impl DiscoveryEngine {
         targets
     }
 
-    async fn send_to_all_targets(&self, envelope: &Envelope) {
+    async fn send_to_all_targets(&self, envelope: &Envelope) -> usize {
         let bytes = match Codec::encode(envelope) {
             Ok(b) => b,
             Err(e) => {
                 error!("Failed to encode envelope: {}", e);
-                return;
+                return 0;
             }
         };
 
+        let mut sent = 0;
+        let active_socket = self.socket.read().await.clone();
         for (host, port) in self.compute_targets().await {
             let target = format!("{}:{}", host, port);
             if let Ok(addr) = target.parse::<SocketAddr>() {
-                let _ = self.socket.send_to(&bytes, addr).await;
+                if active_socket.send_to(&bytes, addr).await.is_ok() {
+                    sent += 1;
+                }
             }
         }
+        sent
     }
 
     async fn receive_loop(&self) {
@@ -301,7 +335,8 @@ impl DiscoveryEngine {
         let jitter = JitterScheduler::default();
 
         loop {
-            match self.socket.recv_from(&mut buf).await {
+            let active_socket = self.socket.read().await.clone();
+            match active_socket.recv_from(&mut buf).await {
                 Ok((len, peer_addr)) => {
                     let bytes = &buf[..len];
                     if let Ok(envelope) = Codec::decode(bytes) {
@@ -310,7 +345,7 @@ impl DiscoveryEngine {
                 }
                 Err(e) => {
                     warn!("UDP receive error: {}", e);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                 }
             }
         }
@@ -358,7 +393,7 @@ impl DiscoveryEngine {
                 if dedup_tracker.should_reply(&envelope.from, directed) {
                     let online_count = self.registry.read().await.online_peers().len();
                     let delay = jitter.calculate_delay(online_count, directed);
-                    let socket = self.socket.clone();
+                    let socket = self.socket.read().await.clone();
                     let self_profile = self.config.self_profile.clone();
 
                     tokio::spawn(async move {
@@ -407,7 +442,8 @@ impl DiscoveryEngine {
                 if known_rev != their_rev {
                     let entry = Codec::make_entry(&self.config.self_profile, Some("refresh"));
                     if let Ok(bytes) = Codec::encode(&entry) {
-                        let _ = self.socket.send_to(&bytes, peer_addr).await;
+                        let socket = self.socket.read().await.clone();
+                        let _ = socket.send_to(&bytes, peer_addr).await;
                     }
                 }
             }
@@ -421,6 +457,9 @@ impl DiscoveryEngine {
 
     async fn presence_loop(&self) {
         let mut seq = 0u32;
+        let mut dead_rounds = 0u32;
+        const STALLED_ROUNDS_BEFORE_RESTART: u32 = 2;
+
         loop {
             tokio::time::sleep(self.config.presence_interval).await;
             let presence = Codec::make_presence(
@@ -429,7 +468,19 @@ impl DiscoveryEngine {
                 self.config.self_profile.profile_rev,
             );
             seq = seq.wrapping_add(1);
-            self.send_to_all_targets(&presence).await;
+            let sent = self.send_to_all_targets(&presence).await;
+
+            // Self-healing: if 0 packets could be delivered to kernel for 2 consecutive rounds,
+            // assume socket is broken/stalled and rebuild it.
+            if sent == 0 {
+                dead_rounds += 1;
+                if dead_rounds >= STALLED_ROUNDS_BEFORE_RESTART {
+                    dead_rounds = 0;
+                    let _ = self.restart_socket().await;
+                }
+            } else {
+                dead_rounds = 0;
+            }
         }
     }
 
@@ -476,7 +527,7 @@ mod tests {
         let mut config_b = DiscoveryConfig::default();
         config_b.self_profile = profile_b;
         config_b.listen_port = 0; // OS assigns port
-        let port_a = engine_a.socket.local_addr().unwrap().port();
+        let port_a = engine_a.local_port().await.unwrap();
         config_b.manual_peers = vec![("127.0.0.1".to_string(), port_a)];
         let engine_b = DiscoveryEngine::bind(config_b).await.expect("bind B");
 

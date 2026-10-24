@@ -62,3 +62,123 @@ pub fn is_virtual_nic(name: String) -> bool {
 pub fn is_physical_nic(name: String) -> bool {
     is_physical_interface_name(&name)
 }
+
+/// Discovered peer record returned to JavaScript.
+#[napi(object)]
+pub struct JsPeerRecord {
+    pub node_id: String,
+    pub name: String,
+    pub ip: String,
+    pub udp_port: u32,
+    pub tcp_port: u32,
+}
+
+use napi::bindgen_prelude::*;
+use napi::threadsafe_function::{
+    ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
+};
+use tokio::sync::oneshot;
+
+/// Active P2P discovery session in Node.js.
+///
+/// Discovers other Luciola/downstream nodes across the local network and emits real-time events.
+#[napi]
+pub struct DiscoverySession {
+    name: String,
+    port: u16,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+}
+
+#[napi]
+impl DiscoverySession {
+    #[napi(constructor)]
+    pub fn new(name: Option<String>, port: Option<u32>) -> Self {
+        Self {
+            name: name.unwrap_or_else(|| "NodeJS Peer".to_string()),
+            port: port.unwrap_or(17878) as u16,
+            shutdown_tx: None,
+        }
+    }
+
+    /// Start discovery session and listen for discovered peers via callback.
+    #[napi]
+    pub fn start(&mut self, _env: Env, callback: JsFunction) -> Result<()> {
+        let tsfn: ThreadsafeFunction<JsPeerRecord, ErrorStrategy::Fatal> = callback
+            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<JsPeerRecord>| {
+                let mut obj = ctx.env.create_object()?;
+                obj.set_named_property("nodeId", ctx.value.node_id)?;
+                obj.set_named_property("name", ctx.value.name)?;
+                obj.set_named_property("ip", ctx.value.ip)?;
+                obj.set_named_property("udpPort", ctx.value.udp_port)?;
+                obj.set_named_property("tcpPort", ctx.value.tcp_port)?;
+                Ok(vec![obj])
+            })?;
+
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        self.shutdown_tx = Some(shutdown_tx);
+
+        let name = self.name.clone();
+        let port = self.port;
+        let node_id = format!("node_{:x}", rand::random::<u32>());
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+
+            rt.block_on(async move {
+                let profile = luciola::proto::Profile {
+                    node_id: node_id.clone(),
+                    name,
+                    profile_rev: 1,
+                    addresses: luciola::net::NetworkDetector::local_candidate_addresses(),
+                    udp_port: port,
+                    tcp_port: port + 1,
+                };
+
+                let mut config = luciola::DiscoveryConfig::default();
+                config.self_profile = profile;
+                config.listen_port = port;
+                config.broadcast_port = port;
+
+                if let Ok(engine) = luciola::DiscoveryEngine::bind(config).await {
+                    let mut events = engine.subscribe();
+                    engine.clone().spawn();
+                    engine.announce().await;
+
+                    loop {
+                        tokio::select! {
+                            _ = &mut shutdown_rx => {
+                                engine.announce_exit().await;
+                                break;
+                            }
+                            Ok(event) = events.recv() => {
+                                if let luciola::PeerEvent::Found(p) = event {
+                                    let record = JsPeerRecord {
+                                        node_id: p.node_id,
+                                        name: p.name,
+                                        ip: p.ip,
+                                        udp_port: p.udp_port as u32,
+                                        tcp_port: p.tcp_port as u32,
+                                    };
+                                    tsfn.call(record, ThreadsafeFunctionCallMode::NonBlocking);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+
+        Ok(())
+    }
+
+    /// Stop discovery session and broadcast exit to neighbors.
+    #[napi]
+    pub fn stop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}

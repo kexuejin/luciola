@@ -17,4 +17,16 @@ console.log('✅ isVirtualNic("en0"):', luciola.isVirtualNic('en0'));
 const isTun = luciola.isTunVirtualIp('198.18.0.1');
 console.log('✅ isTunVirtualIp("198.18.0.1"):', isTun);
 
-console.log('--- Node.js Integration All Passed! ---');
+console.log('\n--- Testing DiscoverySession in Node.js ---');
+const session = new luciola.DiscoverySession('NodeJS-Tester', 19876);
+session.start((peer) => {
+  console.log('🎉 Node.js received Peer event:', peer);
+});
+console.log('✅ DiscoverySession started successfully on port 19876');
+
+setTimeout(() => {
+  session.stop();
+  console.log('✅ DiscoverySession stopped cleanly');
+  console.log('--- Node.js Integration All Passed! ---');
+  process.exit(0);
+}, 1000);

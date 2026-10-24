@@ -44,3 +44,26 @@ export function isVirtualNic(name: string): boolean;
  * Check if an interface name looks like a real physical network interface (Wi-Fi, Ethernet).
  */
 export function isPhysicalNic(name: string): boolean;
+
+export interface JsPeerRecord {
+  nodeId: string;
+  name: string;
+  ip: string;
+  udpPort: number;
+  tcpPort: number;
+}
+
+/**
+ * Active P2P discovery session in Node.js.
+ */
+export class DiscoverySession {
+  constructor(name?: string, port?: number);
+  /**
+   * Start discovery session and listen for discovered peers via callback.
+   */
+  start(callback: (peer: JsPeerRecord) => void): void;
+  /**
+   * Stop discovery session and broadcast exit to neighbors.
+   */
+  stop(): void;
+}

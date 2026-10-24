@@ -29,7 +29,7 @@ pub fn is_virtual_interface_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
 
     // Windows ICS / hotspot virtual adapter: e.g. "本地连接* 12"
-    if lower.starts_with("本地连接*") || lower.contains("wifidirect") || lower.contains("hostednetwork") {
+    if lower.contains("本地连接*") || lower.contains("wifidirect") || lower.contains("hostednetwork") {
         return true;
     }
 
@@ -78,6 +78,55 @@ pub fn detect_wsl() -> bool {
     }
 
     false
+}
+
+/// Parse Windows `ipconfig.exe` text output to extract physical Wi-Fi/Ethernet IPv4 addresses.
+///
+/// Handles both English (`IPv4 Address. . . : 192.168.1.10`)
+/// and Chinese (`IPv4 地址 . . . . . . . . . . . : 192.168.1.10`).
+/// Automatically filters out virtual adapter blocks (vEthernet, WSL, Docker, VMware, VPN, `本地连接*`).
+pub fn parse_ipconfig_output(text: &str) -> Vec<String> {
+    let mut ips = Vec::new();
+    let mut current_block_is_virtual = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        // Interface header lines usually start at column 0 without leading spaces and end with ':'
+        if !line.starts_with(' ') && !line.starts_with('\t') && trimmed.ends_with(':') {
+            current_block_is_virtual = is_virtual_interface_name(trimmed);
+        }
+
+        if !current_block_is_virtual && (trimmed.contains("IPv4") || trimmed.contains("IP Address")) {
+            if let Some(idx) = trimmed.rfind(':') {
+                let candidate_ip = trimmed[idx + 1..].trim();
+                let clean_ip = candidate_ip.split_whitespace().next().unwrap_or(candidate_ip);
+                if luciola_ip::is_ipv4(clean_ip) && !clean_ip.starts_with("127.") && !clean_ip.starts_with("169.254.") {
+                    let s = clean_ip.to_string();
+                    if !ips.contains(&s) {
+                        ips.push(s);
+                    }
+                }
+            }
+        }
+    }
+
+    ips
+}
+
+/// In WSL2 environments, query the Windows host's physical Wi-Fi/Ethernet IP via `ipconfig.exe`.
+pub fn resolve_wsl_host_ips() -> Vec<String> {
+    if !detect_wsl() {
+        return Vec::new();
+    }
+
+    if let Ok(output) = std::process::Command::new("ipconfig.exe").output() {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            return parse_ipconfig_output(&text);
+        }
+    }
+
+    Vec::new()
 }
 
 /// Calculate the subnet broadcast address for an IPv4 address and netmask.
@@ -239,6 +288,14 @@ impl NetworkDetector {
 
         // Result: high-scoring IPv4 first, then IPv6 candidates
         let mut candidates: Vec<String> = scored_v4.into_iter().map(|a| a.ip).collect();
+
+        // In WSL2, prepend the Windows host's physical Wi-Fi IP
+        for host_ip in resolve_wsl_host_ips() {
+            if !candidates.contains(&host_ip) {
+                candidates.insert(0, host_ip);
+            }
+        }
+
         candidates.extend(v6_addrs);
         candidates.dedup();
         candidates
@@ -298,6 +355,29 @@ mod tests {
         assert!(!is_virtual_interface_name("wlan0"));
         assert!(!is_virtual_interface_name("eth0"));
         assert!(!is_virtual_interface_name("本地连接"));
+    }
+
+    #[test]
+    fn test_parse_ipconfig_output_chinese_and_english() {
+        let sample_output = r#"
+Windows IP 配置
+
+以太网适配器 vEthernet (WSL):
+   连接特定的 DNS 后缀 . . . . . . . :
+   IPv4 地址 . . . . . . . . . . . . : 172.26.112.1
+   子网掩码  . . . . . . . . . . . . : 255.255.240.0
+
+无线局域网适配器 WLAN:
+   连接特定的 DNS 后缀 . . . . . . . : lan
+   IPv4 地址 . . . . . . . . . . . . : 192.168.2.100 (首选项)
+   子网掩码  . . . . . . . . . . . . : 255.255.255.0
+
+未知适配器 本地连接* 12:
+   IPv4 地址 . . . . . . . . . . . . : 192.168.137.1
+"#;
+
+        let parsed = parse_ipconfig_output(sample_output);
+        assert_eq!(parsed, vec!["192.168.2.100"]);
     }
 
     #[test]
