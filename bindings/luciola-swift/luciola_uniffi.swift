@@ -415,6 +415,22 @@ fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -475,6 +491,261 @@ fileprivate struct FfiConverterString: FfiConverter {
         writeInt(&buf, len)
         writeBytes(&buf, value.utf8)
     }
+}
+
+
+
+
+/**
+ * Active P2P discovery session backed by the Luciola UDP broadcast engine.
+ *
+ * The engine announces this device's presence (`entry`), replies to probes
+ * (`alive`), keeps a periodic heartbeat (`presence`), and reports every newly
+ * discovered LAN peer through the `OnPeerDiscovered` callback.
+ *
+ * Supervision is built in so hosts do not re-implement it per platform:
+ * - `node_id` is stable for the session's lifetime — engine restarts keep the
+ * same identity and remote registries do not see a "new" device.
+ * - `start` retries the UDP bind so a restart racing the old socket's release
+ * does not silently fall back to an ephemeral port.
+ * - `restart()` rebuilds the engine with the same listener (hosts call this on
+ * network changes); `seconds_since_idle()` feeds host-side watchdogs.
+ */
+public protocol DiscoverySessionProtocol : AnyObject {
+    
+    /**
+     * Whether the last engine start actually bound the requested discovery
+     * port. False means the port was occupied and never freed within the
+     * retry window — the UI should not claim "online".
+     */
+    func isBound()  -> Bool
+    
+    /**
+     * This session's stable engine node id. Companion sockets (sweeps, unicast
+     * reconciliation on the host side) should present the SAME identity so
+     * remote devices see ONE node, not a duplicate peer.
+     */
+    func nodeId()  -> String
+    
+    /**
+     * Stop the engine (announcing `exit` to neighbors) and rebuild it with the
+     * same listener and identity. Hosts call this when the network set changes;
+     * the internal bind-retry tolerates the old socket still releasing.
+     */
+    func restart() 
+    
+    /**
+     * Seconds since the last peer discovery (or session start). Host watchdogs
+     * treat a long idle on a networked device as "engine stalled".
+     */
+    func secondsSinceIdle()  -> Double
+    
+    /**
+     * Start the engine on a dedicated background thread.
+     */
+    func start(listener: OnPeerDiscovered) 
+    
+    /**
+     * Stop the session and broadcast `exit` to neighbors.
+     */
+    func stop() 
+    
+}
+
+/**
+ * Active P2P discovery session backed by the Luciola UDP broadcast engine.
+ *
+ * The engine announces this device's presence (`entry`), replies to probes
+ * (`alive`), keeps a periodic heartbeat (`presence`), and reports every newly
+ * discovered LAN peer through the `OnPeerDiscovered` callback.
+ *
+ * Supervision is built in so hosts do not re-implement it per platform:
+ * - `node_id` is stable for the session's lifetime — engine restarts keep the
+ * same identity and remote registries do not see a "new" device.
+ * - `start` retries the UDP bind so a restart racing the old socket's release
+ * does not silently fall back to an ephemeral port.
+ * - `restart()` rebuilds the engine with the same listener (hosts call this on
+ * network changes); `seconds_since_idle()` feeds host-side watchdogs.
+ */
+open class DiscoverySession:
+    DiscoverySessionProtocol {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_discoverysession(self.pointer, $0) }
+    }
+    /**
+     * Create a session announcing `name` on the given UDP discovery port.
+     */
+public convenience init(name: String, port: UInt16) {
+    let pointer =
+        try! rustCall() {
+    uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
+        FfiConverterString.lower(name),
+        FfiConverterUInt16.lower(port),$0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_discoverysession(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * Whether the last engine start actually bound the requested discovery
+     * port. False means the port was occupied and never freed within the
+     * retry window — the UI should not claim "online".
+     */
+open func isBound() -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * This session's stable engine node id. Companion sockets (sweeps, unicast
+     * reconciliation on the host side) should present the SAME identity so
+     * remote devices see ONE node, not a duplicate peer.
+     */
+open func nodeId() -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_node_id(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Stop the engine (announcing `exit` to neighbors) and rebuild it with the
+     * same listener and identity. Hosts call this when the network set changes;
+     * the internal bind-retry tolerates the old socket still releasing.
+     */
+open func restart() {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_restart(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Seconds since the last peer discovery (or session start). Host watchdogs
+     * treat a long idle on a networked device as "engine stalled".
+     */
+open func secondsSinceIdle() -> Double {
+    return try!  FfiConverterDouble.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Start the engine on a dedicated background thread.
+     */
+open func start(listener: OnPeerDiscovered) {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_start(self.uniffiClonePointer(),
+        FfiConverterCallbackInterfaceOnPeerDiscovered.lower(listener),$0
+    )
+}
+}
+    
+    /**
+     * Stop the session and broadcast `exit` to neighbors.
+     */
+open func stop() {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_stop(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiscoverySession: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = DiscoverySession
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> DiscoverySession {
+        return DiscoverySession(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: DiscoverySession) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoverySession {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: DiscoverySession, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiscoverySession_lift(_ pointer: UnsafeMutableRawPointer) throws -> DiscoverySession {
+    return try FfiConverterTypeDiscoverySession.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeDiscoverySession.lower(value)
 }
 
 
@@ -773,6 +1044,114 @@ extension DeviceType: Equatable, Hashable {}
 
 
 
+
+
+
+/**
+ * Callback invoked from a background engine thread whenever a new peer is discovered.
+ */
+public protocol OnPeerDiscovered : AnyObject {
+    
+    func onPeerDiscovered(peer: DiscoveredPeer) 
+    
+}
+
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceOnPeerDiscovered {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    static var vtable: UniffiVTableCallbackInterfaceOnPeerDiscovered = UniffiVTableCallbackInterfaceOnPeerDiscovered(
+        onPeerDiscovered: { (
+            uniffiHandle: UInt64,
+            peer: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceOnPeerDiscovered.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onPeerDiscovered(
+                     peer: try FfiConverterTypeDiscoveredPeer.lift(peer)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceOnPeerDiscovered.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface OnPeerDiscovered: handle missing in uniffiFree")
+            }
+        }
+    )
+}
+
+private func uniffiCallbackInitOnPeerDiscovered() {
+    uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(&UniffiCallbackInterfaceOnPeerDiscovered.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceOnPeerDiscovered {
+    fileprivate static var handleMap = UniffiHandleMap<OnPeerDiscovered>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceOnPeerDiscovered : FfiConverter {
+    typealias SwiftType = OnPeerDiscovered
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -916,6 +1295,9 @@ public func localCandidateAddresses() -> [String] {
 }
 /**
  * Render a compact terminal QR code for a given URL or text content.
+ *
+ * In dark terminals, swaps dark and light colors so that white background border
+ * and black QR modules are rendered correctly for optical scanning.
  */
 public func renderQrAscii(content: String) -> String? {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
@@ -981,7 +1363,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 26274) {
+    if (uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 34654) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_select_lan_ip() != 61023) {
@@ -990,7 +1372,32 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses() != 6105) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound() != 50984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_node_id() != 23559) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_restart() != 7511) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idle() != 7024) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_start() != 53880) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 2971) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
+    uniffiCallbackInitOnPeerDiscovered()
     return InitializationResult.ok
 }()
 
