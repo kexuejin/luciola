@@ -132,6 +132,7 @@ pub struct JsPeerRecord {
     pub device: Option<JsDeviceMeta>,
     pub device_id: Option<String>,
     pub product: Option<String>,
+    pub extra: Option<String>,
 }
 
 use napi::bindgen_prelude::*;
@@ -152,6 +153,9 @@ fn make_peer_obj(env: &napi::Env, p: &JsPeerRecord) -> napi::Result<napi::JsObje
     }
     if let Some(ref v) = p.product {
         peer.set_named_property("product", v)?;
+    }
+    if let Some(ref v) = p.extra {
+        peer.set_named_property("extra", v)?;
     }
     if let Some(ref d) = p.device {
         let mut dev = env.create_object()?;
@@ -185,6 +189,7 @@ pub struct DiscoverySession {
     manual_peers: std::sync::Mutex<Vec<(String, u16)>>,
     product: Option<String>,
     device_id: Option<String>,
+    extra: Option<String>,
 }
 
 #[napi]
@@ -196,6 +201,7 @@ impl DiscoverySession {
         manual_peers: Option<Vec<JsManualPeer>>,
         product: Option<String>,
         device_id: Option<String>,
+        extra: Option<String>,
     ) -> Self {
         Self {
             name: name.unwrap_or_else(|| "NodeJS Peer".to_string()),
@@ -211,6 +217,7 @@ impl DiscoverySession {
             ),
             product,
             device_id,
+            extra,
         }
     }
 
@@ -269,6 +276,7 @@ impl DiscoverySession {
         let detected = luciola_net::DeviceDetector::detect();
         let device_id = self.device_id.clone().or(detected.device_id.clone());
         let product = self.product.clone();
+        let extra = self.extra.clone();
         *self.node_id.lock().unwrap() = Some(node_id.clone());
 
         std::thread::spawn(move || {
@@ -291,6 +299,7 @@ impl DiscoverySession {
                     device: Some(detected),
                     device_id,
                     product,
+                    extra,
                 };
 
                 let config = luciola::DiscoveryConfig {
@@ -332,6 +341,7 @@ impl DiscoverySession {
                                         device,
                                         device_id: p.device_id,
                                         product: p.product,
+                                        extra: p.extra,
                                     }
                                 };
                                 match event {

@@ -7,9 +7,9 @@ repository.workspace = true
 description = "Lightweight, resilient LAN peer discovery and interface intelligence engine"
 
 [dependencies]
-luciola-ip = { path = "../luciola-ip", version = "0.3.0" }
-luciola-net = { path = "../luciola-net", version = "0.3.0" }
-luciola-proto = { path = "../luciola-proto", version = "0.3.0" }
+luciola-ip = { path = "../luciola-ip", version = "0.3.1" }
+luciola-net = { path = "../luciola-net", version = "0.3.1" }
+luciola-proto = { path = "../luciola-proto", version = "0.3.1" }
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

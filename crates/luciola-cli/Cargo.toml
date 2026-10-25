@@ -7,10 +7,10 @@ repository.workspace = true
 description = "Command-line interface and diagnostic radar for the Luciola P2P discovery engine"
 
 [dependencies]
-luciola-ip = { path = "../luciola-ip", version = "0.3.0" }
-luciola-net = { path = "../luciola-net", version = "0.3.0" }
-luciola-proto = { path = "../luciola-proto", version = "0.3.0" }
-luciola = { path = "../luciola", version = "0.3.0" }
+luciola-ip = { path = "../luciola-ip", version = "0.3.1" }
+luciola-net = { path = "../luciola-net", version = "0.3.1" }
+luciola-proto = { path = "../luciola-proto", version = "0.3.1" }
+luciola = { path = "../luciola", version = "0.3.1" }
 clap.workspace = true
 rand.workspace = true
 tokio.workspace = true

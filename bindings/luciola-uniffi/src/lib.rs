@@ -48,6 +48,9 @@ pub struct DiscoveredPeer {
     pub device_id: Option<String>,
     /// Product label running on the peer.
     pub product: Option<String>,
+    /// Opaque application payload (mDNS-TXT style) — the host's richer
+    /// profile rides here; the engine never parses it.
+    pub extra: Option<String>,
 }
 
 /// Detect the current machine's hardware profile, OS, architecture, and form factor.
@@ -181,6 +184,7 @@ pub struct DiscoverySession {
     name: Mutex<String>,
     port: Mutex<u16>,
     product: Mutex<Option<String>>,
+    extra_field: Mutex<Option<String>>,
     node_id: Mutex<String>,
     manual_peers: Mutex<Vec<ManualPeer>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
@@ -222,11 +226,13 @@ impl DiscoverySession {
         port: u16,
         manual_peers: Option<Vec<ManualPeer>>,
         product: Option<String>,
+        extra: Option<String>,
     ) -> Self {
         Self {
             name: Mutex::new(name),
             port: Mutex::new(port),
             product: Mutex::new(product),
+            extra_field: Mutex::new(extra),
             manual_peers: Mutex::new(manual_peers.unwrap_or_default()),
             node_id: Mutex::new(format!("uniffi_{:x}", rand::random::<u32>())),
             shutdown_tx: Mutex::new(None),
@@ -300,6 +306,7 @@ impl DiscoverySession {
         let port = *self.port.lock().unwrap();
         let node_id = self.node_id.lock().unwrap().clone();
         let product = self.product.lock().unwrap().clone();
+        let extra = self.extra_field.lock().unwrap().clone();
         let manual_peers: Vec<(String, u16)> = self
             .manual_peers
             .lock()
@@ -332,6 +339,7 @@ impl DiscoverySession {
                         tcp_port: port.wrapping_add(1),
                         device_id: detected.device_id.clone(),
                         product,
+                        extra,
                         device: Some(detected),
                     };
                     let config = DiscoveryConfig {
@@ -397,6 +405,7 @@ impl DiscoverySession {
                             device: p.device.map(map_device_meta),
                             device_id: p.device_id,
                             product: p.product,
+                            extra: p.extra,
                         };
                         match event {
                             PeerEvent::Found(p) => listener.on_peer_discovered(record(p)),

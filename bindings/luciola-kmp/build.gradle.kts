@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.github.kexuejin"
-version = "0.4.0"
+version = "0.4.2"
 
 repositories {
     mavenCentral()
@@ -78,7 +78,7 @@ publishing {
         // Central requires a javadoc artifact per module; a per-publication
         // stub task (shared files break Gradle's implicit-dependency checks).
         val javadocJar = tasks.register("javadocJar-${name}", Jar::class) {
-            archiveFileName.set("luciola-${name}-0.4.0-javadoc.jar")
+            archiveFileName.set("luciola-${name}-0.4.2-javadoc.jar")
             archiveClassifier.set("javadoc")
             from(resources.text.fromString("luciola KMP — see https://github.com/kexuejin/luciola"))
         }

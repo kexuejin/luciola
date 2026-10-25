@@ -872,6 +872,10 @@ internal open class UniffiVTableCallbackInterfaceSecureSessionListener(
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -897,7 +901,7 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_luciola_uniffi_fn_free_discoverysession(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,`manualPeers`: RustBuffer.ByValue,`product`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,`manualPeers`: RustBuffer.ByValue,`product`: RustBuffer.ByValue,`extra`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -929,6 +933,10 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_method_securesession_send(`ptr`: Pointer,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
+    fun uniffi_luciola_uniffi_fn_method_securesession_set_keepalive(`ptr`: Pointer,`intervalMs`: Long,`deadAfterMs`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_luciola_uniffi_fn_method_securesession_set_retry_policy(`ptr`: Pointer,`minMs`: Long,`maxMs`: Long,`jitterPct`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_luciola_uniffi_fn_method_securesession_stats(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_clone_truststore(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -1171,6 +1179,10 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_securesession_send(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_method_securesession_set_keepalive(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_method_securesession_stats(
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_truststore_entries(
@@ -1317,6 +1329,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_set_keepalive() != 2432.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy() != 49064.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1335,7 +1353,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_method_truststore_trust_device() != 27542.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 60635.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 12135.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 24675.toShort()) {
@@ -1840,11 +1858,11 @@ open class DiscoverySession: Disposable, AutoCloseable, DiscoverySessionInterfac
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
      */
-    constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?) :
+    constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?) :
         this(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
-        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),FfiConverterOptionalString.lower(`product`),_status)
+        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),FfiConverterOptionalString.lower(`product`),FfiConverterOptionalString.lower(`extra`),_status)
 }
     )
 
@@ -2193,6 +2211,18 @@ public interface SecureSessionInterface {
     fun `send`(`message`: kotlin.ByteArray): kotlin.Boolean
     
     /**
+     * Keepalive cadence: ping after `interval_ms` idle, peer considered dead
+     * after `dead_after_ms` of silence. Hosts raise both under Android Doze.
+     */
+    fun `setKeepalive`(`intervalMs`: kotlin.ULong, `deadAfterMs`: kotlin.ULong)
+    
+    /**
+     * Retry policy for auto-reconnect: exponential 2x from `min_ms` to
+     * `max_ms`, each delay jittered by +-`jitter_pct` percent (anti-thundering-herd).
+     */
+    fun `setRetryPolicy`(`minMs`: kotlin.ULong, `maxMs`: kotlin.ULong, `jitterPct`: kotlin.ULong)
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
     fun `stats`(): LinkStats
@@ -2369,6 +2399,36 @@ open class SecureSession: Disposable, AutoCloseable, SecureSessionInterface {
     }
     )
     }
+    
+
+    
+    /**
+     * Keepalive cadence: ping after `interval_ms` idle, peer considered dead
+     * after `dead_after_ms` of silence. Hosts raise both under Android Doze.
+     */override fun `setKeepalive`(`intervalMs`: kotlin.ULong, `deadAfterMs`: kotlin.ULong)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_securesession_set_keepalive(
+        it, FfiConverterULong.lower(`intervalMs`),FfiConverterULong.lower(`deadAfterMs`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Retry policy for auto-reconnect: exponential 2x from `min_ms` to
+     * `max_ms`, each delay jittered by +-`jitter_pct` percent (anti-thundering-herd).
+     */override fun `setRetryPolicy`(`minMs`: kotlin.ULong, `maxMs`: kotlin.ULong, `jitterPct`: kotlin.ULong)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_securesession_set_retry_policy(
+        it, FfiConverterULong.lower(`minMs`),FfiConverterULong.lower(`maxMs`),FfiConverterULong.lower(`jitterPct`),_status)
+}
+    }
+    
     
 
     
@@ -2905,7 +2965,12 @@ data class DiscoveredPeer (
     /**
      * Product label running on the peer.
      */
-    var `product`: kotlin.String?
+    var `product`: kotlin.String?, 
+    /**
+     * Opaque application payload (mDNS-TXT style) — the host's richer
+     * profile rides here; the engine never parses it.
+     */
+    var `extra`: kotlin.String?
 ) {
     
     companion object
@@ -2925,6 +2990,7 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterOptionalTypeDeviceMeta.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -2936,7 +3002,8 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterUShort.allocationSize(value.`tcpPort`) +
             FfiConverterOptionalTypeDeviceMeta.allocationSize(value.`device`) +
             FfiConverterOptionalString.allocationSize(value.`deviceId`) +
-            FfiConverterOptionalString.allocationSize(value.`product`)
+            FfiConverterOptionalString.allocationSize(value.`product`) +
+            FfiConverterOptionalString.allocationSize(value.`extra`)
     )
 
     override fun write(value: DiscoveredPeer, buf: ByteBuffer) {
@@ -2948,6 +3015,7 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterOptionalTypeDeviceMeta.write(value.`device`, buf)
             FfiConverterOptionalString.write(value.`deviceId`, buf)
             FfiConverterOptionalString.write(value.`product`, buf)
+            FfiConverterOptionalString.write(value.`extra`, buf)
     }
 }
 

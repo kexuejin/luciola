@@ -45,6 +45,8 @@ pub struct PeerRecord {
     pub device_id: Option<String>,
     /// Product label running on the peer.
     pub product: Option<String>,
+    /// Opaque application payload carried alongside discovery (mDNS-TXT style).
+    pub extra: Option<String>,
 }
 
 /// Discovery events emitted by the engine.
@@ -94,6 +96,7 @@ impl PeerRegistry {
                     existing.device = p.device.clone();
                     existing.device_id = p.device_id.clone();
                     existing.product = p.product.clone();
+                    existing.extra = p.extra.clone();
                 }
             }
 
@@ -112,6 +115,7 @@ impl PeerRegistry {
                 device: p.device.clone(),
                 device_id: p.device_id.clone(),
                 product: p.product.clone(),
+                extra: p.extra.clone(),
             };
             self.peers.insert(node_id.to_string(), record.clone());
             (Some(record), true)
@@ -183,6 +187,7 @@ impl Default for DiscoveryConfig {
                 device: Some(meta),
                 device_id,
                 product: None,
+                extra: None,
             },
             listen_port: 17878,
             broadcast_port: 17878,
@@ -645,6 +650,7 @@ mod tests {
             device: None,
             device_id: None,
             product: None,
+            extra: None,
         };
         let config_a = DiscoveryConfig {
             self_profile: profile_a,
@@ -665,6 +671,7 @@ mod tests {
             device: None,
             device_id: None,
             product: None,
+            extra: None,
         };
         let config_b = DiscoveryConfig {
             self_profile: profile_b,
@@ -710,6 +717,7 @@ mod tests {
             device: None,
             device_id: None,
             product: None,
+            extra: None,
         };
         let config_a = DiscoveryConfig {
             self_profile: profile_a,
@@ -729,6 +737,7 @@ mod tests {
             device: None,
             device_id: None,
             product: None,
+            extra: None,
         };
         let port_a = engine_a.local_port().await.unwrap();
         let config_b = DiscoveryConfig {

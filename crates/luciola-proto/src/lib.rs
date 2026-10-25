@@ -92,6 +92,12 @@ pub struct Profile {
     /// multiple products running on the same physical device.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product: Option<String>,
+    /// Opaque application payload (mDNS-TXT style): the engine never parses
+    /// it; hosts ride their own richer profile JSON here so a luciola
+    /// discovery mesh can replace an app-specific discovery protocol
+    /// without losing app fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<String>,
 }
 
 /// Message types in the Luciola discovery protocol.
@@ -268,6 +274,32 @@ mod version_tests {
     }
 
     #[test]
+    fn extra_payload_roundtrips_and_old_frames_absent() {
+        let env = Envelope::new(
+            MsgType::Entry,
+            "host".into(),
+            serde_json::json!({"profile": {"node_id":"n","name":"ke","profile_rev":2,"addresses":["192.168.1.5"],"udp_port":17878,"tcp_port":1}}),
+        );
+        let bytes = Codec::encode(&env).unwrap();
+        let p = Codec::decode(&bytes).unwrap().extract_profile().unwrap();
+        assert!(p.extra.is_none()); // legacy frame: absent stays absent
+
+        let mut p2 = p.clone();
+        let payload = r#"{"app":"demo","avatar":7}"#;
+        p2.extra = Some(payload.to_string());
+        let env2 = Envelope::new(
+            MsgType::Alive,
+            "host".into(),
+            serde_json::json!({"profile": p2}),
+        );
+        let back = Codec::decode(&Codec::encode(&env2).unwrap()).unwrap();
+        assert_eq!(
+            back.extract_profile().unwrap().extra.as_deref(),
+            Some(payload)
+        );
+    }
+
+    #[test]
     fn versioned_frame_roundtrips() {
         let env = Envelope::new(MsgType::Entry, "n".into(), serde_json::json!({}));
         let bytes = Codec::encode(&env).unwrap();
@@ -351,6 +383,7 @@ mod tests {
             addresses: vec!["192.168.1.10".to_string()],
             udp_port: 17878,
             tcp_port: 17879,
+            extra: None,
             device: Some(DeviceMeta {
                 device_type: DeviceType::Laptop,
                 os: "macOS".to_string(),

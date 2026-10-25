@@ -16,6 +16,8 @@ data class PeerUiModel(
     val deviceId: String? = null,
     /** Product label running on the peer. */
     val product: String? = null,
+    /** Opaque application payload (mDNS-TXT style), passed through untouched. */
+    val extra: String? = null,
 )
 
 /** Discovery lifecycle events delivered to [DiscoveryController]. */
