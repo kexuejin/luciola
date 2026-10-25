@@ -23,7 +23,7 @@ Package: `com.kapp.luciola:luciola-kmp` (Kotlin package `com.kapp.luciola`).
 dependencyResolutionManagement { repositories { mavenLocal(); ... } }
 
 // build.gradle.kts
-implementation("com.kapp.luciola:luciola-kmp:0.2.0")
+implementation("com.kapp.luciola:luciola-kmp:0.3.0")
 ```
 
 KMP consumers resolve per-target variants automatically via Gradle module

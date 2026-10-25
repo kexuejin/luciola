@@ -235,6 +235,13 @@ export class SecureChannel {
    */
   send(message: Buffer): boolean;
   isConnected(): boolean;
+  /** Link health counters (sent/received frames, connections, retries). */
+  stats(): {
+    framesSent: number;
+    framesReceived: number;
+    connectionsEstablished: number;
+    reconnectAttempts: number;
+  };
   close(): void;
 }
 
@@ -262,3 +269,8 @@ export function buildPairingUri(
 
 /** Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`). */
 export function parsePairingUri(uri: string): JsPairingInfo | null;
+
+/**
+ * NOTE: event callbacks are invoked from engine threads and MUST NOT throw —
+ * wrap their bodies in try/catch (an uncaught throw can abort the process).
+ */

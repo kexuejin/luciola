@@ -486,6 +486,19 @@ pub struct SecureChannel {
     outbound_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>,
     shutdown_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    frames_sent: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    frames_received: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    connections_established: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    reconnect_attempts: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Link health counters.
+#[napi(object)]
+pub struct JsLinkStats {
+    pub frames_sent: i64,
+    pub frames_received: i64,
+    pub connections_established: i64,
+    pub reconnect_attempts: i64,
 }
 
 #[derive(Clone)]
@@ -507,6 +520,21 @@ impl SecureChannel {
             outbound_tx: std::sync::Mutex::new(None),
             shutdown_tx: std::sync::Mutex::new(None),
             connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            frames_sent: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            frames_received: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            connections_established: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            reconnect_attempts: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// Link health counters (sent/received frames, connections, retries).
+    #[napi]
+    pub fn stats(&self) -> JsLinkStats {
+        JsLinkStats {
+            frames_sent: self.frames_sent.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            frames_received: self.frames_received.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            connections_established: self.connections_established.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            reconnect_attempts: self.reconnect_attempts.load(std::sync::atomic::Ordering::Relaxed) as i64,
         }
     }
 
@@ -587,6 +615,9 @@ impl SecureChannel {
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
+        let (frames_sent, frames_received) = (self.frames_sent.clone(), self.frames_received.clone());
+        let (connections_established, reconnect_attempts) =
+            (self.connections_established.clone(), self.reconnect_attempts.clone());
 
         std::thread::Builder::new()
             .name("luciola-node-secure-link".to_string())
@@ -619,6 +650,7 @@ impl SecureChannel {
                                             tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
                                             return;
                                         }
+                                        reconnect_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         tsfn.call((Some("retrying".to_string()), Some(format!("{}; next attempt in {:?}", e, backoff)), None), ThreadsafeFunctionCallMode::NonBlocking);
                                         tokio::select! {
                                             _ = tokio::time::sleep(backoff) => {}
@@ -648,6 +680,7 @@ impl SecureChannel {
                             }
                         };
                         let mut stream = stream;
+                        connections_established.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         tsfn.call((Some("connected".to_string()), Some(stream.peer_fingerprint()), None), ThreadsafeFunctionCallMode::NonBlocking);
 
@@ -674,7 +707,9 @@ impl SecureChannel {
                                     Some(m) => {
                                         keepalive.reset();
                                         awaiting_pong = false;
-                                        if stream.send(&m).await.is_err() {
+                                        if stream.send(&m).await.is_ok() {
+                                            frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        } else {
                                             break;
                                         }
                                     }
@@ -687,6 +722,7 @@ impl SecureChannel {
                                         break;
                                     }
                                     if !buf.is_empty() {
+                                        frames_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         tsfn.call((None, None, Some(buf.clone())), ThreadsafeFunctionCallMode::NonBlocking);
                                     }
                                 }

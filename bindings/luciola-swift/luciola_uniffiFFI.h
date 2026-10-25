@@ -403,6 +403,11 @@ void uniffi_luciola_uniffi_fn_method_securesession_listen(void*_Nonnull ptr, uin
 int8_t uniffi_luciola_uniffi_fn_method_securesession_send(void*_Nonnull ptr, RustBuffer message, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_STATS
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_STATS
+RustBuffer uniffi_luciola_uniffi_fn_method_securesession_stats(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CLONE_TRUSTSTORE
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CLONE_TRUSTSTORE
 void*_Nonnull uniffi_luciola_uniffi_fn_clone_truststore(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -1039,6 +1044,12 @@ uint16_t uniffi_luciola_uniffi_checksum_method_securesession_listen(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SEND
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SEND
 uint16_t uniffi_luciola_uniffi_checksum_method_securesession_send(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_STATS
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_STATS
+uint16_t uniffi_luciola_uniffi_checksum_method_securesession_stats(void
     
 );
 #endif

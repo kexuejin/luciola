@@ -7,8 +7,8 @@ on:
     branches: [ "main" ]
 
 jobs:
-  test:
-    name: Test on ${{ matrix.os }}
+  rust:
+    name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -24,3 +24,44 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Run Tests
         run: cargo test --all-targets --all-features
+
+  kmp-android-jvm:
+    name: KMP bindings (Android + JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Compile Android + JVM targets
+        working-directory: examples/android-demo
+        run: ./gradlew :luciola-kmp:compileAndroidMain :luciola-kmp:compileKotlinJvm --no-daemon
+
+  kmp-ios:
+    name: KMP bindings (iOS klib)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Compile iOS targets
+        working-directory: examples/android-demo
+        run: ./gradlew :luciola-kmp:compileKotlinIosArm64 :luciola-kmp:compileKotlinIosSimulatorArm64 --no-daemon
+
+  node-smoke:
+    name: Node bindings smoke
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build native module
+        run: cargo build -p luciola-node
+      - name: Run smoke test
+        run: node bindings/luciola-node/test.js

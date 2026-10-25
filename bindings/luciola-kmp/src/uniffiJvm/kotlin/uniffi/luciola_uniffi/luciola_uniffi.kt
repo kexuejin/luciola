@@ -870,6 +870,8 @@ internal open class UniffiVTableCallbackInterfaceSecureSessionListener(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -927,6 +929,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_method_securesession_send(`ptr`: Pointer,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
+    fun uniffi_luciola_uniffi_fn_method_securesession_stats(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_clone_truststore(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_luciola_uniffi_fn_free_truststore(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -1167,6 +1171,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_securesession_send(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_method_securesession_stats(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_method_truststore_entries(
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_truststore_level_of(
@@ -1309,6 +1315,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413.toShort()) {
@@ -2183,6 +2192,11 @@ public interface SecureSessionInterface {
      */
     fun `send`(`message`: kotlin.ByteArray): kotlin.Boolean
     
+    /**
+     * Link health counters (sent/received frames, connections, retries).
+     */
+    fun `stats`(): LinkStats
+    
     companion object
 }
 
@@ -2351,6 +2365,21 @@ open class SecureSession: Disposable, AutoCloseable, SecureSessionInterface {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_securesession_send(
         it, FfiConverterByteArray.lower(`message`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Link health counters (sent/received frames, connections, retries).
+     */override fun `stats`(): LinkStats {
+            return FfiConverterTypeLinkStats.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_securesession_stats(
+        it, _status)
 }
     }
     )
@@ -2919,6 +2948,49 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterOptionalTypeDeviceMeta.write(value.`device`, buf)
             FfiConverterOptionalString.write(value.`deviceId`, buf)
             FfiConverterOptionalString.write(value.`product`, buf)
+    }
+}
+
+
+
+/**
+ * Link health counters for UI/diagnostics.
+ */
+data class LinkStats (
+    var `framesSent`: kotlin.ULong, 
+    var `framesReceived`: kotlin.ULong, 
+    var `connectionsEstablished`: kotlin.ULong, 
+    var `reconnectAttempts`: kotlin.ULong
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLinkStats: FfiConverterRustBuffer<LinkStats> {
+    override fun read(buf: ByteBuffer): LinkStats {
+        return LinkStats(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LinkStats) = (
+            FfiConverterULong.allocationSize(value.`framesSent`) +
+            FfiConverterULong.allocationSize(value.`framesReceived`) +
+            FfiConverterULong.allocationSize(value.`connectionsEstablished`) +
+            FfiConverterULong.allocationSize(value.`reconnectAttempts`)
+    )
+
+    override fun write(value: LinkStats, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`framesSent`, buf)
+            FfiConverterULong.write(value.`framesReceived`, buf)
+            FfiConverterULong.write(value.`connectionsEstablished`, buf)
+            FfiConverterULong.write(value.`reconnectAttempts`, buf)
     }
 }
 

@@ -844,6 +844,11 @@ public protocol SecureSessionProtocol : AnyObject {
      */
     func send(message: Data)  -> Bool
     
+    /**
+     * Link health counters (sent/received frames, connections, retries).
+     */
+    func stats()  -> LinkStats
+    
 }
 
 /**
@@ -967,6 +972,16 @@ open func send(message: Data) -> Bool {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_send(self.uniffiClonePointer(),
         FfiConverterData.lower(message),$0
+    )
+})
+}
+    
+    /**
+     * Link health counters (sent/received frames, connections, retries).
+     */
+open func stats() -> LinkStats {
+    return try!  FfiConverterTypeLinkStats.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_stats(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -1615,6 +1630,91 @@ public func FfiConverterTypeDiscoveredPeer_lift(_ buf: RustBuffer) throws -> Dis
 #endif
 public func FfiConverterTypeDiscoveredPeer_lower(_ value: DiscoveredPeer) -> RustBuffer {
     return FfiConverterTypeDiscoveredPeer.lower(value)
+}
+
+
+/**
+ * Link health counters for UI/diagnostics.
+ */
+public struct LinkStats {
+    public var framesSent: UInt64
+    public var framesReceived: UInt64
+    public var connectionsEstablished: UInt64
+    public var reconnectAttempts: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(framesSent: UInt64, framesReceived: UInt64, connectionsEstablished: UInt64, reconnectAttempts: UInt64) {
+        self.framesSent = framesSent
+        self.framesReceived = framesReceived
+        self.connectionsEstablished = connectionsEstablished
+        self.reconnectAttempts = reconnectAttempts
+    }
+}
+
+
+
+extension LinkStats: Equatable, Hashable {
+    public static func ==(lhs: LinkStats, rhs: LinkStats) -> Bool {
+        if lhs.framesSent != rhs.framesSent {
+            return false
+        }
+        if lhs.framesReceived != rhs.framesReceived {
+            return false
+        }
+        if lhs.connectionsEstablished != rhs.connectionsEstablished {
+            return false
+        }
+        if lhs.reconnectAttempts != rhs.reconnectAttempts {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(framesSent)
+        hasher.combine(framesReceived)
+        hasher.combine(connectionsEstablished)
+        hasher.combine(reconnectAttempts)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLinkStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LinkStats {
+        return
+            try LinkStats(
+                framesSent: FfiConverterUInt64.read(from: &buf), 
+                framesReceived: FfiConverterUInt64.read(from: &buf), 
+                connectionsEstablished: FfiConverterUInt64.read(from: &buf), 
+                reconnectAttempts: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LinkStats, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.framesSent, into: &buf)
+        FfiConverterUInt64.write(value.framesReceived, into: &buf)
+        FfiConverterUInt64.write(value.connectionsEstablished, into: &buf)
+        FfiConverterUInt64.write(value.reconnectAttempts, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLinkStats_lift(_ buf: RustBuffer) throws -> LinkStats {
+    return try FfiConverterTypeLinkStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLinkStats_lower(_ value: LinkStats) -> RustBuffer {
+    return FfiConverterTypeLinkStats.lower(value)
 }
 
 
@@ -3160,6 +3260,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {

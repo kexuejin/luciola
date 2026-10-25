@@ -76,3 +76,37 @@ deviceId 折叠同一物理设备上的多个产品。
 
 发现信封带 `v` 字段(当前 1)。旧节点发出的无版本帧按 v=1 解码,双向兼容。
 协议破坏性变更会递增 `v` 并在变更日志标注。
+
+## 8. IPv6 发现
+
+引擎是双栈的:v4 socket(子网定向广播)之外,还有一个 IPv6-only socket
+(同端口),加入每个物理网卡的 `ff02::1` 链路本地多播组,单播回复按地址族
+选择出口 socket。因此:
+
+- IPv4/IPv6 混合网:双路并行,先到先得;
+- IPv6-only 环境(国内宽带 GUA 直连场景):多播发现 + GUA 单播均可达;
+- `manualPeers` 直接填裸 IPv6 地址(如 `2408:8248::1`)即可。
+
+## 9. 桌面 agent(同机多产品的推荐形态)
+
+多个桌面产品共存时,不要各自抢 17878——跑一个机器级 agent,由它独占
+发现端口并向本机产品分发事件:
+
+```bash
+luciola-cli agent            # 默认 unix socket: $TMPDIR/luciola-agent.sock
+```
+
+协议(行分隔 JSON):连接即收 `{"type":"hello",...}` + 当前在线节点快照
+(每节点一条 `found`);之后实时推送 `found/updated/lost`;发 `ping` 得
+`pong`。Node 产品用 `net.connect(sockPath)` 接入即可。
+
+## 10. 链路诊断
+
+`SecureChannel/SecureChannel.stats()`:`framesSent / framesReceived /
+connectionsEstablished / reconnectAttempts`——驱动 UI 健康指示与排障。
+
+## 11. 安全备注
+
+安全信道为自研组合(标准原语,SIGMA 式),**未经外部审计**——上线携带
+敏感数据前请按 `SECURITY.md` 的流程安排评审;发现帧本身不认证,Profile
+字段一律当展示数据处理,信任判断只认 TrustStore + 安全信道。

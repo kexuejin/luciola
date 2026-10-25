@@ -674,6 +674,15 @@ const KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(15);
 const RECONNECT_MIN: std::time::Duration = std::time::Duration::from_secs(1);
 const RECONNECT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Link health counters for UI/diagnostics.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct LinkStats {
+    pub frames_sent: u64,
+    pub frames_received: u64,
+    pub connections_established: u64,
+    pub reconnect_attempts: u64,
+}
+
 /// One authenticated encrypted channel (see `luciola::link::secure`).
 /// Message-oriented for FFI friendliness: `send` queues an encrypted frame;
 /// received frames are decrypted and delivered through the listener.
@@ -683,6 +692,15 @@ pub struct SecureSession {
     outbound_tx: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stats: std::sync::Arc<LinkStatsCounters>,
+}
+
+#[derive(Default)]
+struct LinkStatsCounters {
+    frames_sent: std::sync::atomic::AtomicU64,
+    frames_received: std::sync::atomic::AtomicU64,
+    connections: std::sync::atomic::AtomicU64,
+    reconnects: std::sync::atomic::AtomicU64,
 }
 
 #[uniffi::export]
@@ -694,6 +712,18 @@ impl SecureSession {
             outbound_tx: Mutex::new(None),
             shutdown_tx: Mutex::new(None),
             connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            stats: std::sync::Arc::new(LinkStatsCounters::default()),
+        }
+    }
+
+    /// Link health counters (sent/received frames, connections, retries).
+    pub fn stats(&self) -> LinkStats {
+        let s = &self.stats;
+        LinkStats {
+            frames_sent: s.frames_sent.load(std::sync::atomic::Ordering::Relaxed),
+            frames_received: s.frames_received.load(std::sync::atomic::Ordering::Relaxed),
+            connections_established: s.connections.load(std::sync::atomic::Ordering::Relaxed),
+            reconnect_attempts: s.reconnects.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -770,6 +800,7 @@ impl SecureSession {
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
+        let stats = self.stats.clone();
 
         std::thread::Builder::new()
             .name("luciola-secure-link".to_string())
@@ -802,6 +833,7 @@ impl SecureSession {
                                             listener.on_state("error".into(), Some(e.to_string()));
                                             return;
                                         }
+                                        stats.reconnects.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         listener.on_state("retrying".into(), Some(format!(
                                             "{}; next attempt in {:?}",
                                             e, backoff
@@ -835,6 +867,7 @@ impl SecureSession {
                             }
                         };
                         let mut stream = stream;
+                        stats.connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
 
@@ -863,7 +896,9 @@ impl SecureSession {
                                     Some(m) => {
                                         keepalive.reset();
                                         awaiting_pong = false;
-                                        if stream.send(&m).await.is_err() {
+                                        if stream.send(&m).await.is_ok() {
+                                            stats.frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        } else {
                                             break;
                                         }
                                     }
@@ -876,6 +911,7 @@ impl SecureSession {
                                         break;
                                     }
                                     if !buf.is_empty() {
+                                        stats.frames_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         listener.on_message(buf.clone());
                                     }
                                 }
