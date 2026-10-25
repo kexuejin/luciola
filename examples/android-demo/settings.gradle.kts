@@ -27,7 +27,11 @@ dependencyResolutionManagement {
 rootProject.name = "luciola-android-demo"
 include(":app")
 // Dev wiring: consume the library as an included project. Real consumers use
-// the published artifact: implementation("com.kapp.luciola:luciola-kmp:0.1.0")
+// the published artifact: implementation("com.kapp.luciola:luciola-kmp:0.3.0")
 // with mavenLocal() in repositories (see bindings/luciola-kmp/README.md).
 include(":luciola-kmp")
 project(":luciola-kmp").projectDir = file("../../bindings/luciola-kmp")
+// Dev wiring: consume the library as an included project. Real consumers use
+// the published artifact: implementation("com.kapp.luciola:luciola-kmp:0.1.0")
+// with mavenLocal() in repositories (see bindings/luciola-kmp/README.md).
+
