@@ -574,7 +574,9 @@ fn bind_v6_socket(port: u16) -> Option<Arc<UdpSocket>> {
     let std_socket: std::net::UdpSocket = sock.into();
     let any = std::net::Ipv6Addr::from([0xff02, 0, 0, 0, 0, 0, 0, 1]);
     for idx in luciola_net::multicast_scope_interfaces() {
-        let _ = std_socket.join_multicast_v6(&any, idx);
+        if let Err(e) = std_socket.join_multicast_v6(&any, idx) {
+            tracing::warn!("ff02::1 join failed on if_index {idx}: {e}");
+        }
     }
     UdpSocket::from_std(std_socket).ok().map(Arc::new)
 }

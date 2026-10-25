@@ -22,9 +22,13 @@ class AndroidNetworkMonitor(context: Context) : NetworkMonitorPort {
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             if (firstCallback) { firstCallback = false; return }
+            android.util.Log.i("LuciolaKmp", "netmon: default-network change (available)")
             dispatch()
         }
-        override fun onLost(network: Network) = dispatch()
+        override fun onLost(network: Network) {
+            android.util.Log.i("LuciolaKmp", "netmon: default-network change (lost)")
+            dispatch()
+        }
     }
 
     init {
@@ -33,18 +37,23 @@ class AndroidNetworkMonitor(context: Context) : NetworkMonitorPort {
         // a secondary VPN overlay like ZeroTier); an empty request watches ALL
         // networks. Registration-time callbacks are swallowed per registration.
         runCatching {
+            android.util.Log.i("LuciolaKmp", "netmon: all-networks watcher registering")
             cm.registerNetworkCallback(
                 android.net.NetworkRequest.Builder().build(),
                 object : ConnectivityManager.NetworkCallback() {
                     private var first = true
                     override fun onAvailable(network: Network) {
                         if (first) { first = false; return }
+                        android.util.Log.i("LuciolaKmp", "netmon: all-networks change (available)")
                         dispatch()
                     }
-                    override fun onLost(network: Network) = dispatch()
+                    override fun onLost(network: Network) {
+                        android.util.Log.i("LuciolaKmp", "netmon: all-networks change (lost)")
+                        dispatch()
+                    }
                 },
             )
-        }
+        }.onFailure { android.util.Log.w("LuciolaKmp", "netmon: all-networks registration failed", it) }
     }
 
     private fun dispatch() {

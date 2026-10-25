@@ -624,3 +624,4 @@ pub fn multicast_scope_interfaces() -> Vec<u32> {
         Err(_) => Vec::new(),
     }
 }
+
