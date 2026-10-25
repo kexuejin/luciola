@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
 use luciola_net::NetworkDetector;
 use luciola_proto::Profile;
 use qrcode::render::unicode;
@@ -48,6 +50,16 @@ enum Commands {
         /// Print terminal QR code for instant mobile pairing
         #[arg(long)]
         qr: bool,
+    },
+    /// Run the per-device discovery agent: owns UDP 17878 for the whole
+    /// machine and streams peer events to local products over a unix socket
+    /// (the desktop answer to several luciola products on one device).
+    Agent {
+        /// Unix socket path (default: $TMPDIR/luciola-agent.sock)
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(short, long, default_value_t = 17878)]
+        port: u16,
     },
     /// Inspect local network interfaces, TUN detection, and candidate IPs
     Ip {
@@ -167,6 +179,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine.announce_exit().await;
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+        Commands::Agent { socket, port } => {
+            let path = socket.unwrap_or_else(|| {
+                std::env::var("TMPDIR")
+                    .or_else(|_| std::env::var("XDG_RUNTIME_DIR"))
+                    .map(|d| format!("{d}/luciola-agent.sock"))
+                    .unwrap_or_else(|_| "/tmp/luciola-agent.sock".to_string())
+            });
+            run_agent(&path, port).await?;
+        }
         Commands::Ip { qr, port } => {
             println!("========================================================");
             println!("       Luciola Network Interface & Route Intelligence    ");
@@ -245,4 +266,111 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = std::fs::remove_file(socket_path);
+    let listener = UnixListener::bind(socket_path)?;
+    println!("🛰️  [Agent] listening on {socket_path} (UDP :{port} owned machine-wide)");
+
+    let profile = luciola::proto::Profile {
+        node_id: format!("agent_{:x}", rand::random::<u32>()),
+        name: luciola_net::DeviceDetector::detect()
+            .hostname
+            .unwrap_or_else(|| "Desktop".into()),
+        profile_rev: 1,
+        addresses: NetworkDetector::local_candidate_addresses(),
+        udp_port: port,
+        tcp_port: 0,
+        device: Some(luciola_net::DeviceDetector::detect()),
+        device_id: None,
+        product: Some("luciola-agent".into()),
+    };
+    let mut config = DiscoveryConfig::default();
+    config.self_profile = profile;
+    config.listen_port = port;
+    config.broadcast_port = port;
+
+    let engine = DiscoveryEngine::bind(config).await?;
+    let mut events = engine.subscribe();
+    engine.clone().spawn();
+    engine.announce().await;
+
+    // Fanout: every connected product client receives every engine event.
+    let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
+    let tx_pump = tx.clone();
+    tokio::spawn(async move {
+        loop {
+            let line = match events.recv().await {
+                Ok(PeerEvent::Found(p)) => format!(
+                    r#"{{"type":"found","nodeId":"{}","name":"{}","ip":"{}","udpPort":{}}}"#,
+                    p.node_id, p.name, p.ip, p.udp_port
+                ),
+                Ok(PeerEvent::Updated(p)) => format!(
+                    r#"{{"type":"updated","nodeId":"{}","name":"{}","ip":"{}"}}"#,
+                    p.node_id, p.name, p.ip
+                ),
+                Ok(PeerEvent::Lost(id)) => format!(r#"{{"type":"lost","nodeId":"{id}"}}"#),
+                Err(_) => continue,
+            };
+            let _ = tx_pump.send(line);
+        }
+    });
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let rx = tx.subscribe();
+        let engine = engine.clone();
+        tokio::spawn(handle_agent_client(stream, rx, engine));
+    }
+}
+
+async fn handle_agent_client(
+    stream: UnixStream,
+    mut rx: tokio::sync::broadcast::Receiver<String>,
+    engine: std::sync::Arc<DiscoveryEngine>,
+) {
+    let (reader, mut writer) = stream.into_split();
+    let _ = writer
+        .write_all(b"{\"type\":\"hello\",\"product\":\"luciola-agent\"}\n")
+        .await;
+    // Late joiners get the current peer table first: Found events fired
+    // before this client connected are gone (broadcast fanout).
+    for p in engine.online_peers().await {
+        let _ = writer
+            .write_all(
+                format!(
+                    r#"{{"type":"found","nodeId":"{}","name":"{}","ip":"{}","udpPort":{}}}"#,
+                    p.node_id, p.name, p.ip, p.udp_port
+                )
+                .as_bytes(),
+            )
+            .await;
+        let _ = writer.write_all(b"\n").await;
+    }
+    let mut lines = BufReader::new(reader).lines();
+    loop {
+        tokio::select! {
+            line = rx.recv() => {
+                if let Ok(l) = line {
+                    if writer.write_all(l.as_bytes()).await.is_err() || writer.write_all(b"
+").await.is_err() {
+                        break;
+                    }
+                }
+            }
+            cmd = lines.next_line() => {
+                match cmd {
+                    Ok(Some(text)) => {
+                        let t = text.trim();
+                        if t == "ping" {
+                            if writer.write_all(b"{\"type\":\"pong\"}\n").await.is_err() { break; }
+                        }
+                        // unknown commands are ignored; the event stream continues
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
 }
