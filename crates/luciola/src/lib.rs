@@ -5,6 +5,7 @@
 pub use luciola_ip as ip;
 
 pub mod link;
+pub mod trust;
 pub use luciola_net as net;
 pub use luciola_proto as proto;
 
@@ -41,6 +42,10 @@ pub struct PeerRecord {
     pub online: bool,
     pub last_seen: Instant,
     pub device: Option<luciola_proto::DeviceMeta>,
+    /// Stable per-device grouping id (display-grade).
+    pub device_id: Option<String>,
+    /// Product label running on the peer.
+    pub product: Option<String>,
 }
 
 /// Discovery events emitted by the engine.
@@ -88,6 +93,8 @@ impl PeerRegistry {
                     existing.profile_rev = p.profile_rev;
                     existing.tcp_port = p.tcp_port;
                     existing.device = p.device.clone();
+                    existing.device_id = p.device_id.clone();
+                    existing.product = p.product.clone();
                 }
             }
 
@@ -104,6 +111,8 @@ impl PeerRegistry {
                 online: true,
                 last_seen: now,
                 device: p.device.clone(),
+                device_id: p.device_id.clone(),
+                product: p.product.clone(),
             };
             self.peers.insert(node_id.to_string(), record.clone());
             (Some(record), true)
@@ -160,6 +169,7 @@ impl Default for DiscoveryConfig {
     fn default() -> Self {
         let meta = luciola_net::DeviceDetector::detect();
         let default_name = meta.hostname.clone().unwrap_or_else(|| "Luciola Node".to_string());
+        let device_id = meta.device_id.clone();
         Self {
             self_profile: Profile {
                 node_id: "anonymous".to_string(),
@@ -169,6 +179,8 @@ impl Default for DiscoveryConfig {
                 udp_port: 17878,
                 tcp_port: 17879,
                 device: Some(meta),
+                device_id,
+                product: None,
             },
             listen_port: 17878,
             broadcast_port: 17878,
@@ -526,6 +538,8 @@ mod tests {
             udp_port: 0,
             tcp_port: 8081,
             device: None,
+            device_id: None,
+            product: None,
         };
         let mut config_a = DiscoveryConfig::default();
         config_a.self_profile = profile_a;
@@ -541,6 +555,8 @@ mod tests {
             udp_port: 0,
             tcp_port: 8082,
             device: None,
+            device_id: None,
+            product: None,
         };
         let mut config_b = DiscoveryConfig::default();
         config_b.self_profile = profile_b;

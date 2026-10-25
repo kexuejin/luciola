@@ -158,6 +158,7 @@ class MainActivity : ComponentActivity() {
                 context = this,
                 sessionName = name,
                 discoveryPort = DISCOVERY_PORT,
+                product = "luciola-radar-demo",
                 onPeersChanged = { list ->
                     peers.clear()
                     peers.addAll(list)

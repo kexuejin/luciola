@@ -15,12 +15,14 @@ class UniffiEngineAdapter(
     sessionName: String,
     discoveryPort: UShort = 17878u,
     manualPeers: List<Pair<String, UShort>> = emptyList(),
+    product: String? = null,
 ) : DiscoveryEnginePort {
 
     private val session = DiscoverySession(
         sessionName,
         discoveryPort,
         manualPeers.map { ManualPeer(host = it.first, port = it.second) },
+        product,
     )
 
     override fun nodeId(): String? = session.nodeId()
@@ -55,4 +57,6 @@ fun DiscoveredPeer.toUiModel(): PeerUiModel = PeerUiModel(
     os = device?.os,
     arch = device?.arch,
     model = device?.model,
+    deviceId = deviceId ?: device?.deviceId,
+    product = product,
 )

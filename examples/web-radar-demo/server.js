@@ -91,7 +91,7 @@ setInterval(() => {
 // ---------------------------------------------------------------------------
 // Luciola engine session (instant Found events on the official UDP port)
 // ---------------------------------------------------------------------------
-const session = new luciola.DiscoverySession(sessionName, DISCOVERY_PORT);
+const session = new luciola.DiscoverySession(sessionName, DISCOVERY_PORT, null, 'web-radar-demo');
 session.start((peer) => {
   if (peer.nodeId === selfNodeId) return; // our own sweeper envelopes echoed back
   console.log(`👋 [Engine Found] ${peer.name} (${peer.nodeId}) @ ${peer.ip}:${peer.udpPort}`);

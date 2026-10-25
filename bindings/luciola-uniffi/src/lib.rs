@@ -32,6 +32,7 @@ pub struct DeviceMeta {
     pub os: String,
     pub arch: String,
     pub model: Option<String>,
+    pub device_id: Option<String>,
 }
 
 /// A discovered peer node in the local network.
@@ -43,12 +44,17 @@ pub struct DiscoveredPeer {
     pub udp_port: u16,
     pub tcp_port: u16,
     pub device: Option<DeviceMeta>,
+    /// Stable per-device grouping id (display-grade).
+    pub device_id: Option<String>,
+    /// Product label running on the peer.
+    pub product: Option<String>,
 }
 
 /// Detect the current machine's hardware profile, OS, architecture, and form factor.
 #[uniffi::export]
 pub fn get_device_meta() -> DeviceMeta {
     let meta = luciola_net::DeviceDetector::detect();
+    let device_id = meta.device_id.clone();
     let dtype = match meta.device_type {
         luciola_proto::DeviceType::Mobile => DeviceType::Mobile,
         luciola_proto::DeviceType::Tablet => DeviceType::Tablet,
@@ -64,6 +70,7 @@ pub fn get_device_meta() -> DeviceMeta {
         os: meta.os,
         arch: meta.arch,
         model: meta.model,
+        device_id,
     }
 }
 
@@ -167,6 +174,7 @@ pub trait OnPeerDiscovered: Send + Sync {
 pub struct DiscoverySession {
     name: Mutex<String>,
     port: Mutex<u16>,
+    product: Mutex<Option<String>>,
     node_id: Mutex<String>,
     manual_peers: Mutex<Vec<ManualPeer>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
@@ -191,6 +199,7 @@ fn map_device_meta(meta: luciola_proto::DeviceMeta) -> DeviceMeta {
         os: meta.os,
         arch: meta.arch,
         model: meta.model,
+        device_id: meta.device_id,
     }
 }
 
@@ -202,10 +211,16 @@ impl DiscoverySession {
     /// port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
     /// overlays (Tailscale/ZeroTier), or localhost debugging.
     #[uniffi::constructor]
-    pub fn new(name: String, port: u16, manual_peers: Option<Vec<ManualPeer>>) -> Self {
+    pub fn new(
+        name: String,
+        port: u16,
+        manual_peers: Option<Vec<ManualPeer>>,
+        product: Option<String>,
+    ) -> Self {
         Self {
             name: Mutex::new(name),
             port: Mutex::new(port),
+            product: Mutex::new(product),
             manual_peers: Mutex::new(manual_peers.unwrap_or_default()),
             node_id: Mutex::new(format!("uniffi_{:x}", rand::random::<u32>())),
             shutdown_tx: Mutex::new(None),
@@ -278,6 +293,7 @@ impl DiscoverySession {
         let name = self.name.lock().unwrap().clone();
         let port = *self.port.lock().unwrap();
         let node_id = self.node_id.lock().unwrap().clone();
+        let product = self.product.lock().unwrap().clone();
         let manual_peers: Vec<(String, u16)> = self
             .manual_peers
             .lock()
@@ -300,6 +316,7 @@ impl DiscoverySession {
                     Err(_) => return,
                 };
                 rt.block_on(async move {
+                    let detected = luciola_net::DeviceDetector::detect();
                     let profile = luciola::proto::Profile {
                         node_id,
                         name,
@@ -307,7 +324,9 @@ impl DiscoverySession {
                         addresses: NetworkDetector::local_candidate_addresses(),
                         udp_port: port,
                         tcp_port: port.wrapping_add(1),
-                        device: Some(luciola_net::DeviceDetector::detect()),
+                        device_id: detected.device_id.clone(),
+                        product,
+                        device: Some(detected),
                     };
                     let mut config = DiscoveryConfig::default();
                     config.self_profile = profile;
@@ -364,6 +383,8 @@ impl DiscoverySession {
                                 udp_port: p.udp_port,
                                 tcp_port: p.tcp_port,
                                 device: p.device.map(map_device_meta),
+                                device_id: p.device_id,
+                                product: p.product,
                             });
                         }
                     }
@@ -458,3 +479,146 @@ trait Pipe: Sized {
     }
 }
 impl<T> Pipe for T {}
+
+// ---------------------------------------------------------------------------
+// Trust & pairing exports
+// ---------------------------------------------------------------------------
+
+/// How much a paired device may do without per-action confirmation.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrustLevel {
+    /// Own devices: silent/background push allowed.
+    Full,
+    /// Paired but restricted: per-action confirmation required.
+    Partial,
+}
+
+/// A paired device entry.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct TrustedDeviceInfo {
+    pub device_id: String,
+    pub name: String,
+    pub public_key: Vec<u8>,
+    pub fingerprint: String,
+    pub level: TrustLevel,
+    pub pinned_at_ms: u64,
+}
+
+/// A generated or restored device identity. Keep `seed` secret.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct DeviceIdentityInfo {
+    pub seed: Vec<u8>,
+    pub public_key: Vec<u8>,
+    pub fingerprint: String,
+    pub short_pin: String,
+}
+
+/// Persisted trust list. Serialize with [TrustStore::to_json] and store the
+/// bytes in the product's secret storage; unpaired peers are simply absent
+/// (default posture: deny).
+#[derive(uniffi::Object)]
+pub struct TrustStore {
+    inner: std::sync::Mutex<luciola::trust::TrustStore>,
+}
+
+#[uniffi::export]
+impl TrustStore {
+    #[uniffi::constructor]
+    pub fn new(from_json: Option<String>) -> Self {
+        let inner = from_json
+            .and_then(|j| luciola::trust::TrustStore::from_json(&j).ok())
+            .unwrap_or_default();
+        Self { inner: std::sync::Mutex::new(inner) }
+    }
+
+    /// Pair or re-pair a device (replaces the entry with the same public key).
+    pub fn trust_device(&self, device: TrustedDeviceInfo) {
+        self.inner.lock().unwrap().trust_device(luciola::trust::TrustedDevice {
+            device_id: device.device_id,
+            name: device.name,
+            public_key: device.public_key,
+            fingerprint: device.fingerprint,
+            level: match device.level {
+                TrustLevel::Full => luciola::trust::TrustLevel::Full,
+                TrustLevel::Partial => luciola::trust::TrustLevel::Partial,
+            },
+            pinned_at_ms: device.pinned_at_ms,
+        });
+    }
+
+    /// Trust level for a public key; absent = unpaired.
+    pub fn level_of(&self, public_key: Vec<u8>) -> Option<TrustLevel> {
+        self.inner.lock().unwrap().level_of(&public_key).map(|l| match l {
+            luciola::trust::TrustLevel::Full => TrustLevel::Full,
+            luciola::trust::TrustLevel::Partial => TrustLevel::Partial,
+        })
+    }
+
+    /// Remove a paired device by fingerprint.
+    pub fn remove(&self, fingerprint: String) -> bool {
+        self.inner.lock().unwrap().remove(&fingerprint)
+    }
+
+    pub fn entries(&self) -> Vec<TrustedDeviceInfo> {
+        self.inner
+            .lock()
+            .unwrap()
+            .entries()
+            .iter()
+            .map(|d| TrustedDeviceInfo {
+                device_id: d.device_id.clone(),
+                name: d.name.clone(),
+                public_key: d.public_key.clone(),
+                fingerprint: d.fingerprint.clone(),
+                level: match d.level {
+                    luciola::trust::TrustLevel::Full => TrustLevel::Full,
+                    luciola::trust::TrustLevel::Partial => TrustLevel::Partial,
+                },
+                pinned_at_ms: d.pinned_at_ms,
+            })
+            .collect()
+    }
+
+    /// JSON serialization for persistence.
+    pub fn to_json(&self) -> String {
+        self.inner.lock().unwrap().to_json().unwrap_or_default()
+    }
+}
+
+/// Generate a fresh device identity (Ed25519). Keep the seed secret.
+#[uniffi::export]
+pub fn generate_device_identity() -> DeviceIdentityInfo {
+    let id = luciola::trust::generate_identity();
+    DeviceIdentityInfo { seed: id.seed, public_key: id.public_key, fingerprint: id.fingerprint, short_pin: id.short_pin }
+}
+
+/// Restore an identity from a persisted 32-byte seed.
+#[uniffi::export]
+pub fn identity_from_seed(seed: Vec<u8>) -> DeviceIdentityInfo {
+    let id = luciola::trust::identity_from_seed(&seed);
+    DeviceIdentityInfo { seed: id.seed, public_key: id.public_key, fingerprint: id.fingerprint, short_pin: id.short_pin }
+}
+
+/// `sha256:<hex>` fingerprint of an Ed25519 public key.
+#[uniffi::export]
+pub fn identity_fingerprint(public_key: Vec<u8>) -> String {
+    luciola::trust::fingerprint(&public_key)
+}
+
+/// 6-digit on-screen comparison pin for pairing.
+#[uniffi::export]
+pub fn identity_short_pin(public_key: Vec<u8>) -> String {
+    luciola::trust::short_pin(&public_key)
+}
+
+/// Sign a message with a persisted seed.
+#[uniffi::export]
+pub fn sign_message(seed: Vec<u8>, message: Vec<u8>) -> Vec<u8> {
+    luciola::trust::sign(&seed, &message)
+}
+
+/// Verify a signature against an Ed25519 public key.
+#[uniffi::export]
+pub fn verify_message(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>) -> bool {
+    luciola::trust::verify(&public_key, &message, &signature)
+}

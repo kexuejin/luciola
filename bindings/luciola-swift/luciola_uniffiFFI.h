@@ -278,7 +278,7 @@ void uniffi_luciola_uniffi_fn_free_discoverysession(void*_Nonnull ptr, RustCallS
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CONSTRUCTOR_DISCOVERYSESSION_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CONSTRUCTOR_DISCOVERYSESSION_NEW
-void*_Nonnull uniffi_luciola_uniffi_fn_constructor_discoverysession_new(RustBuffer name, uint16_t port, RustBuffer manual_peers, RustCallStatus *_Nonnull out_status
+void*_Nonnull uniffi_luciola_uniffi_fn_constructor_discoverysession_new(RustBuffer name, uint16_t port, RustBuffer manual_peers, RustBuffer product, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_DISCOVERYSESSION_IS_BOUND
@@ -316,6 +316,46 @@ void uniffi_luciola_uniffi_fn_method_discoverysession_start(void*_Nonnull ptr, u
 void uniffi_luciola_uniffi_fn_method_discoverysession_stop(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CLONE_TRUSTSTORE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CLONE_TRUSTSTORE
+void*_Nonnull uniffi_luciola_uniffi_fn_clone_truststore(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FREE_TRUSTSTORE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FREE_TRUSTSTORE
+void uniffi_luciola_uniffi_fn_free_truststore(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CONSTRUCTOR_TRUSTSTORE_NEW
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CONSTRUCTOR_TRUSTSTORE_NEW
+void*_Nonnull uniffi_luciola_uniffi_fn_constructor_truststore_new(RustBuffer from_json, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_ENTRIES
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_ENTRIES
+RustBuffer uniffi_luciola_uniffi_fn_method_truststore_entries(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_LEVEL_OF
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_LEVEL_OF
+RustBuffer uniffi_luciola_uniffi_fn_method_truststore_level_of(void*_Nonnull ptr, RustBuffer public_key, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_REMOVE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_REMOVE
+int8_t uniffi_luciola_uniffi_fn_method_truststore_remove(void*_Nonnull ptr, RustBuffer fingerprint, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_TO_JSON
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_TO_JSON
+RustBuffer uniffi_luciola_uniffi_fn_method_truststore_to_json(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_TRUST_DEVICE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_TRUSTSTORE_TRUST_DEVICE
+void uniffi_luciola_uniffi_fn_method_truststore_trust_device(void*_Nonnull ptr, RustBuffer device, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_ONPEERDISCOVERED
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_ONPEERDISCOVERED
 void uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(UniffiVTableCallbackInterfaceOnPeerDiscovered* _Nonnull vtable
@@ -332,10 +372,31 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
 RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GENERATE_DEVICE_IDENTITY
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GENERATE_DEVICE_IDENTITY
+RustBuffer uniffi_luciola_uniffi_fn_func_generate_device_identity(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GET_DEVICE_META
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GET_DEVICE_META
 RustBuffer uniffi_luciola_uniffi_fn_func_get_device_meta(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IDENTITY_FINGERPRINT
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IDENTITY_FINGERPRINT
+RustBuffer uniffi_luciola_uniffi_fn_func_identity_fingerprint(RustBuffer public_key, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IDENTITY_FROM_SEED
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IDENTITY_FROM_SEED
+RustBuffer uniffi_luciola_uniffi_fn_func_identity_from_seed(RustBuffer seed, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IDENTITY_SHORT_PIN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IDENTITY_SHORT_PIN
+RustBuffer uniffi_luciola_uniffi_fn_func_identity_short_pin(RustBuffer public_key, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_IS_LAN_PEER
@@ -380,10 +441,20 @@ RustBuffer uniffi_luciola_uniffi_fn_func_select_lan_ip(RustCallStatus *_Nonnull 
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SIGN_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SIGN_MESSAGE
+RustBuffer uniffi_luciola_uniffi_fn_func_sign_message(RustBuffer seed, RustBuffer message, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SUBNET_BROADCAST_ADDRESSES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SUBNET_BROADCAST_ADDRESSES
 RustBuffer uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_VERIFY_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_VERIFY_MESSAGE
+int8_t uniffi_luciola_uniffi_fn_func_verify_message(RustBuffer public_key, RustBuffer message, RustBuffer signature, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_LUCIOLA_UNIFFI_RUSTBUFFER_ALLOC
@@ -678,9 +749,33 @@ uint16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GENERATE_DEVICE_IDENTITY
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GENERATE_DEVICE_IDENTITY
+uint16_t uniffi_luciola_uniffi_checksum_func_generate_device_identity(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GET_DEVICE_META
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GET_DEVICE_META
 uint16_t uniffi_luciola_uniffi_checksum_func_get_device_meta(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_IDENTITY_FINGERPRINT
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_IDENTITY_FINGERPRINT
+uint16_t uniffi_luciola_uniffi_checksum_func_identity_fingerprint(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_IDENTITY_FROM_SEED
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_IDENTITY_FROM_SEED
+uint16_t uniffi_luciola_uniffi_checksum_func_identity_from_seed(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_IDENTITY_SHORT_PIN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_IDENTITY_SHORT_PIN
+uint16_t uniffi_luciola_uniffi_checksum_func_identity_short_pin(void
     
 );
 #endif
@@ -732,9 +827,21 @@ uint16_t uniffi_luciola_uniffi_checksum_func_select_lan_ip(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SIGN_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SIGN_MESSAGE
+uint16_t uniffi_luciola_uniffi_checksum_func_sign_message(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SUBNET_BROADCAST_ADDRESSES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SUBNET_BROADCAST_ADDRESSES
 uint16_t uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_VERIFY_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_VERIFY_MESSAGE
+uint16_t uniffi_luciola_uniffi_checksum_func_verify_message(void
     
 );
 #endif
@@ -780,9 +887,45 @@ uint16_t uniffi_luciola_uniffi_checksum_method_discoverysession_stop(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_ENTRIES
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_ENTRIES
+uint16_t uniffi_luciola_uniffi_checksum_method_truststore_entries(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_LEVEL_OF
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_LEVEL_OF
+uint16_t uniffi_luciola_uniffi_checksum_method_truststore_level_of(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_REMOVE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_REMOVE
+uint16_t uniffi_luciola_uniffi_checksum_method_truststore_remove(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_TO_JSON
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_TO_JSON
+uint16_t uniffi_luciola_uniffi_checksum_method_truststore_to_json(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_TRUST_DEVICE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_TRUST_DEVICE
+uint16_t uniffi_luciola_uniffi_checksum_method_truststore_trust_device(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_CONSTRUCTOR_DISCOVERYSESSION_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_CONSTRUCTOR_DISCOVERYSESSION_NEW
 uint16_t uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_CONSTRUCTOR_TRUSTSTORE_NEW
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_CONSTRUCTOR_TRUSTSTORE_NEW
+uint16_t uniffi_luciola_uniffi_checksum_constructor_truststore_new(void
     
 );
 #endif

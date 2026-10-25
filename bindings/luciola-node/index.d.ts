@@ -62,6 +62,8 @@ export interface JsDeviceMeta {
   arch: string;
   model?: string;
   hostname?: string;
+  /** Stable per-device grouping id (display-grade, not a security identity). */
+  deviceId?: string;
 }
 
 /**
@@ -85,13 +87,22 @@ export interface JsPeerRecord {
   udpPort: number;
   tcpPort: number;
   device?: JsDeviceMeta;
+  deviceId?: string;
+  /** Product label running on the peer, e.g. "luciola-clipboard". */
+  product?: string;
 }
 
 /**
  * Active P2P discovery session in Node.js.
  */
 export class DiscoverySession {
-  constructor(name?: string, port?: number, manualPeers?: JsManualPeer[]);
+  constructor(
+    name?: string,
+    port?: number,
+    manualPeers?: JsManualPeer[] | null,
+    product?: string,
+    deviceId?: string,
+  );
   /**
    * This session's engine node id (available after `start`).
    */
@@ -140,3 +151,43 @@ export function happyEyeballsRace(
   attemptTimeoutMs?: number,
   staggerMs?: number,
 ): Promise<JsRaceOutcome>;
+
+/**
+ * A generated or restored device identity. Keep `seed` secret.
+ */
+export interface JsDeviceIdentity {
+  seed: Buffer;
+  publicKey: Buffer;
+  fingerprint: string;
+  shortPin: string;
+}
+
+/**
+ * Generate a fresh Ed25519 device identity for pairing/trust.
+ */
+export function generateDeviceIdentity(): JsDeviceIdentity;
+
+/**
+ * Restore an identity from a persisted 32-byte seed.
+ */
+export function identityFromSeed(seed: Buffer): JsDeviceIdentity;
+
+/**
+ * `sha256:<hex>` fingerprint of an Ed25519 public key.
+ */
+export function identityFingerprint(publicKey: Buffer): string;
+
+/**
+ * 6-digit on-screen comparison pin for pairing.
+ */
+export function identityShortPin(publicKey: Buffer): string;
+
+/**
+ * Sign a message with a persisted seed.
+ */
+export function signMessage(seed: Buffer, message: Buffer): Buffer;
+
+/**
+ * Verify a signature against an Ed25519 public key.
+ */
+export function verifyMessage(publicKey: Buffer, message: Buffer, signature: Buffer): boolean;

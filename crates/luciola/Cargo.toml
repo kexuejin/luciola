@@ -13,3 +13,8 @@ luciola-proto = { path = "../luciola-proto" }
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true

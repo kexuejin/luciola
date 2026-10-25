@@ -12,6 +12,10 @@ data class PeerUiModel(
     val os: String?,
     val arch: String?,
     val model: String?,
+    /** Stable per-device grouping id (display-grade). */
+    val deviceId: String? = null,
+    /** Product label running on the peer. */
+    val product: String? = null,
 )
 
 /**

@@ -775,6 +775,32 @@ internal open class UniffiVTableCallbackInterfaceOnPeerDiscovered(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -799,7 +825,7 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_luciola_uniffi_fn_free_discoverysession(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,`manualPeers`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,`manualPeers`: RustBuffer.ByValue,`product`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -815,13 +841,37 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_method_discoverysession_stop(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_luciola_uniffi_fn_clone_truststore(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_luciola_uniffi_fn_free_truststore(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_luciola_uniffi_fn_constructor_truststore_new(`fromJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_luciola_uniffi_fn_method_truststore_entries(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_method_truststore_level_of(`ptr`: Pointer,`publicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_method_truststore_remove(`ptr`: Pointer,`fingerprint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    fun uniffi_luciola_uniffi_fn_method_truststore_to_json(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_method_truststore_trust_device(`ptr`: Pointer,`device`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(`vtable`: UniffiVTableCallbackInterfaceOnPeerDiscovered,
     ): Unit
     fun uniffi_luciola_uniffi_fn_func_advertised_addresses(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_default_race_candidates(`addresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_generate_device_identity(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_get_device_meta(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_identity_fingerprint(`publicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_identity_from_seed(`seed`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_identity_short_pin(`publicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_is_lan_peer(`peerAddress`: RustBuffer.ByValue,`localAddresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -839,8 +889,12 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_select_lan_ip(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_sign_message(`seed`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_verify_message(`publicKey`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`signature`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
     fun ffi_luciola_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_luciola_uniffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -957,7 +1011,15 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_func_generate_device_identity(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_func_get_device_meta(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_func_identity_fingerprint(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_func_identity_from_seed(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_func_identity_short_pin(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_is_lan_peer(
     ): Short
@@ -975,7 +1037,11 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_select_lan_ip(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_func_sign_message(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_func_verify_message(
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound(
     ): Short
@@ -991,7 +1057,19 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_stop(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_method_truststore_entries(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_truststore_level_of(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_truststore_remove(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_truststore_to_json(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_truststore_trust_device(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_constructor_truststore_new(
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered(
     ): Short
@@ -1018,7 +1096,19 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_luciola_uniffi_checksum_func_generate_device_identity() != 39160.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_luciola_uniffi_checksum_func_get_device_meta() != 13951.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_identity_fingerprint() != 8719.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_identity_from_seed() != 31545.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_identity_short_pin() != 19700.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_is_lan_peer() != 63646.toShort()) {
@@ -1045,7 +1135,13 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_select_lan_ip() != 61023.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_luciola_uniffi_checksum_func_sign_message() != 47227.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses() != 6105.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_verify_message() != 57140.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound() != 50984.toShort()) {
@@ -1069,7 +1165,25 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 53696.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_truststore_level_of() != 49100.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_truststore_remove() != 61647.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_truststore_to_json() != 25922.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_truststore_trust_device() != 27542.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 60635.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116.toShort()) {
@@ -1268,6 +1382,25 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
         val byteBuf = toUtf8(value)
         buf.putInt(byteBuf.limit())
         buf.put(byteBuf)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
+    override fun read(buf: ByteBuffer): ByteArray {
+        val len = buf.getInt()
+        val byteArr = ByteArray(len)
+        buf.get(byteArr)
+        return byteArr
+    }
+    override fun allocationSize(value: ByteArray): ULong {
+        return 4UL + value.size.toULong()
+    }
+    override fun write(value: ByteArray, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        buf.put(value)
     }
 }
 
@@ -1534,11 +1667,11 @@ open class DiscoverySession: Disposable, AutoCloseable, DiscoverySessionInterfac
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
      */
-    constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?) :
+    constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?) :
         this(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
-        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),_status)
+        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),FfiConverterOptionalString.lower(`product`),_status)
 }
     )
 
@@ -1750,6 +1883,380 @@ public object FfiConverterTypeDiscoverySession: FfiConverter<DiscoverySession, P
 }
 
 
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * Persisted trust list. Serialize with [TrustStore::to_json] and store the
+ * bytes in the product's secret storage; unpaired peers are simply absent
+ * (default posture: deny).
+ */
+public interface TrustStoreInterface {
+    
+    fun `entries`(): List<TrustedDeviceInfo>
+    
+    /**
+     * Trust level for a public key; absent = unpaired.
+     */
+    fun `levelOf`(`publicKey`: kotlin.ByteArray): TrustLevel?
+    
+    /**
+     * Remove a paired device by fingerprint.
+     */
+    fun `remove`(`fingerprint`: kotlin.String): kotlin.Boolean
+    
+    /**
+     * JSON serialization for persistence.
+     */
+    fun `toJson`(): kotlin.String
+    
+    /**
+     * Pair or re-pair a device (replaces the entry with the same public key).
+     */
+    fun `trustDevice`(`device`: TrustedDeviceInfo)
+    
+    companion object
+}
+
+/**
+ * Persisted trust list. Serialize with [TrustStore::to_json] and store the
+ * bytes in the product's secret storage; unpaired peers are simply absent
+ * (default posture: deny).
+ */
+open class TrustStore: Disposable, AutoCloseable, TrustStoreInterface {
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+    constructor(`fromJson`: kotlin.String?) :
+        this(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_constructor_truststore_new(
+        FfiConverterOptionalString.lower(`fromJson`),_status)
+}
+    )
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_free_truststore(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_clone_truststore(pointer!!, status)
+        }
+    }
+
+    override fun `entries`(): List<TrustedDeviceInfo> {
+            return FfiConverterSequenceTypeTrustedDeviceInfo.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_truststore_entries(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Trust level for a public key; absent = unpaired.
+     */override fun `levelOf`(`publicKey`: kotlin.ByteArray): TrustLevel? {
+            return FfiConverterOptionalTypeTrustLevel.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_truststore_level_of(
+        it, FfiConverterByteArray.lower(`publicKey`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Remove a paired device by fingerprint.
+     */override fun `remove`(`fingerprint`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_truststore_remove(
+        it, FfiConverterString.lower(`fingerprint`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * JSON serialization for persistence.
+     */override fun `toJson`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_truststore_to_json(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Pair or re-pair a device (replaces the entry with the same public key).
+     */override fun `trustDevice`(`device`: TrustedDeviceInfo)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_truststore_trust_device(
+        it, FfiConverterTypeTrustedDeviceInfo.lower(`device`),_status)
+}
+    }
+    
+    
+
+    
+
+    
+    
+    companion object
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTrustStore: FfiConverter<TrustStore, Pointer> {
+
+    override fun lower(value: TrustStore): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): TrustStore {
+        return TrustStore(value)
+    }
+
+    override fun read(buf: ByteBuffer): TrustStore {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: TrustStore) = 8UL
+
+    override fun write(value: TrustStore, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+
+/**
+ * A generated or restored device identity. Keep `seed` secret.
+ */
+data class DeviceIdentityInfo (
+    var `seed`: kotlin.ByteArray, 
+    var `publicKey`: kotlin.ByteArray, 
+    var `fingerprint`: kotlin.String, 
+    var `shortPin`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDeviceIdentityInfo: FfiConverterRustBuffer<DeviceIdentityInfo> {
+    override fun read(buf: ByteBuffer): DeviceIdentityInfo {
+        return DeviceIdentityInfo(
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DeviceIdentityInfo) = (
+            FfiConverterByteArray.allocationSize(value.`seed`) +
+            FfiConverterByteArray.allocationSize(value.`publicKey`) +
+            FfiConverterString.allocationSize(value.`fingerprint`) +
+            FfiConverterString.allocationSize(value.`shortPin`)
+    )
+
+    override fun write(value: DeviceIdentityInfo, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`seed`, buf)
+            FfiConverterByteArray.write(value.`publicKey`, buf)
+            FfiConverterString.write(value.`fingerprint`, buf)
+            FfiConverterString.write(value.`shortPin`, buf)
+    }
+}
+
+
 
 /**
  * Device hardware and OS metadata.
@@ -1759,7 +2266,8 @@ data class DeviceMeta (
     var `icon`: kotlin.String, 
     var `os`: kotlin.String, 
     var `arch`: kotlin.String, 
-    var `model`: kotlin.String?
+    var `model`: kotlin.String?, 
+    var `deviceId`: kotlin.String?
 ) {
     
     companion object
@@ -1776,6 +2284,7 @@ public object FfiConverterTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -1784,7 +2293,8 @@ public object FfiConverterTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta> {
             FfiConverterString.allocationSize(value.`icon`) +
             FfiConverterString.allocationSize(value.`os`) +
             FfiConverterString.allocationSize(value.`arch`) +
-            FfiConverterOptionalString.allocationSize(value.`model`)
+            FfiConverterOptionalString.allocationSize(value.`model`) +
+            FfiConverterOptionalString.allocationSize(value.`deviceId`)
     )
 
     override fun write(value: DeviceMeta, buf: ByteBuffer) {
@@ -1793,6 +2303,7 @@ public object FfiConverterTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta> {
             FfiConverterString.write(value.`os`, buf)
             FfiConverterString.write(value.`arch`, buf)
             FfiConverterOptionalString.write(value.`model`, buf)
+            FfiConverterOptionalString.write(value.`deviceId`, buf)
     }
 }
 
@@ -1846,7 +2357,15 @@ data class DiscoveredPeer (
     var `ip`: kotlin.String, 
     var `udpPort`: kotlin.UShort, 
     var `tcpPort`: kotlin.UShort, 
-    var `device`: DeviceMeta?
+    var `device`: DeviceMeta?, 
+    /**
+     * Stable per-device grouping id (display-grade).
+     */
+    var `deviceId`: kotlin.String?, 
+    /**
+     * Product label running on the peer.
+     */
+    var `product`: kotlin.String?
 ) {
     
     companion object
@@ -1864,6 +2383,8 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterUShort.read(buf),
             FfiConverterUShort.read(buf),
             FfiConverterOptionalTypeDeviceMeta.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -1873,7 +2394,9 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterString.allocationSize(value.`ip`) +
             FfiConverterUShort.allocationSize(value.`udpPort`) +
             FfiConverterUShort.allocationSize(value.`tcpPort`) +
-            FfiConverterOptionalTypeDeviceMeta.allocationSize(value.`device`)
+            FfiConverterOptionalTypeDeviceMeta.allocationSize(value.`device`) +
+            FfiConverterOptionalString.allocationSize(value.`deviceId`) +
+            FfiConverterOptionalString.allocationSize(value.`product`)
     )
 
     override fun write(value: DiscoveredPeer, buf: ByteBuffer) {
@@ -1883,6 +2406,8 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterUShort.write(value.`udpPort`, buf)
             FfiConverterUShort.write(value.`tcpPort`, buf)
             FfiConverterOptionalTypeDeviceMeta.write(value.`device`, buf)
+            FfiConverterOptionalString.write(value.`deviceId`, buf)
+            FfiConverterOptionalString.write(value.`product`, buf)
     }
 }
 
@@ -1963,6 +2488,57 @@ public object FfiConverterTypeRaceOutcome: FfiConverterRustBuffer<RaceOutcome> {
 
 
 /**
+ * A paired device entry.
+ */
+data class TrustedDeviceInfo (
+    var `deviceId`: kotlin.String, 
+    var `name`: kotlin.String, 
+    var `publicKey`: kotlin.ByteArray, 
+    var `fingerprint`: kotlin.String, 
+    var `level`: TrustLevel, 
+    var `pinnedAtMs`: kotlin.ULong
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTrustedDeviceInfo: FfiConverterRustBuffer<TrustedDeviceInfo> {
+    override fun read(buf: ByteBuffer): TrustedDeviceInfo {
+        return TrustedDeviceInfo(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeTrustLevel.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TrustedDeviceInfo) = (
+            FfiConverterString.allocationSize(value.`deviceId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterByteArray.allocationSize(value.`publicKey`) +
+            FfiConverterString.allocationSize(value.`fingerprint`) +
+            FfiConverterTypeTrustLevel.allocationSize(value.`level`) +
+            FfiConverterULong.allocationSize(value.`pinnedAtMs`)
+    )
+
+    override fun write(value: TrustedDeviceInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`deviceId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterByteArray.write(value.`publicKey`, buf)
+            FfiConverterString.write(value.`fingerprint`, buf)
+            FfiConverterTypeTrustLevel.write(value.`level`, buf)
+            FfiConverterULong.write(value.`pinnedAtMs`, buf)
+    }
+}
+
+
+
+/**
  * Device form factor classification.
  */
 
@@ -2023,6 +2599,45 @@ public object FfiConverterTypeDialStatus: FfiConverterRustBuffer<DialStatus> {
     override fun allocationSize(value: DialStatus) = 4UL
 
     override fun write(value: DialStatus, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
+ * How much a paired device may do without per-action confirmation.
+ */
+
+enum class TrustLevel {
+    
+    /**
+     * Own devices: silent/background push allowed.
+     */
+    FULL,
+    /**
+     * Paired but restricted: per-action confirmation required.
+     */
+    PARTIAL;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTrustLevel: FfiConverterRustBuffer<TrustLevel> {
+    override fun read(buf: ByteBuffer) = try {
+        TrustLevel.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: TrustLevel) = 4UL
+
+    override fun write(value: TrustLevel, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -2250,6 +2865,38 @@ public object FfiConverterOptionalTypeDeviceMeta: FfiConverterRustBuffer<DeviceM
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeTrustLevel: FfiConverterRustBuffer<TrustLevel?> {
+    override fun read(buf: ByteBuffer): TrustLevel? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeTrustLevel.read(buf)
+    }
+
+    override fun allocationSize(value: TrustLevel?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeTrustLevel.allocationSize(value)
+        }
+    }
+
+    override fun write(value: TrustLevel?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeTrustLevel.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalSequenceTypeManualPeer: FfiConverterRustBuffer<List<ManualPeer>?> {
     override fun read(buf: ByteBuffer): List<ManualPeer>? {
         if (buf.get().toInt() == 0) {
@@ -2359,6 +3006,34 @@ public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<Ma
         }
     }
 }
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBuffer<List<TrustedDeviceInfo>> {
+    override fun read(buf: ByteBuffer): List<TrustedDeviceInfo> {
+        val len = buf.getInt()
+        return List<TrustedDeviceInfo>(len) {
+            FfiConverterTypeTrustedDeviceInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TrustedDeviceInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTrustedDeviceInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TrustedDeviceInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTrustedDeviceInfo.write(it, buf)
+        }
+    }
+}
         /**
          * Retrieve all local addresses including VPN/tunnels (for unicast overlay sync).
          */ fun `advertisedAddresses`(): List<kotlin.String> {
@@ -2385,12 +3060,60 @@ public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<Ma
     
 
         /**
+         * Generate a fresh device identity (Ed25519). Keep the seed secret.
+         */ fun `generateDeviceIdentity`(): DeviceIdentityInfo {
+            return FfiConverterTypeDeviceIdentityInfo.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_generate_device_identity(
+        _status)
+}
+    )
+    }
+    
+
+        /**
          * Detect the current machine's hardware profile, OS, architecture, and form factor.
          */ fun `getDeviceMeta`(): DeviceMeta {
             return FfiConverterTypeDeviceMeta.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_get_device_meta(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * `sha256:<hex>` fingerprint of an Ed25519 public key.
+         */ fun `identityFingerprint`(`publicKey`: kotlin.ByteArray): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_identity_fingerprint(
+        FfiConverterByteArray.lower(`publicKey`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Restore an identity from a persisted 32-byte seed.
+         */ fun `identityFromSeed`(`seed`: kotlin.ByteArray): DeviceIdentityInfo {
+            return FfiConverterTypeDeviceIdentityInfo.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_identity_from_seed(
+        FfiConverterByteArray.lower(`seed`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 6-digit on-screen comparison pin for pairing.
+         */ fun `identityShortPin`(`publicKey`: kotlin.ByteArray): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_identity_short_pin(
+        FfiConverterByteArray.lower(`publicKey`),_status)
 }
     )
     }
@@ -2498,6 +3221,18 @@ public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<Ma
     
 
         /**
+         * Sign a message with a persisted seed.
+         */ fun `signMessage`(`seed`: kotlin.ByteArray, `message`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_sign_message(
+        FfiConverterByteArray.lower(`seed`),FfiConverterByteArray.lower(`message`),_status)
+}
+    )
+    }
+    
+
+        /**
          * Retrieve per-NIC subnet broadcast addresses (e.g. `192.168.2.255`).
          *
          * These addresses bypass Clash / Sing-box TUN mode (0.0.0.0/1) route capture.
@@ -2506,6 +3241,18 @@ public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<Ma
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * Verify a signature against an Ed25519 public key.
+         */ fun `verifyMessage`(`publicKey`: kotlin.ByteArray, `message`: kotlin.ByteArray, `signature`: kotlin.ByteArray): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_verify_message(
+        FfiConverterByteArray.lower(`publicKey`),FfiConverterByteArray.lower(`message`),FfiConverterByteArray.lower(`signature`),_status)
 }
     )
     }

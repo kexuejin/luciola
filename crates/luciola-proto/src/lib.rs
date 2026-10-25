@@ -69,6 +69,9 @@ pub struct DeviceMeta {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
+    /// Stable per-device grouping id (display-grade, not a security identity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 /// Node presence profile exchanged across the network.
@@ -82,6 +85,13 @@ pub struct Profile {
     pub tcp_port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<DeviceMeta>,
+    /// Stable per-device grouping id (display-grade, not a security identity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    /// Product label, e.g. "luciola-clipboard" — lets remote UIs group
+    /// multiple products running on the same physical device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
 }
 
 /// Message types in the Luciola discovery protocol.

@@ -96,6 +96,7 @@ pub struct JsDeviceMeta {
     pub arch: String,
     pub model: Option<String>,
     pub hostname: Option<String>,
+    pub device_id: Option<String>,
 }
 
 /// Detect the current local device hardware profile, OS, and form factor.
@@ -109,6 +110,7 @@ pub fn get_device_meta() -> JsDeviceMeta {
         arch: meta.arch,
         model: meta.model,
         hostname: meta.hostname,
+        device_id: meta.device_id,
     }
 }
 
@@ -128,6 +130,8 @@ pub struct JsPeerRecord {
     pub udp_port: u32,
     pub tcp_port: u32,
     pub device: Option<JsDeviceMeta>,
+    pub device_id: Option<String>,
+    pub product: Option<String>,
 }
 
 use napi::bindgen_prelude::*;
@@ -146,12 +150,20 @@ pub struct DiscoverySession {
     shutdown_tx: Option<oneshot::Sender<()>>,
     node_id: std::sync::Mutex<Option<String>>,
     manual_peers: std::sync::Mutex<Vec<(String, u16)>>,
+    product: Option<String>,
+    device_id: Option<String>,
 }
 
 #[napi]
 impl DiscoverySession {
     #[napi(constructor)]
-    pub fn new(name: Option<String>, port: Option<u32>, manual_peers: Option<Vec<JsManualPeer>>) -> Self {
+    pub fn new(
+        name: Option<String>,
+        port: Option<u32>,
+        manual_peers: Option<Vec<JsManualPeer>>,
+        product: Option<String>,
+        device_id: Option<String>,
+    ) -> Self {
         Self {
             name: name.unwrap_or_else(|| "NodeJS Peer".to_string()),
             port: port.unwrap_or(17878) as u16,
@@ -164,6 +176,8 @@ impl DiscoverySession {
                     .map(|p| (p.host, p.port as u16))
                     .collect(),
             ),
+            product,
+            device_id,
         }
     }
 
@@ -186,6 +200,12 @@ impl DiscoverySession {
                 obj.set_named_property("ip", &ctx.value.ip)?;
                 obj.set_named_property("udpPort", ctx.value.udp_port)?;
                 obj.set_named_property("tcpPort", ctx.value.tcp_port)?;
+                if let Some(ref v) = ctx.value.device_id {
+                    obj.set_named_property("deviceId", v)?;
+                }
+                if let Some(ref v) = ctx.value.product {
+                    obj.set_named_property("product", v)?;
+                }
                 if let Some(ref d) = ctx.value.device {
                     let mut dev = ctx.env.create_object()?;
                     dev.set_named_property("deviceType", &d.device_type)?;
@@ -197,6 +217,9 @@ impl DiscoverySession {
                     }
                     if let Some(ref h) = d.hostname {
                         dev.set_named_property("hostname", h)?;
+                    }
+                    if let Some(ref di) = d.device_id {
+                        dev.set_named_property("deviceId", di)?;
                     }
                     obj.set_named_property("device", dev)?;
                 }
@@ -210,6 +233,12 @@ impl DiscoverySession {
         let port = self.port;
         let node_id = format!("node_{:x}", rand::random::<u32>());
         let manual_peers = self.manual_peers.lock().unwrap().clone();
+        let detected = luciola_net::DeviceDetector::detect();
+        let device_id = self
+            .device_id
+            .clone()
+            .or(detected.device_id.clone());
+        let product = self.product.clone();
         *self.node_id.lock().unwrap() = Some(node_id.clone());
 
         std::thread::spawn(move || {
@@ -226,7 +255,9 @@ impl DiscoverySession {
                     addresses: luciola::net::NetworkDetector::local_candidate_addresses(),
                     udp_port: port,
                     tcp_port: port + 1,
-                    device: Some(luciola_net::DeviceDetector::detect()),
+                    device: Some(detected),
+                    device_id,
+                    product,
                 };
 
                 let mut config = luciola::DiscoveryConfig::default();
@@ -255,6 +286,7 @@ impl DiscoverySession {
                                         arch: d.arch,
                                         model: d.model,
                                         hostname: d.hostname,
+                                        device_id: d.device_id,
                                     });
                                     let record = JsPeerRecord {
                                         node_id: p.node_id,
@@ -263,6 +295,8 @@ impl DiscoverySession {
                                         udp_port: p.udp_port as u32,
                                         tcp_port: p.tcp_port as u32,
                                         device,
+                                        device_id: p.device_id,
+                                        product: p.product,
                                     };
                                     tsfn.call(record, ThreadsafeFunctionCallMode::NonBlocking);
                                 }
@@ -342,4 +376,61 @@ pub async fn happy_eyeballs_race(
             })
             .collect(),
     }
+}
+
+/// A generated or restored device identity. Keep `seed` secret.
+#[napi(object)]
+pub struct JsDeviceIdentity {
+    pub seed: Buffer,
+    pub public_key: Buffer,
+    pub fingerprint: String,
+    pub short_pin: String,
+}
+
+/// Generate a fresh Ed25519 device identity for pairing/trust.
+#[napi]
+pub fn generate_device_identity() -> JsDeviceIdentity {
+    let id = luciola::trust::generate_identity();
+    JsDeviceIdentity {
+        seed: id.seed.into(),
+        public_key: id.public_key.into(),
+        fingerprint: id.fingerprint,
+        short_pin: id.short_pin,
+    }
+}
+
+/// Restore an identity from a persisted 32-byte seed.
+#[napi]
+pub fn identity_from_seed(seed: Buffer) -> JsDeviceIdentity {
+    let id = luciola::trust::identity_from_seed(&seed);
+    JsDeviceIdentity {
+        seed: id.seed.into(),
+        public_key: id.public_key.into(),
+        fingerprint: id.fingerprint,
+        short_pin: id.short_pin,
+    }
+}
+
+/// `sha256:<hex>` fingerprint of an Ed25519 public key.
+#[napi]
+pub fn identity_fingerprint(public_key: Buffer) -> String {
+    luciola::trust::fingerprint(&public_key)
+}
+
+/// 6-digit on-screen comparison pin for pairing.
+#[napi]
+pub fn identity_short_pin(public_key: Buffer) -> String {
+    luciola::trust::short_pin(&public_key)
+}
+
+/// Sign a message with a persisted seed.
+#[napi]
+pub fn sign_message(seed: Buffer, message: Buffer) -> Buffer {
+    luciola::trust::sign(&seed, &message).into()
+}
+
+/// Verify a signature against an Ed25519 public key.
+#[napi]
+pub fn verify_message(public_key: Buffer, message: Buffer, signature: Buffer) -> bool {
+    luciola::trust::verify(&public_key, &message, &signature)
 }

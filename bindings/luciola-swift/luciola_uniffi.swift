@@ -509,6 +509,24 @@ fileprivate struct FfiConverterString: FfiConverter {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
+    }
+}
+
 
 
 
@@ -632,13 +650,14 @@ open class DiscoverySession:
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
      */
-public convenience init(name: String, port: UInt16, manualPeers: [ManualPeer]?) {
+public convenience init(name: String, port: UInt16, manualPeers: [ManualPeer]?, product: String?) {
     let pointer =
         try! rustCall() {
     uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
         FfiConverterString.lower(name),
         FfiConverterUInt16.lower(port),
-        FfiConverterOptionSequenceTypeManualPeer.lower(manualPeers),$0
+        FfiConverterOptionSequenceTypeManualPeer.lower(manualPeers),
+        FfiConverterOptionString.lower(product),$0
     )
 }
     self.init(unsafeFromRawPointer: pointer)
@@ -785,6 +804,291 @@ public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) ->
 }
 
 
+
+
+/**
+ * Persisted trust list. Serialize with [TrustStore::to_json] and store the
+ * bytes in the product's secret storage; unpaired peers are simply absent
+ * (default posture: deny).
+ */
+public protocol TrustStoreProtocol : AnyObject {
+    
+    func entries()  -> [TrustedDeviceInfo]
+    
+    /**
+     * Trust level for a public key; absent = unpaired.
+     */
+    func levelOf(publicKey: Data)  -> TrustLevel?
+    
+    /**
+     * Remove a paired device by fingerprint.
+     */
+    func remove(fingerprint: String)  -> Bool
+    
+    /**
+     * JSON serialization for persistence.
+     */
+    func toJson()  -> String
+    
+    /**
+     * Pair or re-pair a device (replaces the entry with the same public key).
+     */
+    func trustDevice(device: TrustedDeviceInfo) 
+    
+}
+
+/**
+ * Persisted trust list. Serialize with [TrustStore::to_json] and store the
+ * bytes in the product's secret storage; unpaired peers are simply absent
+ * (default posture: deny).
+ */
+open class TrustStore:
+    TrustStoreProtocol {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_truststore(self.pointer, $0) }
+    }
+public convenience init(fromJson: String?) {
+    let pointer =
+        try! rustCall() {
+    uniffi_luciola_uniffi_fn_constructor_truststore_new(
+        FfiConverterOptionString.lower(fromJson),$0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_truststore(pointer, $0) }
+    }
+
+    
+
+    
+open func entries() -> [TrustedDeviceInfo] {
+    return try!  FfiConverterSequenceTypeTrustedDeviceInfo.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_truststore_entries(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Trust level for a public key; absent = unpaired.
+     */
+open func levelOf(publicKey: Data) -> TrustLevel? {
+    return try!  FfiConverterOptionTypeTrustLevel.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_truststore_level_of(self.uniffiClonePointer(),
+        FfiConverterData.lower(publicKey),$0
+    )
+})
+}
+    
+    /**
+     * Remove a paired device by fingerprint.
+     */
+open func remove(fingerprint: String) -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_truststore_remove(self.uniffiClonePointer(),
+        FfiConverterString.lower(fingerprint),$0
+    )
+})
+}
+    
+    /**
+     * JSON serialization for persistence.
+     */
+open func toJson() -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_truststore_to_json(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Pair or re-pair a device (replaces the entry with the same public key).
+     */
+open func trustDevice(device: TrustedDeviceInfo) {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_truststore_trust_device(self.uniffiClonePointer(),
+        FfiConverterTypeTrustedDeviceInfo.lower(device),$0
+    )
+}
+}
+    
+
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTrustStore: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = TrustStore
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> TrustStore {
+        return TrustStore(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: TrustStore) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TrustStore {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: TrustStore, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTrustStore_lift(_ pointer: UnsafeMutableRawPointer) throws -> TrustStore {
+    return try FfiConverterTypeTrustStore.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTrustStore_lower(_ value: TrustStore) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeTrustStore.lower(value)
+}
+
+
+/**
+ * A generated or restored device identity. Keep `seed` secret.
+ */
+public struct DeviceIdentityInfo {
+    public var seed: Data
+    public var publicKey: Data
+    public var fingerprint: String
+    public var shortPin: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(seed: Data, publicKey: Data, fingerprint: String, shortPin: String) {
+        self.seed = seed
+        self.publicKey = publicKey
+        self.fingerprint = fingerprint
+        self.shortPin = shortPin
+    }
+}
+
+
+
+extension DeviceIdentityInfo: Equatable, Hashable {
+    public static func ==(lhs: DeviceIdentityInfo, rhs: DeviceIdentityInfo) -> Bool {
+        if lhs.seed != rhs.seed {
+            return false
+        }
+        if lhs.publicKey != rhs.publicKey {
+            return false
+        }
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        if lhs.shortPin != rhs.shortPin {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(seed)
+        hasher.combine(publicKey)
+        hasher.combine(fingerprint)
+        hasher.combine(shortPin)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceIdentityInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceIdentityInfo {
+        return
+            try DeviceIdentityInfo(
+                seed: FfiConverterData.read(from: &buf), 
+                publicKey: FfiConverterData.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf), 
+                shortPin: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DeviceIdentityInfo, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.seed, into: &buf)
+        FfiConverterData.write(value.publicKey, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+        FfiConverterString.write(value.shortPin, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceIdentityInfo_lift(_ buf: RustBuffer) throws -> DeviceIdentityInfo {
+    return try FfiConverterTypeDeviceIdentityInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceIdentityInfo_lower(_ value: DeviceIdentityInfo) -> RustBuffer {
+    return FfiConverterTypeDeviceIdentityInfo.lower(value)
+}
+
+
 /**
  * Device hardware and OS metadata.
  */
@@ -794,15 +1098,17 @@ public struct DeviceMeta {
     public var os: String
     public var arch: String
     public var model: String?
+    public var deviceId: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(deviceType: DeviceType, icon: String, os: String, arch: String, model: String?) {
+    public init(deviceType: DeviceType, icon: String, os: String, arch: String, model: String?, deviceId: String?) {
         self.deviceType = deviceType
         self.icon = icon
         self.os = os
         self.arch = arch
         self.model = model
+        self.deviceId = deviceId
     }
 }
 
@@ -825,6 +1131,9 @@ extension DeviceMeta: Equatable, Hashable {
         if lhs.model != rhs.model {
             return false
         }
+        if lhs.deviceId != rhs.deviceId {
+            return false
+        }
         return true
     }
 
@@ -834,6 +1143,7 @@ extension DeviceMeta: Equatable, Hashable {
         hasher.combine(os)
         hasher.combine(arch)
         hasher.combine(model)
+        hasher.combine(deviceId)
     }
 }
 
@@ -849,7 +1159,8 @@ public struct FfiConverterTypeDeviceMeta: FfiConverterRustBuffer {
                 icon: FfiConverterString.read(from: &buf), 
                 os: FfiConverterString.read(from: &buf), 
                 arch: FfiConverterString.read(from: &buf), 
-                model: FfiConverterOptionString.read(from: &buf)
+                model: FfiConverterOptionString.read(from: &buf), 
+                deviceId: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -859,6 +1170,7 @@ public struct FfiConverterTypeDeviceMeta: FfiConverterRustBuffer {
         FfiConverterString.write(value.os, into: &buf)
         FfiConverterString.write(value.arch, into: &buf)
         FfiConverterOptionString.write(value.model, into: &buf)
+        FfiConverterOptionString.write(value.deviceId, into: &buf)
     }
 }
 
@@ -965,16 +1277,32 @@ public struct DiscoveredPeer {
     public var udpPort: UInt16
     public var tcpPort: UInt16
     public var device: DeviceMeta?
+    /**
+     * Stable per-device grouping id (display-grade).
+     */
+    public var deviceId: String?
+    /**
+     * Product label running on the peer.
+     */
+    public var product: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeId: String, name: String, ip: String, udpPort: UInt16, tcpPort: UInt16, device: DeviceMeta?) {
+    public init(nodeId: String, name: String, ip: String, udpPort: UInt16, tcpPort: UInt16, device: DeviceMeta?, 
+        /**
+         * Stable per-device grouping id (display-grade).
+         */deviceId: String?, 
+        /**
+         * Product label running on the peer.
+         */product: String?) {
         self.nodeId = nodeId
         self.name = name
         self.ip = ip
         self.udpPort = udpPort
         self.tcpPort = tcpPort
         self.device = device
+        self.deviceId = deviceId
+        self.product = product
     }
 }
 
@@ -1000,6 +1328,12 @@ extension DiscoveredPeer: Equatable, Hashable {
         if lhs.device != rhs.device {
             return false
         }
+        if lhs.deviceId != rhs.deviceId {
+            return false
+        }
+        if lhs.product != rhs.product {
+            return false
+        }
         return true
     }
 
@@ -1010,6 +1344,8 @@ extension DiscoveredPeer: Equatable, Hashable {
         hasher.combine(udpPort)
         hasher.combine(tcpPort)
         hasher.combine(device)
+        hasher.combine(deviceId)
+        hasher.combine(product)
     }
 }
 
@@ -1026,7 +1362,9 @@ public struct FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer {
                 ip: FfiConverterString.read(from: &buf), 
                 udpPort: FfiConverterUInt16.read(from: &buf), 
                 tcpPort: FfiConverterUInt16.read(from: &buf), 
-                device: FfiConverterOptionTypeDeviceMeta.read(from: &buf)
+                device: FfiConverterOptionTypeDeviceMeta.read(from: &buf), 
+                deviceId: FfiConverterOptionString.read(from: &buf), 
+                product: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1037,6 +1375,8 @@ public struct FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer {
         FfiConverterUInt16.write(value.udpPort, into: &buf)
         FfiConverterUInt16.write(value.tcpPort, into: &buf)
         FfiConverterOptionTypeDeviceMeta.write(value.device, into: &buf)
+        FfiConverterOptionString.write(value.deviceId, into: &buf)
+        FfiConverterOptionString.write(value.product, into: &buf)
     }
 }
 
@@ -1199,6 +1539,107 @@ public func FfiConverterTypeRaceOutcome_lift(_ buf: RustBuffer) throws -> RaceOu
 #endif
 public func FfiConverterTypeRaceOutcome_lower(_ value: RaceOutcome) -> RustBuffer {
     return FfiConverterTypeRaceOutcome.lower(value)
+}
+
+
+/**
+ * A paired device entry.
+ */
+public struct TrustedDeviceInfo {
+    public var deviceId: String
+    public var name: String
+    public var publicKey: Data
+    public var fingerprint: String
+    public var level: TrustLevel
+    public var pinnedAtMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceId: String, name: String, publicKey: Data, fingerprint: String, level: TrustLevel, pinnedAtMs: UInt64) {
+        self.deviceId = deviceId
+        self.name = name
+        self.publicKey = publicKey
+        self.fingerprint = fingerprint
+        self.level = level
+        self.pinnedAtMs = pinnedAtMs
+    }
+}
+
+
+
+extension TrustedDeviceInfo: Equatable, Hashable {
+    public static func ==(lhs: TrustedDeviceInfo, rhs: TrustedDeviceInfo) -> Bool {
+        if lhs.deviceId != rhs.deviceId {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.publicKey != rhs.publicKey {
+            return false
+        }
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        if lhs.level != rhs.level {
+            return false
+        }
+        if lhs.pinnedAtMs != rhs.pinnedAtMs {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(deviceId)
+        hasher.combine(name)
+        hasher.combine(publicKey)
+        hasher.combine(fingerprint)
+        hasher.combine(level)
+        hasher.combine(pinnedAtMs)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTrustedDeviceInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TrustedDeviceInfo {
+        return
+            try TrustedDeviceInfo(
+                deviceId: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                publicKey: FfiConverterData.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf), 
+                level: FfiConverterTypeTrustLevel.read(from: &buf), 
+                pinnedAtMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TrustedDeviceInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterData.write(value.publicKey, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+        FfiConverterTypeTrustLevel.write(value.level, into: &buf)
+        FfiConverterUInt64.write(value.pinnedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTrustedDeviceInfo_lift(_ buf: RustBuffer) throws -> TrustedDeviceInfo {
+    return try FfiConverterTypeTrustedDeviceInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTrustedDeviceInfo_lower(_ value: TrustedDeviceInfo) -> RustBuffer {
+    return FfiConverterTypeTrustedDeviceInfo.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -1371,6 +1812,79 @@ public func FfiConverterTypeDialStatus_lower(_ value: DialStatus) -> RustBuffer 
 
 
 extension DialStatus: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * How much a paired device may do without per-action confirmation.
+ */
+
+public enum TrustLevel {
+    
+    /**
+     * Own devices: silent/background push allowed.
+     */
+    case full
+    /**
+     * Paired but restricted: per-action confirmation required.
+     */
+    case partial
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTrustLevel: FfiConverterRustBuffer {
+    typealias SwiftType = TrustLevel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TrustLevel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .full
+        
+        case 2: return .partial
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TrustLevel, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .full:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .partial:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTrustLevel_lift(_ buf: RustBuffer) throws -> TrustLevel {
+    return try FfiConverterTypeTrustLevel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTrustLevel_lower(_ value: TrustLevel) -> RustBuffer {
+    return FfiConverterTypeTrustLevel.lower(value)
+}
+
+
+
+extension TrustLevel: Equatable, Hashable {}
 
 
 
@@ -1581,6 +2095,30 @@ fileprivate struct FfiConverterOptionTypeDeviceMeta: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeTrustLevel: FfiConverterRustBuffer {
+    typealias SwiftType = TrustLevel?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTrustLevel.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTrustLevel.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceTypeManualPeer: FfiConverterRustBuffer {
     typealias SwiftType = [ManualPeer]?
 
@@ -1676,6 +2214,31 @@ fileprivate struct FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [TrustedDeviceInfo]
+
+    public static func write(_ value: [TrustedDeviceInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTrustedDeviceInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TrustedDeviceInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TrustedDeviceInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTrustedDeviceInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
  * Retrieve all local addresses including VPN/tunnels (for unicast overlay sync).
  */
@@ -1697,11 +2260,50 @@ public func defaultRaceCandidates(addresses: [String]) -> [String] {
 })
 }
 /**
+ * Generate a fresh device identity (Ed25519). Keep the seed secret.
+ */
+public func generateDeviceIdentity() -> DeviceIdentityInfo {
+    return try!  FfiConverterTypeDeviceIdentityInfo.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_generate_device_identity($0
+    )
+})
+}
+/**
  * Detect the current machine's hardware profile, OS, architecture, and form factor.
  */
 public func getDeviceMeta() -> DeviceMeta {
     return try!  FfiConverterTypeDeviceMeta.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_get_device_meta($0
+    )
+})
+}
+/**
+ * `sha256:<hex>` fingerprint of an Ed25519 public key.
+ */
+public func identityFingerprint(publicKey: Data) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_identity_fingerprint(
+        FfiConverterData.lower(publicKey),$0
+    )
+})
+}
+/**
+ * Restore an identity from a persisted 32-byte seed.
+ */
+public func identityFromSeed(seed: Data) -> DeviceIdentityInfo {
+    return try!  FfiConverterTypeDeviceIdentityInfo.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_identity_from_seed(
+        FfiConverterData.lower(seed),$0
+    )
+})
+}
+/**
+ * 6-digit on-screen comparison pin for pairing.
+ */
+public func identityShortPin(publicKey: Data) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_identity_short_pin(
+        FfiConverterData.lower(publicKey),$0
     )
 })
 }
@@ -1793,6 +2395,17 @@ public func selectLanIp() -> String? {
 })
 }
 /**
+ * Sign a message with a persisted seed.
+ */
+public func signMessage(seed: Data, message: Data) -> Data {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_sign_message(
+        FfiConverterData.lower(seed),
+        FfiConverterData.lower(message),$0
+    )
+})
+}
+/**
  * Retrieve per-NIC subnet broadcast addresses (e.g. `192.168.2.255`).
  *
  * These addresses bypass Clash / Sing-box TUN mode (0.0.0.0/1) route capture.
@@ -1800,6 +2413,18 @@ public func selectLanIp() -> String? {
 public func subnetBroadcastAddresses() -> [String] {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses($0
+    )
+})
+}
+/**
+ * Verify a signature against an Ed25519 public key.
+ */
+public func verifyMessage(publicKey: Data, message: Data, signature: Data) -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_verify_message(
+        FfiConverterData.lower(publicKey),
+        FfiConverterData.lower(message),
+        FfiConverterData.lower(signature),$0
     )
 })
 }
@@ -1825,7 +2450,19 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_generate_device_identity() != 39160) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_get_device_meta() != 13951) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_identity_fingerprint() != 8719) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_identity_from_seed() != 31545) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_identity_short_pin() != 19700) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_is_lan_peer() != 63646) {
@@ -1852,7 +2489,13 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_select_lan_ip() != 61023) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_sign_message() != 47227) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses() != 6105) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_verify_message() != 57140) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound() != 50984) {
@@ -1876,7 +2519,25 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 53696) {
+    if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_truststore_level_of() != 49100) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_truststore_remove() != 61647) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_truststore_to_json() != 25922) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_truststore_trust_device() != 27542) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 60635) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {

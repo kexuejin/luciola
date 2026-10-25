@@ -357,6 +357,7 @@ impl DeviceDetector {
                 arch,
                 model: Some("WSL2 Virtual Machine".to_string()),
                 hostname: Self::friendly_computer_name(),
+                device_id: Some(Self::stable_device_id()),
             };
         }
 
@@ -396,7 +397,35 @@ impl DeviceDetector {
             arch,
             model,
             hostname,
+            device_id: Some(Self::stable_device_id()),
         }
+    }
+
+    /// Stable, per-device grouping id (FNV-1a over machine identity).
+    ///
+    /// Display-grade only: it lets remote UIs group multiple products on one
+    /// physical device. It is NOT a security identity — trust decisions must
+    /// use paired public keys (see `luciola::trust`).
+    pub fn stable_device_id() -> String {
+        let mut basis = String::new();
+        if let Some(h) = Self::friendly_computer_name() {
+            basis.push_str(&h);
+        }
+        basis.push('|');
+        basis.push_str(std::env::consts::OS);
+        basis.push('|');
+        basis.push_str(std::env::consts::ARCH);
+        if let Some(m) = Self::macos_model() {
+            basis.push('|');
+            basis.push_str(&m);
+        }
+        // FNV-1a 64-bit: tiny, dependency-free, stable across runs/versions.
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in basis.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        format!("dev_{hash:016x}")
     }
 
     /// Retrieve the friendly device nickname / computer name (e.g. "ke的Mac mini").
