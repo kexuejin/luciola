@@ -16,6 +16,7 @@ dependencyResolutionManagement {
     // repositories so it also stays buildable standalone.
     repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
+        mavenLocal()
         maven("https://maven.aliyun.com/repository/google")
         maven("https://maven.aliyun.com/repository/central")
         google()
@@ -25,5 +26,8 @@ dependencyResolutionManagement {
 
 rootProject.name = "luciola-android-demo"
 include(":app")
+// Dev wiring: consume the library as an included project. Real consumers use
+// the published artifact: implementation("com.kapp.luciola:luciola-kmp:0.1.0")
+// with mavenLocal() in repositories (see bindings/luciola-kmp/README.md).
 include(":luciola-kmp")
 project(":luciola-kmp").projectDir = file("../../bindings/luciola-kmp")

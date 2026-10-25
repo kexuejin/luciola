@@ -1,6 +1,7 @@
 plugins {
     kotlin("multiplatform") version "2.2.20"
     id("com.android.kotlin.multiplatform.library") version "9.4.1"
+    `maven-publish`
 }
 
 group = "com.kapp.luciola"
@@ -54,6 +55,28 @@ kotlin {
             dependencies {
                 implementation(kotlin("test"))
             }
+        }
+    }
+}
+
+publishing {
+    publications.withType<MavenPublication>().configureEach {
+        pom {
+            name.set("luciola-kmp")
+            description.set("Luciola LAN discovery engine: supervision, path racing, trust & secure channels (KMP)")
+            licenses {
+                license {
+                    name.set("MIT")
+                    url.set("https://opensource.org/licenses/MIT")
+                }
+            }
+        }
+    }
+    // Local Maven publishing only for now; remote repos come later.
+    repositories {
+        maven {
+            name = "Local"
+            setUrl("${layout.buildDirectory}/repoLocal")
         }
     }
 }
