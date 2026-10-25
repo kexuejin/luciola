@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 description = "UniFFI bindings for Kotlin (Android/JVM) and Swift (iOS/macOS)"
 
+publish = false
+
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
 

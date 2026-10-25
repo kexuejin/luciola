@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 description = "Node.js (N-API) bindings for the Luciola peer discovery and network intelligence engine"
 
+publish = false
+
 [lib]
 crate-type = ["cdylib"]
 

@@ -73,24 +73,76 @@ val verifyNativeLib = tasks.register("verifyNativeLib") {
 }
 tasks.matching { it.name.startsWith("publish") }.configureEach { dependsOn(verifyNativeLib) }
 
+// Central requires javadoc jars; KMP ships real sources jars already.
+val javadocJar = tasks.register("javadocJar", Jar::class) {
+    archiveClassifier.set("javadoc")
+    // javadoc for a KMP library: an empty (stub) jar satisfies Central validation
+    from(resources.text.fromString("luciola KMP — see https://github.com/kexuejin/luciola")) {
+        into(".")
+    }
+}
+
 publishing {
     publications.withType<MavenPublication>().configureEach {
+        artifact(javadocJar.get())
         pom {
-            name.set("luciola-kmp")
-            description.set("Luciola LAN discovery engine: supervision, path racing, trust & secure channels (KMP)")
+            name.set("luciola")
+            description.set("Luciola LAN discovery engine: supervision, path racing, trust & secure channels (Kotlin Multiplatform)")
+            url.set("https://github.com/kexuejin/luciola")
             licenses {
                 license {
                     name.set("MIT")
                     url.set("https://opensource.org/licenses/MIT")
                 }
+                license {
+                    name.set("Apache-2.0")
+                    url.set("https://opensource.org/licenses/Apache-2.0")
+                }
+            }
+            developers {
+                developer {
+                    id.set("kexuejin")
+                    name.set("Luciola Contributors")
+                }
+            }
+            scm {
+                connection.set("scm:git:git://github.com/kexuejin/luciola.git")
+                developerConnection.set("scm:git:ssh://github.com/kexuejin/luciola.git")
+                url.set("https://github.com/kexuejin/luciola")
             }
         }
     }
-    // Local Maven publishing only for now; remote repos come later.
     repositories {
         maven {
             name = "Local"
             setUrl("${layout.buildDirectory}/repoLocal")
         }
+        // Enable with -PcentralUrl=... -PcentralUser=... -PcentralToken=...
+        // (Maven Central portal: https://central.sonatype.com -> your namespace)
+        if (project.hasProperty("centralUrl")) {
+            maven {
+                name = "Central"
+                setUrl(project.property("centralUrl") as String)
+                credentials {
+                    username = project.property("centralUser") as String
+                    password = project.property("centralToken") as String
+                }
+            }
+        }
+    }
+}
+
+
+// Sign every publication when GPG key material is present (Central requirement).
+// Provide via gradle properties: signingKey (armored, \n-escaped) + signingPassword,
+// or a local ~/.gnupg keyring for interactive publishing.
+if (project.hasProperty("signingKey") || project.hasProperty("signing.gnupg.keyName")) {
+    apply(plugin = "signing")
+    configure<org.gradle.plugins.signing.SigningExtension> {
+        val keyValue = project.findProperty("signingKey") as String?
+        if (keyValue != null) {
+            useInMemoryPgpKeys(keyValue.replace("\\n", "\n"), project.findProperty("signingPassword") as String?)
+        }
+        sign(publishing.publications)
     }
 }
