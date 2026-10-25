@@ -961,7 +961,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_func_advertised_addresses(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    fun uniffi_luciola_uniffi_fn_func_build_pairing_uri(`name`: RustBuffer.ByValue,`product`: RustBuffer.ByValue,`port`: Short,`addrs`: RustBuffer.ByValue,`fingerprint`: RustBuffer.ByValue,`pin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_luciola_uniffi_fn_func_build_pairing_uri(`name`: RustBuffer.ByValue,`product`: RustBuffer.ByValue,`port`: Short,`addrs`: RustBuffer.ByValue,`fingerprint`: RustBuffer.ByValue,`publicKey`: RustBuffer.ByValue,`pin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_comparison_pin(`localPk`: RustBuffer.ByValue,`remotePk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1233,7 +1233,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 6080.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 28829.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657.toShort()) {
@@ -3109,6 +3109,7 @@ data class PairingInfo (
     var `port`: kotlin.UShort, 
     var `addrs`: List<kotlin.String>, 
     var `fingerprint`: kotlin.String?, 
+    var `publicKey`: kotlin.String?, 
     var `pin`: kotlin.String?
 ) {
     
@@ -3127,6 +3128,7 @@ public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
             FfiConverterSequenceString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -3136,6 +3138,7 @@ public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
             FfiConverterUShort.allocationSize(value.`port`) +
             FfiConverterSequenceString.allocationSize(value.`addrs`) +
             FfiConverterOptionalString.allocationSize(value.`fingerprint`) +
+            FfiConverterOptionalString.allocationSize(value.`publicKey`) +
             FfiConverterOptionalString.allocationSize(value.`pin`)
     )
 
@@ -3145,6 +3148,7 @@ public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
             FfiConverterUShort.write(value.`port`, buf)
             FfiConverterSequenceString.write(value.`addrs`, buf)
             FfiConverterOptionalString.write(value.`fingerprint`, buf)
+            FfiConverterOptionalString.write(value.`publicKey`, buf)
             FfiConverterOptionalString.write(value.`pin`, buf)
     }
 }
@@ -3937,11 +3941,11 @@ public object FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBuffer<
     )
     }
     
- fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `pin`: kotlin.String?): kotlin.String {
+ fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_build_pairing_uri(
-        FfiConverterString.lower(`name`),FfiConverterOptionalString.lower(`product`),FfiConverterUShort.lower(`port`),FfiConverterSequenceString.lower(`addrs`),FfiConverterOptionalString.lower(`fingerprint`),FfiConverterOptionalString.lower(`pin`),_status)
+        FfiConverterString.lower(`name`),FfiConverterOptionalString.lower(`product`),FfiConverterUShort.lower(`port`),FfiConverterSequenceString.lower(`addrs`),FfiConverterOptionalString.lower(`fingerprint`),FfiConverterOptionalString.lower(`publicKey`),FfiConverterOptionalString.lower(`pin`),_status)
 }
     )
     }

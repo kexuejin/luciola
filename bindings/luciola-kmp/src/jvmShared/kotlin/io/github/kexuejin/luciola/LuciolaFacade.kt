@@ -58,6 +58,7 @@ fun luciolaParsePairingUri(uri: String): PairingUi? {
         port = info.port.toInt(),
         addrs = info.addrs,
         fingerprint = info.fingerprint,
+        publicKey = info.publicKey,
         pin = info.pin,
     )
 }
@@ -69,5 +70,6 @@ fun luciolaBuildPairingUri(
     port: Int,
     addrs: List<String>,
     fingerprint: String?,
+    publicKey: String?,
     pin: String?,
-): String = uniffi.luciola_uniffi.buildPairingUri(name, product, port.toUShort(), addrs, fingerprint, pin)
+): String = uniffi.luciola_uniffi.buildPairingUri(name, product, port.toUShort(), addrs, fingerprint, publicKey, pin)

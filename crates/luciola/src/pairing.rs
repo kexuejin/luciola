@@ -4,8 +4,9 @@
 //! v2 fields: `name` (URL-encoded), `product`, `port` (TCP service port),
 //! `addrs` (comma-separated candidate addresses), `fp` (the host's
 //! `sha256:<hex>` identity fingerprint, so pairing carries the trust anchor),
-//! `pin` (optional 6-digit comparison pin). Plain `http://host:port` payloads
-//! are accepted as single-address, no-fingerprint (legacy) pairings.
+//! `pin` (optional 6-digit comparison pin), `pk` (base64 Ed25519 public key —
+//! the pin target). Plain `http://host:port` payloads are accepted as
+//! single-address, no-fingerprint (legacy) pairings.
 
 use crate::trust;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
@@ -18,6 +19,8 @@ pub struct PairingPayload {
     pub addrs: Vec<String>,
     /// Host identity fingerprint (`sha256:<hex>`) — bind trust on this.
     pub fingerprint: Option<String>,
+    /// Host Ed25519 public key (base64) — the pin target for SecureChannel.
+    pub public_key: Option<String>,
     /// Optional 6-digit on-screen comparison pin.
     pub pin: Option<String>,
 }
@@ -40,6 +43,7 @@ pub fn build_pairing_uri(
     port: u16,
     addrs: &[String],
     fingerprint: Option<&str>,
+    public_key: Option<&str>,
     pin: Option<&str>,
 ) -> String {
     let mut q = format!("luciola://pair?name={}", encode(name));
@@ -60,6 +64,9 @@ pub fn build_pairing_uri(
     if let Some(fp) = fingerprint {
         q.push_str(&format!("&fp={}", encode(fp)));
     }
+    if let Some(pk) = public_key {
+        q.push_str(&format!("&pk={}", encode(pk)));
+    }
     if let Some(pin) = pin {
         q.push_str(&format!("&pin={}", encode(pin)));
     }
@@ -76,6 +83,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
         let mut port = None;
         let mut addrs: Vec<String> = Vec::new();
         let mut fingerprint = None;
+        let mut public_key = None;
         let mut pin = None;
         for pair in query.split('&') {
             let (k, v) = pair.split_once('=')?;
@@ -88,6 +96,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
                     addrs = v.split(',').filter_map(decode).collect();
                 }
                 "fp" => fingerprint = Some(v),
+                "pk" => public_key = Some(v),
                 "pin" => pin = Some(v),
                 _ => {}
             }
@@ -103,6 +112,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
             port,
             addrs,
             fingerprint,
+            public_key,
             pin,
         });
     }
@@ -125,6 +135,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
         port,
         addrs: vec![host.to_string()],
         fingerprint: None,
+        public_key: None,
         pin: None,
     })
 }
@@ -146,6 +157,7 @@ mod tests {
             3000,
             &["192.168.2.82".into(), "2408::1".into()],
             Some("sha256:abcd1234"),
+            Some("dGVzdGtleQ=="),
             Some("309051"),
         );
         let p = parse_pairing_uri(&uri).unwrap();
@@ -154,6 +166,7 @@ mod tests {
         assert_eq!(p.port, 3000);
         assert_eq!(p.addrs, vec!["192.168.2.82", "2408::1"]);
         assert_eq!(p.fingerprint.as_deref(), Some("sha256:abcd1234"));
+        assert_eq!(p.public_key.as_deref(), Some("dGVzdGtleQ=="));
         assert_eq!(p.pin.as_deref(), Some("309051"));
     }
 

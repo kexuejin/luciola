@@ -62,6 +62,8 @@ data class PairingUi(
     val addrs: List<String>,
     /** Host identity fingerprint (`sha256:<hex>`) — bind trust on it. */
     val fingerprint: String?,
+    /** Host Ed25519 public key (base64) — the pin target for SecureChannel. */
+    val publicKey: String? = null,
     /** Optional 6-digit on-screen comparison pin. */
     val pin: String?,
 )

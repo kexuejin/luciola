@@ -863,6 +863,7 @@ pub struct JsPairingInfo {
     pub port: u16,
     pub addrs: Vec<String>,
     pub fingerprint: Option<String>,
+    pub public_key: Option<String>,
     pub pin: Option<String>,
 }
 
@@ -874,6 +875,7 @@ pub fn build_pairing_uri(
     port: u16,
     addrs: Vec<String>,
     fingerprint: Option<String>,
+    public_key: Option<String>,
     pin: Option<String>,
 ) -> String {
     luciola::pairing::build_pairing_uri(
@@ -882,6 +884,7 @@ pub fn build_pairing_uri(
         port,
         &addrs,
         fingerprint.as_deref(),
+        public_key.as_deref(),
         pin.as_deref(),
     )
 }
@@ -895,6 +898,7 @@ pub fn parse_pairing_uri(uri: String) -> Option<JsPairingInfo> {
         port: p.port,
         addrs: p.addrs,
         fingerprint: p.fingerprint,
+        public_key: p.public_key,
         pin: p.pin,
     })
 }
