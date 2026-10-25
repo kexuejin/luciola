@@ -373,3 +373,88 @@ impl DiscoverySession {
     }
 
 }
+
+// ---------------------------------------------------------------------------
+// Link racing (Happy Eyeballs) exports
+// ---------------------------------------------------------------------------
+
+/// Per-channel dial outcome.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct DialChannel {
+    pub address: String,
+    pub status: DialStatus,
+    pub rtt_ms: Option<f64>,
+}
+
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialStatus {
+    Won,
+    Cancelled,
+    Timeout,
+}
+
+/// Overall race outcome: winning address plus per-channel detail.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct RaceOutcome {
+    pub winner: Option<String>,
+    pub rtt_ms: Option<f64>,
+    pub channels: Vec<DialChannel>,
+}
+
+fn map_race_outcome(o: luciola::link::RaceOutcome) -> RaceOutcome {
+    RaceOutcome {
+        winner: o.winner,
+        rtt_ms: o.rtt_ms,
+        channels: o
+            .channels
+            .into_iter()
+            .map(|c| DialChannel {
+                address: c.address,
+                status: match c.status {
+                    luciola::link::DialStatus::Won => DialStatus::Won,
+                    luciola::link::DialStatus::Cancelled => DialStatus::Cancelled,
+                    luciola::link::DialStatus::Timeout => DialStatus::Timeout,
+                },
+                rtt_ms: c.rtt_ms,
+            })
+            .collect(),
+    }
+}
+
+/// Selection policy shared with the demos: first 3 IPv4 candidates plus the
+/// first IPv6 GUA. Feed the result into [race_connect].
+#[uniffi::export]
+pub fn default_race_candidates(addresses: Vec<String>) -> Vec<String> {
+    luciola::link::default_candidates(&addresses)
+}
+
+/// Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
+/// connect wins, the rest are cancelled. Blocking; call off the UI thread.
+#[uniffi::export]
+pub fn race_connect(
+    addresses: Vec<String>,
+    port: u16,
+    attempt_timeout_ms: Option<u64>,
+    stagger_ms: Option<u64>,
+) -> RaceOutcome {
+    let mut config = luciola::link::RaceConfig::default();
+    if let Some(t) = attempt_timeout_ms {
+        config.attempt_timeout = std::time::Duration::from_millis(t);
+    }
+    if let Some(t) = stagger_ms {
+        config.stagger = std::time::Duration::from_millis(t);
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build race runtime");
+    rt.block_on(luciola::link::race_connect(addresses, port, config))
+        .pipe(map_race_outcome)
+}
+
+trait Pipe: Sized {
+    fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
+        f(self)
+    }
+}
+impl<T> Pipe for T {}

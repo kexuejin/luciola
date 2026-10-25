@@ -415,6 +415,22 @@ fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
     typealias FfiType = Double
     typealias SwiftType = Double
@@ -863,6 +879,83 @@ public func FfiConverterTypeDeviceMeta_lower(_ value: DeviceMeta) -> RustBuffer 
 
 
 /**
+ * Per-channel dial outcome.
+ */
+public struct DialChannel {
+    public var address: String
+    public var status: DialStatus
+    public var rttMs: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(address: String, status: DialStatus, rttMs: Double?) {
+        self.address = address
+        self.status = status
+        self.rttMs = rttMs
+    }
+}
+
+
+
+extension DialChannel: Equatable, Hashable {
+    public static func ==(lhs: DialChannel, rhs: DialChannel) -> Bool {
+        if lhs.address != rhs.address {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.rttMs != rhs.rttMs {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(address)
+        hasher.combine(status)
+        hasher.combine(rttMs)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDialChannel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DialChannel {
+        return
+            try DialChannel(
+                address: FfiConverterString.read(from: &buf), 
+                status: FfiConverterTypeDialStatus.read(from: &buf), 
+                rttMs: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DialChannel, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.address, into: &buf)
+        FfiConverterTypeDialStatus.write(value.status, into: &buf)
+        FfiConverterOptionDouble.write(value.rttMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDialChannel_lift(_ buf: RustBuffer) throws -> DialChannel {
+    return try FfiConverterTypeDialChannel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDialChannel_lower(_ value: DialChannel) -> RustBuffer {
+    return FfiConverterTypeDialChannel.lower(value)
+}
+
+
+/**
  * A discovered peer node in the local network.
  */
 public struct DiscoveredPeer {
@@ -1031,6 +1124,83 @@ public func FfiConverterTypeManualPeer_lower(_ value: ManualPeer) -> RustBuffer 
     return FfiConverterTypeManualPeer.lower(value)
 }
 
+
+/**
+ * Overall race outcome: winning address plus per-channel detail.
+ */
+public struct RaceOutcome {
+    public var winner: String?
+    public var rttMs: Double?
+    public var channels: [DialChannel]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(winner: String?, rttMs: Double?, channels: [DialChannel]) {
+        self.winner = winner
+        self.rttMs = rttMs
+        self.channels = channels
+    }
+}
+
+
+
+extension RaceOutcome: Equatable, Hashable {
+    public static func ==(lhs: RaceOutcome, rhs: RaceOutcome) -> Bool {
+        if lhs.winner != rhs.winner {
+            return false
+        }
+        if lhs.rttMs != rhs.rttMs {
+            return false
+        }
+        if lhs.channels != rhs.channels {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(winner)
+        hasher.combine(rttMs)
+        hasher.combine(channels)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRaceOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RaceOutcome {
+        return
+            try RaceOutcome(
+                winner: FfiConverterOptionString.read(from: &buf), 
+                rttMs: FfiConverterOptionDouble.read(from: &buf), 
+                channels: FfiConverterSequenceTypeDialChannel.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RaceOutcome, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.winner, into: &buf)
+        FfiConverterOptionDouble.write(value.rttMs, into: &buf)
+        FfiConverterSequenceTypeDialChannel.write(value.channels, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRaceOutcome_lift(_ buf: RustBuffer) throws -> RaceOutcome {
+    return try FfiConverterTypeRaceOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRaceOutcome_lower(_ value: RaceOutcome) -> RustBuffer {
+    return FfiConverterTypeRaceOutcome.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -1130,6 +1300,77 @@ public func FfiConverterTypeDeviceType_lower(_ value: DeviceType) -> RustBuffer 
 
 
 extension DeviceType: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DialStatus {
+    
+    case won
+    case cancelled
+    case timeout
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDialStatus: FfiConverterRustBuffer {
+    typealias SwiftType = DialStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DialStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .won
+        
+        case 2: return .cancelled
+        
+        case 3: return .timeout
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DialStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .won:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .cancelled:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .timeout:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDialStatus_lift(_ buf: RustBuffer) throws -> DialStatus {
+    return try FfiConverterTypeDialStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDialStatus_lower(_ value: DialStatus) -> RustBuffer {
+    return FfiConverterTypeDialStatus.lower(value)
+}
+
+
+
+extension DialStatus: Equatable, Hashable {}
 
 
 
@@ -1244,6 +1485,54 @@ extension FfiConverterCallbackInterfaceOnPeerDiscovered : FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -1341,6 +1630,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDialChannel: FfiConverterRustBuffer {
+    typealias SwiftType = [DialChannel]
+
+    public static func write(_ value: [DialChannel], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDialChannel.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DialChannel] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DialChannel]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDialChannel.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer {
     typealias SwiftType = [ManualPeer]
 
@@ -1368,6 +1682,17 @@ fileprivate struct FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer {
 public func advertisedAddresses() -> [String] {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_advertised_addresses($0
+    )
+})
+}
+/**
+ * Selection policy shared with the demos: first 3 IPv4 candidates plus the
+ * first IPv6 GUA. Feed the result into [race_connect].
+ */
+public func defaultRaceCandidates(addresses: [String]) -> [String] {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_default_race_candidates(
+        FfiConverterSequenceString.lower(addresses),$0
     )
 })
 }
@@ -1432,6 +1757,20 @@ public func localCandidateAddresses() -> [String] {
 })
 }
 /**
+ * Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
+ * connect wins, the rest are cancelled. Blocking; call off the UI thread.
+ */
+public func raceConnect(addresses: [String], port: UInt16, attemptTimeoutMs: UInt64?, staggerMs: UInt64?) -> RaceOutcome {
+    return try!  FfiConverterTypeRaceOutcome.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_race_connect(
+        FfiConverterSequenceString.lower(addresses),
+        FfiConverterUInt16.lower(port),
+        FfiConverterOptionUInt64.lower(attemptTimeoutMs),
+        FfiConverterOptionUInt64.lower(staggerMs),$0
+    )
+})
+}
+/**
  * Render a compact terminal QR code for a given URL or text content.
  *
  * In dark terminals, swaps dark and light colors so that white background border
@@ -1483,6 +1822,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_get_device_meta() != 13951) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1499,6 +1841,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_race_connect() != 26451) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 34654) {

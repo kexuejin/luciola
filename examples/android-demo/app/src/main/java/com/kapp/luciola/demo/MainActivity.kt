@@ -60,14 +60,11 @@ import com.kapp.luciola.AndroidDiscoveryController
 import com.kapp.luciola.PeerUiModel
 import com.kapp.luciola.luciolaDeviceMeta
 import com.kapp.luciola.luciolaLocalCandidates
+import com.kapp.luciola.luciolaRaceConnect
 import com.kapp.luciola.luciolaSubnetBroadcasts
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import java.net.InetSocketAddress
-import java.net.Socket
+import kotlinx.coroutines.withContext
 import java.net.URLDecoder
 
 private const val TAG = "LuciolaRadar"
@@ -591,53 +588,29 @@ private fun heChannels(addrs: List<String>): List<ChannelUi> {
 }
 
 /**
- * Happy Eyeballs (RFC 8305-style) racing: dial each candidate concurrently with
- * a 40ms inter-attempt delay; the first successful TCP connect wins and the
- * rest are cancelled.
+ * Happy Eyeballs racing, backed by the luciola core (same implementation as
+ * the web/iOS demos): dial every candidate with a stagger, first connect wins.
+ * Runs on Dispatchers.IO — the engine-side call blocks.
  */
 private suspend fun happyEyeballsRace(
     channels: List<ChannelUi>,
     port: Int,
-    attemptTimeoutMs: Int = 1500,
 ): ChannelUi? {
-    val mutex = Mutex()
+    val outcome = withContext(Dispatchers.IO) {
+        luciolaRaceConnect(channels.map { it.addr }, port)
+    }
     var winner: ChannelUi? = null
-    coroutineScope {
-        channels.mapIndexed { i, ch ->
-            launch {
-                delay(i * 40L)
-                val shouldSkip = mutex.withLock {
-                    if (winner != null) {
-                        ch.status = "CANCELLED"
-                        true
-                    } else {
-                        ch.status = "DIALING"
-                        false
-                    }
-                }
-                if (shouldSkip) return@launch
-
-                val startNs = System.nanoTime()
-                var connected = false
-                try {
-                    Socket().use { s ->
-                        s.connect(InetSocketAddress(ch.addr, port), attemptTimeoutMs)
-                        connected = true
-                    }
-                } catch (_: Exception) {
-                    // timeout / unreachable
-                }
-                mutex.withLock {
-                    if (connected && winner == null) {
-                        winner = ch
-                        ch.rttMs = (System.nanoTime() - startNs) / 1e6
-                        ch.status = "WON"
-                    } else if (ch.status != "WON") {
-                        ch.status = if (connected) "CANCELLED" else "TIMEOUT"
-                    }
-                }
+    for (ui in outcome.channels) {
+        val ch = channels.first { it.addr == ui.address }
+        when {
+            ui.won -> {
+                ch.status = "WON"
+                ch.rttMs = ui.rttMs
+                winner = ch
             }
-        }.forEach { it.join() }
+            ui.cancelled -> ch.status = "CANCELLED"
+            else -> ch.status = "TIMEOUT"
+        }
     }
     return winner
 }

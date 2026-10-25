@@ -327,6 +327,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
+RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GET_DEVICE_META
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GET_DEVICE_META
 RustBuffer uniffi_luciola_uniffi_fn_func_get_device_meta(RustCallStatus *_Nonnull out_status
@@ -357,6 +362,11 @@ int8_t uniffi_luciola_uniffi_fn_func_is_virtual_nic(RustBuffer name, RustCallSta
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_LOCAL_CANDIDATE_ADDRESSES
 RustBuffer uniffi_luciola_uniffi_fn_func_local_candidate_addresses(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RACE_CONNECT
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RACE_CONNECT
+RustBuffer uniffi_luciola_uniffi_fn_func_race_connect(RustBuffer addresses, uint16_t port, RustBuffer attempt_timeout_ms, RustBuffer stagger_ms, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RENDER_QR_ASCII
@@ -662,6 +672,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_advertised_addresses(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
+uint16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GET_DEVICE_META
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_GET_DEVICE_META
 uint16_t uniffi_luciola_uniffi_checksum_func_get_device_meta(void
@@ -695,6 +711,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_is_virtual_nic(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_LOCAL_CANDIDATE_ADDRESSES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_LOCAL_CANDIDATE_ADDRESSES
 uint16_t uniffi_luciola_uniffi_checksum_func_local_candidate_addresses(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RACE_CONNECT
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RACE_CONNECT
+uint16_t uniffi_luciola_uniffi_checksum_func_race_connect(void
     
 );
 #endif

@@ -284,3 +284,62 @@ impl DiscoverySession {
         }
     }
 }
+
+/// Per-channel dial outcome of a Happy Eyeballs race.
+#[napi(object)]
+pub struct JsDialChannel {
+    pub address: String,
+    pub status: String,
+    pub rtt_ms: Option<f64>,
+}
+
+/// Overall race outcome: winning address plus per-channel detail.
+#[napi(object)]
+pub struct JsRaceOutcome {
+    pub winner: Option<String>,
+    pub rtt_ms: Option<f64>,
+    pub channels: Vec<JsDialChannel>,
+}
+
+/// Selection policy shared with the demos: first 3 IPv4 candidates plus the
+/// first IPv6 GUA. Feed the result into `happyEyeballsRace`.
+#[napi]
+pub fn default_race_candidates(addresses: Vec<String>) -> Vec<String> {
+    luciola::link::default_candidates(&addresses)
+}
+
+/// Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
+/// connect wins, the rest are cancelled. Returns a Promise.
+#[napi]
+pub async fn happy_eyeballs_race(
+    addresses: Vec<String>,
+    port: u16,
+    attempt_timeout_ms: Option<u32>,
+    stagger_ms: Option<u32>,
+) -> JsRaceOutcome {
+    let mut config = luciola::link::RaceConfig::default();
+    if let Some(t) = attempt_timeout_ms {
+        config.attempt_timeout = std::time::Duration::from_millis(t as u64);
+    }
+    if let Some(t) = stagger_ms {
+        config.stagger = std::time::Duration::from_millis(t as u64);
+    }
+    let outcome = luciola::link::race_connect(addresses, port, config).await;
+    JsRaceOutcome {
+        winner: outcome.winner,
+        rtt_ms: outcome.rtt_ms,
+        channels: outcome
+            .channels
+            .into_iter()
+            .map(|c| JsDialChannel {
+                address: c.address,
+                status: match c.status {
+                    luciola::link::DialStatus::Won => "won".to_string(),
+                    luciola::link::DialStatus::Cancelled => "cancelled".to_string(),
+                    luciola::link::DialStatus::Timeout => "timeout".to_string(),
+                },
+                rtt_ms: c.rtt_ms,
+            })
+            .collect(),
+    }
+}

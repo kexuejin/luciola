@@ -3,6 +3,8 @@
 //! Lightweight, resilient peer discovery & interface intelligence for the real-world LAN.
 
 pub use luciola_ip as ip;
+
+pub mod link;
 pub use luciola_net as net;
 pub use luciola_proto as proto;
 

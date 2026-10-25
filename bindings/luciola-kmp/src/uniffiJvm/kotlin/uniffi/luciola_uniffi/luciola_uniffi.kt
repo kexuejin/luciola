@@ -771,6 +771,10 @@ internal open class UniffiVTableCallbackInterfaceOnPeerDiscovered(
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -815,6 +819,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_func_advertised_addresses(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_default_race_candidates(`addresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_get_device_meta(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_is_lan_peer(`peerAddress`: RustBuffer.ByValue,`localAddresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -826,6 +832,8 @@ internal interface UniffiLib : Library {
     fun uniffi_luciola_uniffi_fn_func_is_virtual_nic(`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     fun uniffi_luciola_uniffi_fn_func_local_candidate_addresses(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_race_connect(`addresses`: RustBuffer.ByValue,`port`: Short,`attemptTimeoutMs`: RustBuffer.ByValue,`staggerMs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_render_qr_ascii(`content`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -947,6 +955,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_checksum_func_advertised_addresses(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_func_get_device_meta(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_is_lan_peer(
@@ -958,6 +968,8 @@ internal interface UniffiLib : Library {
     fun uniffi_luciola_uniffi_checksum_func_is_virtual_nic(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_local_candidate_addresses(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_func_race_connect(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_render_qr_ascii(
     ): Short
@@ -1003,6 +1015,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_luciola_uniffi_checksum_func_get_device_meta() != 13951.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1019,6 +1034,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_race_connect() != 26451.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 34654.toShort()) {
@@ -1124,6 +1142,29 @@ public object FfiConverterUShort: FfiConverter<UShort, Short> {
 
     override fun write(value: UShort, buf: ByteBuffer) {
         buf.putShort(value.toShort())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterULong: FfiConverter<ULong, Long> {
+    override fun lift(value: Long): ULong {
+        return value.toULong()
+    }
+
+    override fun read(buf: ByteBuffer): ULong {
+        return lift(buf.getLong())
+    }
+
+    override fun lower(value: ULong): Long {
+        return value.toLong()
+    }
+
+    override fun allocationSize(value: ULong) = 8UL
+
+    override fun write(value: ULong, buf: ByteBuffer) {
+        buf.putLong(value.toLong())
     }
 }
 
@@ -1758,6 +1799,45 @@ public object FfiConverterTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta> {
 
 
 /**
+ * Per-channel dial outcome.
+ */
+data class DialChannel (
+    var `address`: kotlin.String, 
+    var `status`: DialStatus, 
+    var `rttMs`: kotlin.Double?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDialChannel: FfiConverterRustBuffer<DialChannel> {
+    override fun read(buf: ByteBuffer): DialChannel {
+        return DialChannel(
+            FfiConverterString.read(buf),
+            FfiConverterTypeDialStatus.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DialChannel) = (
+            FfiConverterString.allocationSize(value.`address`) +
+            FfiConverterTypeDialStatus.allocationSize(value.`status`) +
+            FfiConverterOptionalDouble.allocationSize(value.`rttMs`)
+    )
+
+    override fun write(value: DialChannel, buf: ByteBuffer) {
+            FfiConverterString.write(value.`address`, buf)
+            FfiConverterTypeDialStatus.write(value.`status`, buf)
+            FfiConverterOptionalDouble.write(value.`rttMs`, buf)
+    }
+}
+
+
+
+/**
  * A discovered peer node in the local network.
  */
 data class DiscoveredPeer (
@@ -1844,6 +1924,45 @@ public object FfiConverterTypeManualPeer: FfiConverterRustBuffer<ManualPeer> {
 
 
 /**
+ * Overall race outcome: winning address plus per-channel detail.
+ */
+data class RaceOutcome (
+    var `winner`: kotlin.String?, 
+    var `rttMs`: kotlin.Double?, 
+    var `channels`: List<DialChannel>
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRaceOutcome: FfiConverterRustBuffer<RaceOutcome> {
+    override fun read(buf: ByteBuffer): RaceOutcome {
+        return RaceOutcome(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterSequenceTypeDialChannel.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RaceOutcome) = (
+            FfiConverterOptionalString.allocationSize(value.`winner`) +
+            FfiConverterOptionalDouble.allocationSize(value.`rttMs`) +
+            FfiConverterSequenceTypeDialChannel.allocationSize(value.`channels`)
+    )
+
+    override fun write(value: RaceOutcome, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`winner`, buf)
+            FfiConverterOptionalDouble.write(value.`rttMs`, buf)
+            FfiConverterSequenceTypeDialChannel.write(value.`channels`, buf)
+    }
+}
+
+
+
+/**
  * Device form factor classification.
  */
 
@@ -1873,6 +1992,37 @@ public object FfiConverterTypeDeviceType: FfiConverterRustBuffer<DeviceType> {
     override fun allocationSize(value: DeviceType) = 4UL
 
     override fun write(value: DeviceType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class DialStatus {
+    
+    WON,
+    CANCELLED,
+    TIMEOUT;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDialStatus: FfiConverterRustBuffer<DialStatus> {
+    override fun read(buf: ByteBuffer) = try {
+        DialStatus.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: DialStatus) = 4UL
+
+    override fun write(value: DialStatus, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -1965,6 +2115,70 @@ internal object uniffiCallbackInterfaceOnPeerDiscovered {
  * @suppress
  */
 public object FfiConverterTypeOnPeerDiscovered: FfiConverterCallbackInterface<OnPeerDiscovered>()
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
+    override fun read(buf: ByteBuffer): kotlin.ULong? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterULong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ULong?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterULong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ULong?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterULong.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalDouble: FfiConverterRustBuffer<kotlin.Double?> {
+    override fun read(buf: ByteBuffer): kotlin.Double? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterDouble.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Double?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterDouble.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Double?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterDouble.write(value, buf)
+        }
+    }
+}
 
 
 
@@ -2096,6 +2310,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeDialChannel: FfiConverterRustBuffer<List<DialChannel>> {
+    override fun read(buf: ByteBuffer): List<DialChannel> {
+        val len = buf.getInt()
+        return List<DialChannel>(len) {
+            FfiConverterTypeDialChannel.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<DialChannel>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeDialChannel.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<DialChannel>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeDialChannel.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<ManualPeer>> {
     override fun read(buf: ByteBuffer): List<ManualPeer> {
         val len = buf.getInt()
@@ -2124,6 +2366,19 @@ public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<Ma
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_advertised_addresses(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * Selection policy shared with the demos: first 3 IPv4 candidates plus the
+         * first IPv6 GUA. Feed the result into [race_connect].
+         */ fun `defaultRaceCandidates`(`addresses`: List<kotlin.String>): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_default_race_candidates(
+        FfiConverterSequenceString.lower(`addresses`),_status)
 }
     )
     }
@@ -2197,6 +2452,19 @@ public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<Ma
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_local_candidate_addresses(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
+         * connect wins, the rest are cancelled. Blocking; call off the UI thread.
+         */ fun `raceConnect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `attemptTimeoutMs`: kotlin.ULong?, `staggerMs`: kotlin.ULong?): RaceOutcome {
+            return FfiConverterTypeRaceOutcome.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_race_connect(
+        FfiConverterSequenceString.lower(`addresses`),FfiConverterUShort.lower(`port`),FfiConverterOptionalULong.lower(`attemptTimeoutMs`),FfiConverterOptionalULong.lower(`staggerMs`),_status)
 }
     )
     }

@@ -105,3 +105,38 @@ export class DiscoverySession {
    */
   stop(): void;
 }
+
+/**
+ * Per-channel dial outcome of a Happy Eyeballs race.
+ */
+export interface JsDialChannel {
+  address: string;
+  status: 'won' | 'cancelled' | 'timeout';
+  rttMs: number | null;
+}
+
+/**
+ * Overall race outcome: winning address plus per-channel detail.
+ */
+export interface JsRaceOutcome {
+  winner: string | null;
+  rttMs: number | null;
+  channels: JsDialChannel[];
+}
+
+/**
+ * Selection policy shared across platforms: first 3 IPv4 candidates plus the
+ * first IPv6 GUA. Feed the result into `happyEyeballsRace`.
+ */
+export function defaultRaceCandidates(addresses: string[]): string[];
+
+/**
+ * Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
+ * connect wins, the rest are cancelled. Resolves with the outcome.
+ */
+export function happyEyeballsRace(
+  addresses: string[],
+  port: number,
+  attemptTimeoutMs?: number,
+  staggerMs?: number,
+): Promise<JsRaceOutcome>;

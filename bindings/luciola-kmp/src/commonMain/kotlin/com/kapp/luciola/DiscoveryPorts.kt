@@ -64,3 +64,18 @@ data class ControllerConfig(
      *  genuinely dead network does not spin. */
     val watchdogMaxConsecutive: Int = 3,
 )
+
+/** Per-channel dial outcome of a Happy Eyeballs race (common, UI-friendly). */
+data class RaceChannelUi(
+    val address: String,
+    val won: Boolean,
+    val cancelled: Boolean,
+    val rttMs: Double?,
+)
+
+/** Overall race outcome: the winning address (if any) plus per-channel detail. */
+data class RaceOutcomeUi(
+    val winner: String?,
+    val rttMs: Double?,
+    val channels: List<RaceChannelUi>,
+)
