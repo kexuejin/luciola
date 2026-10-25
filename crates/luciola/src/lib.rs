@@ -194,10 +194,13 @@ impl Default for DiscoveryConfig {
 
 /// Main async engine for peer discovery.
 pub struct DiscoveryEngine {
+    /// Optional IPv6-only socket on the same port: enables IPv6 discovery
+    /// (ff02::1 link-local multicast + v6 unicast) alongside the v4 socket.
     config: DiscoveryConfig,
     registry: Arc<RwLock<PeerRegistry>>,
     event_tx: broadcast::Sender<PeerEvent>,
     socket: Arc<RwLock<Arc<UdpSocket>>>,
+    socket_v6: Arc<RwLock<Option<Arc<UdpSocket>>>>,
 }
 
 impl DiscoveryEngine {
@@ -218,6 +221,8 @@ impl DiscoveryEngine {
         std_socket.set_nonblocking(true)?;
 
         let socket = Arc::new(RwLock::new(Arc::new(UdpSocket::from_std(std_socket)?)));
+        let port = socket.read().await.local_addr().map(|a| a.port())?;
+        let socket_v6 = Arc::new(RwLock::new(bind_v6_socket(port)));
         let registry = Arc::new(RwLock::new(PeerRegistry::new()));
         let (event_tx, _) = broadcast::channel(128);
 
@@ -226,6 +231,7 @@ impl DiscoveryEngine {
             registry,
             event_tx,
             socket,
+            socket_v6,
         });
 
         Ok(engine)
@@ -254,8 +260,11 @@ impl DiscoveryEngine {
         std_socket.set_nonblocking(true)?;
         let new_socket = Arc::new(UdpSocket::from_std(std_socket)?);
 
+        let port = new_socket.local_addr().map(|a| a.port())?;
         let mut sock_guard = self.socket.write().await;
         *sock_guard = new_socket;
+        drop(sock_guard);
+        *self.socket_v6.write().await = bind_v6_socket(port);
         tracing::info!("UDP discovery socket successfully rebuilt!");
         Ok(())
     }
@@ -305,24 +314,43 @@ impl DiscoveryEngine {
     /// - Per-NIC Subnet broadcasts (e.g. `192.168.2.255`)
     /// - Manual configured peers
     /// - Known online peers
-    async fn compute_targets(&self) -> Vec<(String, u16)> {
-        let mut targets = vec![("255.255.255.255".to_string(), self.config.broadcast_port)];
+    async fn compute_targets(&self) -> Vec<SocketAddr> {
+        let mut targets: Vec<SocketAddr> = Vec::new();
+        let push_parsed = |targets: &mut Vec<SocketAddr>, host: &str, port: u16| {
+            let text = if host.contains(':') && !host.starts_with('[') {
+                format!("[{host}]:{port}")
+            } else {
+                format!("{host}:{port}")
+            };
+            if let Ok(addr) = text.parse::<SocketAddr>() {
+                targets.push(addr);
+            }
+        };
 
+        push_parsed(&mut targets, "255.255.255.255", self.config.broadcast_port);
         // Subnet broadcasts bypassing TUN proxy interception
         for bcast in NetworkDetector::subnet_broadcast_addresses() {
             if bcast != "255.255.255.255" {
-                targets.push((bcast, self.config.broadcast_port));
+                push_parsed(&mut targets, &bcast, self.config.broadcast_port);
             }
+        }
+        // IPv6 link-local multicast on every physical interface.
+        for idx in luciola_net::multicast_scope_interfaces() {
+            let mut a = SocketAddr::from(([0xff02, 0, 0, 0, 0, 0, 0, 1], self.config.broadcast_port));
+            if let SocketAddr::V6(v6) = &mut a {
+                v6.set_scope_id(idx);
+            }
+            targets.push(a);
         }
 
         // Manual peers
         for (host, port) in &self.config.manual_peers {
-            targets.push((host.clone(), *port));
+            push_parsed(&mut targets, host, *port);
         }
 
         // Known online peers
         for peer in self.registry.read().await.online_peers() {
-            targets.push((peer.ip, peer.udp_port));
+            push_parsed(&mut targets, &peer.ip, peer.udp_port);
         }
 
         targets
@@ -338,21 +366,11 @@ impl DiscoveryEngine {
         };
 
         let mut sent = 0;
-        let active_socket = self.socket.read().await.clone();
-        for (host, port) in self.compute_targets().await {
-            let target = format!("{}:{}", host, port);
-            if let Ok(addr) = target.parse::<SocketAddr>() {
-                // A destination whose interface is still settling (VPN tunnel
-                // up/down, route table churn) can leave send_to pending forever
-                // on Android; cap each dial so one dead target cannot stall the
-                // whole engine loop.
-                let send = active_socket.send_to(&bytes, addr);
-                if matches!(
-                    tokio::time::timeout(Duration::from_millis(300), send).await,
-                    Ok(Ok(_))
-                ) {
-                    sent += 1;
-                }
+        for addr in self.compute_targets().await {
+            // send_via caps each dial at 300ms (a settling interface can leave
+            // send_to pending forever) and picks the family-matching socket.
+            if self.send_via(addr, &bytes).await {
+                sent += 1;
             }
         }
         sent
@@ -363,13 +381,31 @@ impl DiscoveryEngine {
         let mut dedup_tracker = AliveDedupTracker::new(Duration::from_millis(3000));
         let jitter = JitterScheduler::default();
 
+        let mut buf6 = [0u8; 65535];
         loop {
-            let active_socket = self.socket.read().await.clone();
-            match active_socket.recv_from(&mut buf).await {
+            let v4 = self.socket.read().await.clone();
+            let v6 = self.socket_v6.read().await.clone();
+            // Separate buffers: select polls both sockets concurrently.
+            let received = match v6 {
+                Some(v6sock) => tokio::select! {
+                    r = v6sock.recv_from(&mut buf6) => Some((r, v6sock)),
+                    r = v4.recv_from(&mut buf) => Some((r, v4)),
+                },
+                None => Some((v4.recv_from(&mut buf).await, v4)),
+            };
+            let Some((result, receiving_socket)) = received else { continue };
+            match result {
                 Ok((len, peer_addr)) => {
-                    let bytes = &buf[..len];
+                    let bytes: &[u8] = if receiving_socket.local_addr()
+                        .map(|a| a.is_ipv6())
+                        .unwrap_or(false)
+                    {
+                        &buf6[..len]
+                    } else {
+                        &buf[..len]
+                    };
                     if let Ok(envelope) = Codec::decode(bytes) {
-                        self.handle_envelope(envelope, peer_addr, &mut dedup_tracker, &jitter).await;
+                        self.handle_envelope(envelope, peer_addr, receiving_socket, &mut dedup_tracker, &jitter).await;
                     }
                 }
                 Err(e) => {
@@ -384,6 +420,7 @@ impl DiscoveryEngine {
         &self,
         envelope: Envelope,
         peer_addr: SocketAddr,
+        receiving_socket: Arc<UdpSocket>,
         dedup_tracker: &mut AliveDedupTracker,
         jitter: &JitterScheduler,
     ) {
@@ -422,7 +459,7 @@ impl DiscoveryEngine {
                 if dedup_tracker.should_reply(&envelope.from, directed) {
                     let online_count = self.registry.read().await.online_peers().len();
                     let delay = jitter.calculate_delay(online_count, directed);
-                    let socket = self.socket.read().await.clone();
+                    let socket = receiving_socket;
                     let self_profile = self.config.self_profile.clone();
 
                     tokio::spawn(async move {
@@ -471,8 +508,7 @@ impl DiscoveryEngine {
                 if known_rev != their_rev {
                     let entry = Codec::make_entry(&self.config.self_profile, Some("refresh"));
                     if let Ok(bytes) = Codec::encode(&entry) {
-                        let socket = self.socket.read().await.clone();
-                        let _ = socket.send_to(&bytes, peer_addr).await;
+                        let _ = receiving_socket.send_to(&bytes, peer_addr).await;
                     }
                 }
             }
@@ -524,9 +560,115 @@ impl DiscoveryEngine {
     }
 }
 
+/// Bind an IPv6-only UDP socket on `port` (0 = same fallback as v4), join
+/// ff02::1 on every physical interface, and set multicast loopback on.
+fn bind_v6_socket(port: u16) -> Option<Arc<UdpSocket>> {
+    use socket2::{Domain, Protocol, Socket as Sock, Type};
+    let sock = Sock::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;
+    // V6ONLY: keep the v4 socket authoritative for v4 traffic.
+    sock.set_only_v6(true).ok()?;
+    if sock.bind(&format!("[::]:{port}").parse::<SocketAddr>().ok()?.into()).is_err() {
+        return None;
+    }
+    sock.set_nonblocking(true).ok()?;
+    let std_socket: std::net::UdpSocket = sock.into();
+    let any = std::net::Ipv6Addr::from([0xff02, 0, 0, 0, 0, 0, 0, 1]);
+    for idx in luciola_net::multicast_scope_interfaces() {
+        let _ = std_socket.join_multicast_v6(&any, idx);
+    }
+    UdpSocket::from_std(std_socket).ok().map(Arc::new)
+}
+
+impl DiscoveryEngine {
+    /// Pick the socket matching the address family (v6 unicast/multicast
+    /// MUST leave via the v6-only socket).
+    async fn socket_for(&self, addr: SocketAddr) -> Option<Arc<UdpSocket>> {
+        if addr.is_ipv4() {
+            Some(self.socket.read().await.clone())
+        } else {
+            self.socket_v6.read().await.clone()
+        }
+    }
+
+    async fn send_via(&self, addr: SocketAddr, bytes: &[u8]) -> bool {
+        match self.socket_for(addr).await {
+            Some(sock) => matches!(
+                tokio::time::timeout(
+                    Duration::from_millis(300),
+                    sock.send_to(bytes, addr)
+                )
+                .await,
+                Ok(Ok(_))
+            ),
+            None => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn two_nodes_discover_over_ipv6_loopback() {
+        // Node A (v4 ephemeral; v6 socket binds the same numeric port)
+        let profile_a = Profile {
+            node_id: "v6_A".to_string(),
+            name: "Alpha6".to_string(),
+            profile_rev: 1,
+            addresses: vec!["::1".to_string()],
+            udp_port: 0,
+            tcp_port: 9081,
+            device: None,
+            device_id: None,
+            product: None,
+        };
+        let mut config_a = DiscoveryConfig::default();
+        config_a.self_profile = profile_a;
+        config_a.listen_port = 0;
+        let engine_a = DiscoveryEngine::bind(config_a).await.expect("bind A");
+        let port_a = engine_a.local_port().await.unwrap();
+
+        // Node B dials A over pure IPv6 via a manual peer.
+        let profile_b = Profile {
+            node_id: "v6_B".to_string(),
+            name: "Beta6".to_string(),
+            profile_rev: 1,
+            addresses: vec!["::1".to_string()],
+            udp_port: port_a,
+            tcp_port: 9082,
+            device: None,
+            device_id: None,
+            product: None,
+        };
+        let mut config_b = DiscoveryConfig::default();
+        config_b.self_profile = profile_b;
+        config_b.listen_port = 0;
+        config_b.manual_peers = vec![("::1".to_string(), port_a)];
+        let engine_b = DiscoveryEngine::bind(config_b).await.expect("bind B");
+
+        let mut sub_a = engine_a.subscribe();
+        let mut sub_b = engine_b.subscribe();
+        engine_a.clone().spawn();
+        engine_b.clone().spawn();
+        engine_a.announce().await;
+        engine_b.announce().await;
+
+        // A discovers B (B's v6 entry reaches A's v6 socket; A replies v6).
+        let found_b = tokio::time::timeout(Duration::from_secs(5), sub_a.recv()).await;
+        assert!(
+            matches!(found_b, Ok(Ok(PeerEvent::Found(ref p))) if p.node_id == "v6_B"),
+            "A must discover B over IPv6"
+        );
+        // B discovers A from the alive reply.
+        let found_a = tokio::time::timeout(Duration::from_secs(5), sub_b.recv()).await;
+        assert!(
+            matches!(found_a, Ok(Ok(PeerEvent::Found(ref p))) if p.node_id == "v6_A"),
+            "B must discover A over IPv6"
+        );
+        engine_a.announce_exit().await;
+        engine_b.announce_exit().await;
+    }
 
     #[tokio::test]
     async fn test_two_nodes_loopback_discovery() {

@@ -609,3 +609,18 @@ Windows IP 配置
         println!("Advertised: {:?}", advertised);
     }
 }
+
+/// Interface indices eligible for IPv6 link-local multicast (ff02::1):
+/// physical NICs only — virtual adapters (TUN/VPN/Docker) are excluded by
+/// the same classifier the candidate scorer uses.
+pub fn multicast_scope_interfaces() -> Vec<u32> {
+    use network_interface::NetworkInterface;
+    match NetworkInterface::show() {
+        Ok(list) => list
+            .into_iter()
+            .filter(|i| is_physical_interface_name(&i.name))
+            .map(|i| i.index)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
