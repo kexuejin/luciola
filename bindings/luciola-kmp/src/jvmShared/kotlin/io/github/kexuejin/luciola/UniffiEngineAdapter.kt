@@ -12,14 +12,16 @@ import uniffi.luciola_uniffi.OnPeerDiscovered
  * stays thin.
  */
 class UniffiEngineAdapter(
-    sessionName: String,
-    discoveryPort: UShort = 17878u,
+    private val sessionName: String,
+    private val discoveryPort: UShort = 17878u,
     manualPeers: List<Pair<String, UShort>> = emptyList(),
-    product: String? = null,
-    extra: String? = null,
+    private val product: String? = null,
+    private val extra: String? = null,
 ) : DiscoveryEnginePort {
 
-    private val session = DiscoverySession(
+    private val manualPeers = manualPeers.toMutableList()
+
+    private fun rebuildSession() = DiscoverySession(
         sessionName,
         discoveryPort,
         manualPeers.map { ManualPeer(host = it.first, port = it.second) },
@@ -27,7 +29,9 @@ class UniffiEngineAdapter(
         extra,
     )
 
-    override fun nodeId(): String? = session.nodeId()
+    private var session = rebuildSession()
+
+    override fun nodeId(): String? = synchronized(this) { session }.nodeId()
 
     override fun start(onEvent: (DiscoveryEventUi) -> Unit) {
         session.start(object : OnPeerDiscovered {
@@ -50,6 +54,17 @@ class UniffiEngineAdapter(
     }
 
     override fun restart() {
+        session.restart()
+    }
+
+    /**
+     * Directed dial: add (or refresh) a unicast target and re-announce to it
+     * immediately — the discovery-layer equivalent of a directed `entry`.
+     */
+    fun dial(host: String, port: UShort) {
+        manualPeers.removeAll { it.first == host }
+        manualPeers += host to port
+        session.setManualPeers(manualPeers.map { ManualPeer(host = it.first, port = it.second) })
         session.restart()
     }
 
