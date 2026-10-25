@@ -6,10 +6,10 @@
 //! - WSL2 host physical IP resolution
 //! - Dual-pool candidate address selection (LAN vs Advertised)
 
-use std::net::Ipv4Addr;
 use luciola_ip::{get_ipv6_scope, is_private_or_local, is_proxy_tun_address, Ipv6Scope};
 use luciola_proto::{DeviceMeta, DeviceType};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+use std::net::Ipv4Addr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -30,17 +30,39 @@ pub fn is_virtual_interface_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
 
     // Windows ICS / hotspot virtual adapter: e.g. "本地连接* 12"
-    if lower.contains("本地连接*") || lower.contains("wifidirect") || lower.contains("hostednetwork") {
+    if lower.contains("本地连接*")
+        || lower.contains("wifidirect")
+        || lower.contains("hostednetwork")
+    {
         return true;
     }
 
     let virtual_patterns = [
-        "utun", "tun", "tap", "feth", "tailscale", "zerotier", "easytier", "et_",
-        "docker", "veth", "virbr", "radmin", "vmware", "virtualbox", "vbox",
-        "wsl", "teredo", "hamachi", "bluetooth", "bridge",
+        "utun",
+        "tun",
+        "tap",
+        "feth",
+        "tailscale",
+        "zerotier",
+        "easytier",
+        "et_",
+        "docker",
+        "veth",
+        "virbr",
+        "radmin",
+        "vmware",
+        "virtualbox",
+        "vbox",
+        "wsl",
+        "teredo",
+        "hamachi",
+        "bluetooth",
+        "bridge",
     ];
 
-    virtual_patterns.iter().any(|&pattern| lower.contains(pattern))
+    virtual_patterns
+        .iter()
+        .any(|&pattern| lower.contains(pattern))
 }
 
 /// Check if interface name looks like a real physical network interface
@@ -52,15 +74,26 @@ pub fn is_physical_interface_name(name: &str) -> bool {
     }
 
     let physical_prefixes = [
-        "wlan", "wi-fi", "wifi", "wireless", "ethernet", "eth", "en", "wlp",
-        "以太网", "有线", "无线",
+        "wlan",
+        "wi-fi",
+        "wifi",
+        "wireless",
+        "ethernet",
+        "eth",
+        "en",
+        "wlp",
+        "以太网",
+        "有线",
+        "无线",
     ];
 
     if lower.starts_with("本地连接") && !lower.starts_with("本地连接*") {
         return true;
     }
 
-    physical_prefixes.iter().any(|&prefix| lower.starts_with(prefix))
+    physical_prefixes
+        .iter()
+        .any(|&prefix| lower.starts_with(prefix))
 }
 
 /// Detect if the current environment is running inside Windows Subsystem for Linux (WSL).
@@ -97,11 +130,18 @@ pub fn parse_ipconfig_output(text: &str) -> Vec<String> {
             current_block_is_virtual = is_virtual_interface_name(trimmed);
         }
 
-        if !current_block_is_virtual && (trimmed.contains("IPv4") || trimmed.contains("IP Address")) {
+        if !current_block_is_virtual && (trimmed.contains("IPv4") || trimmed.contains("IP Address"))
+        {
             if let Some(idx) = trimmed.rfind(':') {
                 let candidate_ip = trimmed[idx + 1..].trim();
-                let clean_ip = candidate_ip.split_whitespace().next().unwrap_or(candidate_ip);
-                if luciola_ip::is_ipv4(clean_ip) && !clean_ip.starts_with("127.") && !clean_ip.starts_with("169.254.") {
+                let clean_ip = candidate_ip
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(candidate_ip);
+                if luciola_ip::is_ipv4(clean_ip)
+                    && !clean_ip.starts_with("127.")
+                    && !clean_ip.starts_with("169.254.")
+                {
                     let s = clean_ip.to_string();
                     if !ips.contains(&s) {
                         ips.push(s);
@@ -200,7 +240,8 @@ impl NetworkDetector {
 
                     // Prefer existing broadcast if given by OS, otherwise calculate from netmask
                     let bcast = v4.broadcast.or_else(|| {
-                        v4.netmask.and_then(|mask| calculate_subnet_broadcast(ip, mask))
+                        v4.netmask
+                            .and_then(|mask| calculate_subnet_broadcast(ip, mask))
                     });
 
                     if let Some(b) = bcast {
@@ -273,10 +314,11 @@ impl NetworkDetector {
                         // macOS JDK scope `%scope` stripping
                         let clean = s.split('%').next().unwrap_or(&s).trim();
                         if let Some(scope) = get_ipv6_scope(clean) {
-                            if matches!(scope, Ipv6Scope::Global | Ipv6Scope::UniqueLocal) {
-                                if !is_virt && !v6_addrs.contains(&clean.to_string()) {
-                                    v6_addrs.push(clean.to_string());
-                                }
+                            if matches!(scope, Ipv6Scope::Global | Ipv6Scope::UniqueLocal)
+                                && !is_virt
+                                && !v6_addrs.contains(&clean.to_string())
+                            {
+                                v6_addrs.push(clean.to_string());
                             }
                         }
                     }
@@ -317,7 +359,8 @@ impl NetworkDetector {
                 match addr {
                     Addr::V4(v4) => {
                         let s = v4.ip.to_string();
-                        if !v4.ip.is_loopback() && !is_proxy_tun_address(&s) && !addrs.contains(&s) {
+                        if !v4.ip.is_loopback() && !is_proxy_tun_address(&s) && !addrs.contains(&s)
+                        {
                             addrs.push(s);
                         }
                     }
@@ -325,7 +368,9 @@ impl NetworkDetector {
                         let s = v6.ip.to_string();
                         let clean = s.split('%').next().unwrap_or(&s).trim().to_string();
                         if let Some(scope) = get_ipv6_scope(&clean) {
-                            if matches!(scope, Ipv6Scope::Global | Ipv6Scope::UniqueLocal) && !addrs.contains(&clean) {
+                            if matches!(scope, Ipv6Scope::Global | Ipv6Scope::UniqueLocal)
+                                && !addrs.contains(&clean)
+                            {
                                 addrs.push(clean);
                             }
                         }
@@ -366,11 +411,11 @@ impl DeviceDetector {
                 let raw_model = Self::macos_model();
                 let friendly_model = raw_model.as_deref().map(Self::humanize_macos_model);
                 let dtype = if let Some(ref m) = raw_model {
-                    if m.contains("MacBook") || m.starts_with("Mac14,2") || m.starts_with("Mac15,2") {
+                    if m.contains("MacBook") || m.starts_with("Mac14,2") || m.starts_with("Mac15,2")
+                    {
                         DeviceType::Laptop
-                    } else if m.contains("Macmini") || m.contains("iMac") || m.contains("MacPro") || m.contains("MacStudio") || m.starts_with("Mac16,") {
-                        DeviceType::Desktop
                     } else {
+                        // Mac mini / iMac / Mac Pro / Mac Studio / Mac16,* — all desktops
                         DeviceType::Desktop
                     }
                 } else {
@@ -432,7 +477,11 @@ impl DeviceDetector {
     pub fn friendly_computer_name() -> Option<String> {
         #[cfg(target_os = "macos")]
         {
-            if let Ok(output) = std::process::Command::new("scutil").arg("--get").arg("ComputerName").output() {
+            if let Ok(output) = std::process::Command::new("scutil")
+                .arg("--get")
+                .arg("ComputerName")
+                .output()
+            {
                 if output.status.success() {
                     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if !s.is_empty() {
@@ -458,11 +507,19 @@ impl DeviceDetector {
     fn humanize_macos_model(raw: &str) -> String {
         if raw.starts_with("MacBookPro") {
             "MacBook Pro".to_string()
-        } else if raw.starts_with("MacBookAir") || raw.starts_with("Mac14,2") || raw.starts_with("Mac15,2") {
+        } else if raw.starts_with("MacBookAir")
+            || raw.starts_with("Mac14,2")
+            || raw.starts_with("Mac15,2")
+        {
             "MacBook Air".to_string()
         } else if raw.starts_with("MacBook") {
             "MacBook".to_string()
-        } else if raw.starts_with("Macmini") || raw == "Mac16,10" || raw == "Mac16,11" || raw == "Mac14,3" || raw == "Mac14,12" {
+        } else if raw.starts_with("Macmini")
+            || raw == "Mac16,10"
+            || raw == "Mac16,11"
+            || raw == "Mac14,3"
+            || raw == "Mac14,12"
+        {
             "Mac mini".to_string()
         } else if raw.starts_with("iMac") || raw == "Mac15,4" || raw == "Mac15,5" {
             "iMac".to_string()
@@ -518,6 +575,21 @@ impl DeviceDetector {
             }
         }
         DeviceType::Unknown
+    }
+}
+
+/// Interface indices eligible for IPv6 link-local multicast (ff02::1):
+/// physical NICs only — virtual adapters (TUN/VPN/Docker) are excluded by
+/// the same classifier the candidate scorer uses.
+pub fn multicast_scope_interfaces() -> Vec<u32> {
+    use network_interface::NetworkInterface;
+    match NetworkInterface::show() {
+        Ok(list) => list
+            .into_iter()
+            .filter(|i| is_physical_interface_name(&i.name))
+            .map(|i| i.index)
+            .collect(),
+        Err(_) => Vec::new(),
     }
 }
 
@@ -609,19 +681,3 @@ Windows IP 配置
         println!("Advertised: {:?}", advertised);
     }
 }
-
-/// Interface indices eligible for IPv6 link-local multicast (ff02::1):
-/// physical NICs only — virtual adapters (TUN/VPN/Docker) are excluded by
-/// the same classifier the candidate scorer uses.
-pub fn multicast_scope_interfaces() -> Vec<u32> {
-    use network_interface::NetworkInterface;
-    match NetworkInterface::show() {
-        Ok(list) => list
-            .into_iter()
-            .filter(|i| is_physical_interface_name(&i.name))
-            .map(|i| i.index)
-            .collect(),
-        Err(_) => Vec::new(),
-    }
-}
-

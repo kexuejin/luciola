@@ -225,6 +225,7 @@ impl DiscoverySession {
     /// Start discovery session and listen for discovered peers via callback.
     #[napi]
     pub fn start(&mut self, _env: Env, callback: JsFunction) -> Result<()> {
+        #[allow(dead_code)]
         enum DiscoveryEvent {
             Found(JsPeerRecord),
             Updated(JsPeerRecord),
@@ -266,15 +267,15 @@ impl DiscoverySession {
         let node_id = format!("node_{:x}", rand::random::<u32>());
         let manual_peers = self.manual_peers.lock().unwrap().clone();
         let detected = luciola_net::DeviceDetector::detect();
-        let device_id = self
-            .device_id
-            .clone()
-            .or(detected.device_id.clone());
+        let device_id = self.device_id.clone().or(detected.device_id.clone());
         let product = self.product.clone();
         *self.node_id.lock().unwrap() = Some(node_id.clone());
 
         std::thread::spawn(move || {
-            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
                 Ok(r) => r,
                 Err(_) => return,
             };
@@ -292,11 +293,13 @@ impl DiscoverySession {
                     product,
                 };
 
-                let mut config = luciola::DiscoveryConfig::default();
-                config.self_profile = profile;
-                config.listen_port = port;
-                config.broadcast_port = port;
-                config.manual_peers = manual_peers;
+                let config = luciola::DiscoveryConfig {
+                    self_profile: profile,
+                    listen_port: port,
+                    broadcast_port: port,
+                    manual_peers,
+                    ..Default::default()
+                };
 
                 if let Ok(engine) = luciola::DiscoveryEngine::bind(config).await {
                     let mut events = engine.subscribe();
@@ -532,26 +535,54 @@ impl SecureChannel {
     pub fn stats(&self) -> JsLinkStats {
         JsLinkStats {
             frames_sent: self.frames_sent.load(std::sync::atomic::Ordering::Relaxed) as i64,
-            frames_received: self.frames_received.load(std::sync::atomic::Ordering::Relaxed) as i64,
-            connections_established: self.connections_established.load(std::sync::atomic::Ordering::Relaxed) as i64,
-            reconnect_attempts: self.reconnect_attempts.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            frames_received: self
+                .frames_received
+                .load(std::sync::atomic::Ordering::Relaxed) as i64,
+            connections_established: self
+                .connections_established
+                .load(std::sync::atomic::Ordering::Relaxed)
+                as i64,
+            reconnect_attempts: self
+                .reconnect_attempts
+                .load(std::sync::atomic::Ordering::Relaxed) as i64,
         }
     }
 
     /// Dial with a PINNED peer public key. Events: state = "connected" |
     /// "closed" | "error"; message = decrypted frame bytes.
-    #[napi(ts_args_type = "addresses: string[], port: number, pinnedPeerPublicKey: Buffer, autoReconnect: boolean, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void")]
-    pub fn connect(&self, addresses: Vec<String>, port: u16, pinned_peer_public_key: Buffer, auto_reconnect: bool, on_event: JsFunction) -> Result<()> {
+    #[napi(
+        ts_args_type = "addresses: string[], port: number, pinnedPeerPublicKey: Buffer, autoReconnect: boolean, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void"
+    )]
+    pub fn connect(
+        &self,
+        addresses: Vec<String>,
+        port: u16,
+        pinned_peer_public_key: Buffer,
+        auto_reconnect: bool,
+        on_event: JsFunction,
+    ) -> Result<()> {
         self.spawn_link(
-            ChannelRole::Dial(addresses, port, pinned_peer_public_key.to_vec(), auto_reconnect),
+            ChannelRole::Dial(
+                addresses,
+                port,
+                pinned_peer_public_key.to_vec(),
+                auto_reconnect,
+            ),
             on_event,
         )
     }
 
     /// Accept ONE connection; `expectedPeerPublicKey` pins the peer or
     /// null/undefined for TOFU (check the reported fingerprint).
-    #[napi(ts_args_type = "port: number, expectedPeerPublicKey: Buffer | null | undefined, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void")]
-    pub fn listen(&self, port: u16, expected_peer_public_key: Option<Buffer>, on_event: JsFunction) -> Result<()> {
+    #[napi(
+        ts_args_type = "port: number, expectedPeerPublicKey: Buffer | null | undefined, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void"
+    )]
+    pub fn listen(
+        &self,
+        port: u16,
+        expected_peer_public_key: Option<Buffer>,
+        on_event: JsFunction,
+    ) -> Result<()> {
         self.spawn_link(
             ChannelRole::Listen(port, expected_peer_public_key.map(|b| b.to_vec())),
             on_event,
@@ -581,19 +612,24 @@ impl SecureChannel {
             let _ = tx.send(());
         }
         *self.outbound_tx.lock().unwrap() = None;
-        self.connected.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.connected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
 impl SecureChannel {
     fn spawn_link(&self, role: ChannelRole, on_event: JsFunction) -> Result<()> {
-        use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
+        use napi::threadsafe_function::{
+            ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode,
+        };
         use tokio::io::AsyncWriteExt as _;
 
-        let tsfn: ThreadsafeFunction<(Option<String>, Option<String>, Option<Vec<u8>>), ErrorStrategy::Fatal> =
-            on_event.create_threadsafe_function(0, |ctx| {
+        type ChannelEvent = (Option<String>, Option<String>, Option<Vec<u8>>);
+        let tsfn: ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal> = on_event
+            .create_threadsafe_function(0, |ctx| {
                 let mut obj = ctx.env.create_object()?;
-                let (state, detail, message): &(Option<String>, Option<String>, Option<Vec<u8>>) = &ctx.value;
+                let (state, detail, message): &(Option<String>, Option<String>, Option<Vec<u8>>) =
+                    &ctx.value;
                 if let Some(s) = state {
                     obj.set_named_property("state", s)?;
                 }
@@ -615,9 +651,12 @@ impl SecureChannel {
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
-        let (frames_sent, frames_received) = (self.frames_sent.clone(), self.frames_received.clone());
-        let (connections_established, reconnect_attempts) =
-            (self.connections_established.clone(), self.reconnect_attempts.clone());
+        let (frames_sent, frames_received) =
+            (self.frames_sent.clone(), self.frames_received.clone());
+        let (connections_established, reconnect_attempts) = (
+            self.connections_established.clone(),
+            self.reconnect_attempts.clone(),
+        );
 
         std::thread::Builder::new()
             .name("luciola-node-secure-link".to_string())

@@ -27,7 +27,10 @@ fn encode(s: &str) -> String {
 }
 
 fn decode(s: &str) -> Option<String> {
-    percent_decode_str(s).decode_utf8().ok().map(|c| c.into_owned())
+    percent_decode_str(s)
+        .decode_utf8()
+        .ok()
+        .map(|c| c.into_owned())
 }
 
 /// Build the canonical pairing URI.
@@ -46,7 +49,13 @@ pub fn build_pairing_uri(
     q.push_str(&format!("&port={}", port));
     if !addrs.is_empty() {
         q.push_str("&addrs=");
-        q.push_str(&addrs.iter().map(|a| encode(a)).collect::<Vec<_>>().join(","));
+        q.push_str(
+            &addrs
+                .iter()
+                .map(|a| encode(a))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
     }
     if let Some(fp) = fingerprint {
         q.push_str(&format!("&fp={}", encode(fp)));
@@ -76,10 +85,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
                 "product" => product = Some(v),
                 "port" => port = v.parse().ok(),
                 "addrs" => {
-                    addrs = v
-                        .split(',')
-                        .filter_map(|a| decode(a))
-                        .collect();
+                    addrs = v.split(',').filter_map(decode).collect();
                 }
                 "fp" => fingerprint = Some(v),
                 "pin" => pin = Some(v),
@@ -91,7 +97,14 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
         if addrs.is_empty() {
             return None;
         }
-        return Some(PairingPayload { name, product, port, addrs, fingerprint, pin });
+        return Some(PairingPayload {
+            name,
+            product,
+            port,
+            addrs,
+            fingerprint,
+            pin,
+        });
     }
     // Legacy plain HTTP form: http://host:port or http://[v6]:port/path
     let rest = uri

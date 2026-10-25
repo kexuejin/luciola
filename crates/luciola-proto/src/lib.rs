@@ -206,9 +206,16 @@ impl Codec {
             serde_json::to_value(profile).unwrap_or_default(),
         );
         if let Some(probe) = probe_id {
-            map.insert("probeId".to_string(), serde_json::Value::String(probe.to_string()));
+            map.insert(
+                "probeId".to_string(),
+                serde_json::Value::String(probe.to_string()),
+            );
         }
-        Envelope::new(MsgType::Entry, profile.node_id.clone(), serde_json::Value::Object(map))
+        Envelope::new(
+            MsgType::Entry,
+            profile.node_id.clone(),
+            serde_json::Value::Object(map),
+        )
     }
 
     pub fn make_alive(profile: &Profile, probe_id: Option<&str>) -> Envelope {
@@ -218,16 +225,30 @@ impl Codec {
             serde_json::to_value(profile).unwrap_or_default(),
         );
         if let Some(probe) = probe_id {
-            map.insert("probeId".to_string(), serde_json::Value::String(probe.to_string()));
+            map.insert(
+                "probeId".to_string(),
+                serde_json::Value::String(probe.to_string()),
+            );
         }
-        Envelope::new(MsgType::Alive, profile.node_id.clone(), serde_json::Value::Object(map))
+        Envelope::new(
+            MsgType::Alive,
+            profile.node_id.clone(),
+            serde_json::Value::Object(map),
+        )
     }
 
     pub fn make_presence(node_id: &str, seq: u32, profile_rev: u32) -> Envelope {
         let mut map = serde_json::Map::new();
         map.insert("seq".to_string(), serde_json::Value::from(seq));
-        map.insert("profileRev".to_string(), serde_json::Value::from(profile_rev));
-        Envelope::new(MsgType::Presence, node_id.to_string(), serde_json::Value::Object(map))
+        map.insert(
+            "profileRev".to_string(),
+            serde_json::Value::from(profile_rev),
+        );
+        Envelope::new(
+            MsgType::Presence,
+            node_id.to_string(),
+            serde_json::Value::Object(map),
+        )
     }
 
     pub fn make_exit(node_id: &str) -> Envelope {

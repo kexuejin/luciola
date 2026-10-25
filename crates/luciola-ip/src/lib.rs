@@ -24,7 +24,7 @@ pub enum Ipv6Scope {
 pub fn unbracket(host: &str) -> &str {
     let trimmed = host.trim();
     if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() >= 2 {
-        &trimmed[1..trimmed.len() - 1].trim()
+        trimmed[1..trimmed.len() - 1].trim()
     } else {
         trimmed
     }
@@ -112,10 +112,7 @@ pub fn is_public_gua_ipv6(host: &str) -> bool {
     if unbracketed.contains('%') {
         return false;
     }
-    match get_ipv6_scope(unbracketed) {
-        Some(Ipv6Scope::Global) => true,
-        _ => false,
-    }
+    matches!(get_ipv6_scope(unbracketed), Some(Ipv6Scope::Global))
 }
 
 /// Check if two IPv6 addresses share the same prefix (default 64 bits).
@@ -297,15 +294,9 @@ mod tests {
         // Private IPv4 peer
         assert!(is_lan_address("192.168.1.105", &local_addrs));
         // Peer in same IPv6 /64 prefix (Chinese domestic broadband LAN)
-        assert!(is_lan_address(
-            "2408:8248:2020:cb44:5:6:7:8",
-            &local_addrs
-        ));
+        assert!(is_lan_address("2408:8248:2020:cb44:5:6:7:8", &local_addrs));
         // Peer outside /64 prefix
-        assert!(!is_lan_address(
-            "2408:8248:2020:cb45:5:6:7:8",
-            &local_addrs
-        ));
+        assert!(!is_lan_address("2408:8248:2020:cb45:5:6:7:8", &local_addrs));
         // Random public IPv4
         assert!(!is_lan_address("114.114.114.114", &local_addrs));
     }

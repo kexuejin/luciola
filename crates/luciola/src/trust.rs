@@ -258,7 +258,10 @@ mod tests {
         let a = generate_identity();
         let b = generate_identity();
         // A comparing with B equals B comparing with A
-        assert_eq!(comparison_pin(&a.public_key, &b.public_key), comparison_pin(&b.public_key, &a.public_key));
+        assert_eq!(
+            comparison_pin(&a.public_key, &b.public_key),
+            comparison_pin(&b.public_key, &a.public_key)
+        );
         assert_eq!(comparison_pin(&a.public_key, &b.public_key).len(), 6);
     }
 }

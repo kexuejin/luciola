@@ -5,15 +5,13 @@
 pub use luciola_ip as ip;
 
 pub mod link;
-pub mod trust;
 pub mod pairing;
+pub mod trust;
 pub use luciola_net as net;
 pub use luciola_proto as proto;
 
 use luciola_net::NetworkDetector;
-use luciola_proto::{
-    AliveDedupTracker, Codec, Envelope, JitterScheduler, MsgType, Profile,
-};
+use luciola_proto::{AliveDedupTracker, Codec, Envelope, JitterScheduler, MsgType, Profile};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -169,7 +167,10 @@ pub struct DiscoveryConfig {
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         let meta = luciola_net::DeviceDetector::detect();
-        let default_name = meta.hostname.clone().unwrap_or_else(|| "Luciola Node".to_string());
+        let default_name = meta
+            .hostname
+            .clone()
+            .unwrap_or_else(|| "Luciola Node".to_string());
         let device_id = meta.device_id.clone();
         Self {
             self_profile: Profile {
@@ -336,7 +337,8 @@ impl DiscoveryEngine {
         }
         // IPv6 link-local multicast on every physical interface.
         for idx in luciola_net::multicast_scope_interfaces() {
-            let mut a = SocketAddr::from(([0xff02, 0, 0, 0, 0, 0, 0, 1], self.config.broadcast_port));
+            let mut a =
+                SocketAddr::from(([0xff02, 0, 0, 0, 0, 0, 0, 1], self.config.broadcast_port));
             if let SocketAddr::V6(v6) = &mut a {
                 v6.set_scope_id(idx);
             }
@@ -393,10 +395,13 @@ impl DiscoveryEngine {
                 },
                 None => Some((v4.recv_from(&mut buf).await, v4)),
             };
-            let Some((result, receiving_socket)) = received else { continue };
+            let Some((result, receiving_socket)) = received else {
+                continue;
+            };
             match result {
                 Ok((len, peer_addr)) => {
-                    let bytes: &[u8] = if receiving_socket.local_addr()
+                    let bytes: &[u8] = if receiving_socket
+                        .local_addr()
                         .map(|a| a.is_ipv6())
                         .unwrap_or(false)
                     {
@@ -405,7 +410,14 @@ impl DiscoveryEngine {
                         &buf[..len]
                     };
                     if let Ok(envelope) = Codec::decode(bytes) {
-                        self.handle_envelope(envelope, peer_addr, receiving_socket, &mut dedup_tracker, &jitter).await;
+                        self.handle_envelope(
+                            envelope,
+                            peer_addr,
+                            receiving_socket,
+                            &mut dedup_tracker,
+                            &jitter,
+                        )
+                        .await;
                     }
                 }
                 Err(e) => {
@@ -490,12 +502,11 @@ impl DiscoveryEngine {
             }
             MsgType::Presence => {
                 let their_rev = envelope.extract_presence_rev().unwrap_or(0);
-                let (record, changed) = self.registry.write().await.touch(
-                    &envelope.from,
-                    &peer_ip,
-                    peer_port,
-                    None,
-                );
+                let (record, changed) =
+                    self.registry
+                        .write()
+                        .await
+                        .touch(&envelope.from, &peer_ip, peer_port, None);
 
                 if let Some(r) = record {
                     if changed {
@@ -504,7 +515,12 @@ impl DiscoveryEngine {
                 }
 
                 // If profile version mismatch, send directed entry to retrieve full profile
-                let known_rev = self.registry.read().await.profile_rev_of(&envelope.from).unwrap_or(0);
+                let known_rev = self
+                    .registry
+                    .read()
+                    .await
+                    .profile_rev_of(&envelope.from)
+                    .unwrap_or(0);
                 if known_rev != their_rev {
                     let entry = Codec::make_entry(&self.config.self_profile, Some("refresh"));
                     if let Ok(bytes) = Codec::encode(&entry) {
@@ -513,7 +529,13 @@ impl DiscoveryEngine {
                 }
             }
             MsgType::Exit => {
-                if let Some(_) = self.registry.write().await.mark_offline(&envelope.from) {
+                if self
+                    .registry
+                    .write()
+                    .await
+                    .mark_offline(&envelope.from)
+                    .is_some()
+                {
                     let _ = self.event_tx.send(PeerEvent::Lost(envelope.from));
                 }
             }
@@ -567,7 +589,10 @@ fn bind_v6_socket(port: u16) -> Option<Arc<UdpSocket>> {
     let sock = Sock::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;
     // V6ONLY: keep the v4 socket authoritative for v4 traffic.
     sock.set_only_v6(true).ok()?;
-    if sock.bind(&format!("[::]:{port}").parse::<SocketAddr>().ok()?.into()).is_err() {
+    if sock
+        .bind(&format!("[::]:{port}").parse::<SocketAddr>().ok()?.into())
+        .is_err()
+    {
         return None;
     }
     sock.set_nonblocking(true).ok()?;
@@ -595,11 +620,7 @@ impl DiscoveryEngine {
     async fn send_via(&self, addr: SocketAddr, bytes: &[u8]) -> bool {
         match self.socket_for(addr).await {
             Some(sock) => matches!(
-                tokio::time::timeout(
-                    Duration::from_millis(300),
-                    sock.send_to(bytes, addr)
-                )
-                .await,
+                tokio::time::timeout(Duration::from_millis(300), sock.send_to(bytes, addr)).await,
                 Ok(Ok(_))
             ),
             None => false,
@@ -625,9 +646,11 @@ mod tests {
             device_id: None,
             product: None,
         };
-        let mut config_a = DiscoveryConfig::default();
-        config_a.self_profile = profile_a;
-        config_a.listen_port = 0;
+        let config_a = DiscoveryConfig {
+            self_profile: profile_a,
+            listen_port: 0,
+            ..Default::default()
+        };
         let engine_a = DiscoveryEngine::bind(config_a).await.expect("bind A");
         let port_a = engine_a.local_port().await.unwrap();
 
@@ -643,10 +666,12 @@ mod tests {
             device_id: None,
             product: None,
         };
-        let mut config_b = DiscoveryConfig::default();
-        config_b.self_profile = profile_b;
-        config_b.listen_port = 0;
-        config_b.manual_peers = vec![("::1".to_string(), port_a)];
+        let config_b = DiscoveryConfig {
+            self_profile: profile_b,
+            listen_port: 0,
+            manual_peers: vec![("::1".to_string(), port_a)],
+            ..Default::default()
+        };
         let engine_b = DiscoveryEngine::bind(config_b).await.expect("bind B");
 
         let mut sub_a = engine_a.subscribe();
@@ -686,9 +711,11 @@ mod tests {
             device_id: None,
             product: None,
         };
-        let mut config_a = DiscoveryConfig::default();
-        config_a.self_profile = profile_a;
-        config_a.listen_port = 0; // OS assigns port
+        let config_a = DiscoveryConfig {
+            self_profile: profile_a,
+            listen_port: 0, // OS assigns port
+            ..Default::default()
+        };
         let engine_a = DiscoveryEngine::bind(config_a).await.expect("bind A");
 
         // Node B
@@ -703,11 +730,13 @@ mod tests {
             device_id: None,
             product: None,
         };
-        let mut config_b = DiscoveryConfig::default();
-        config_b.self_profile = profile_b;
-        config_b.listen_port = 0; // OS assigns port
         let port_a = engine_a.local_port().await.unwrap();
-        config_b.manual_peers = vec![("127.0.0.1".to_string(), port_a)];
+        let config_b = DiscoveryConfig {
+            self_profile: profile_b,
+            listen_port: 0, // OS assigns port
+            manual_peers: vec![("127.0.0.1".to_string(), port_a)],
+            ..Default::default()
+        };
         let engine_b = DiscoveryEngine::bind(config_b).await.expect("bind B");
 
         let mut sub_a = engine_a.subscribe();
@@ -738,7 +767,10 @@ mod tests {
         // Node B announces exit -> Node A immediately marks offline
         engine_b.announce_exit().await;
         let lost_event = tokio::time::timeout(Duration::from_secs(3), sub_a.recv()).await;
-        assert!(lost_event.is_ok(), "Node A should receive Lost event for Node B");
+        assert!(
+            lost_event.is_ok(),
+            "Node A should receive Lost event for Node B"
+        );
         if let Ok(Ok(PeerEvent::Lost(id))) = lost_event {
             assert_eq!(id, "node_B");
         }

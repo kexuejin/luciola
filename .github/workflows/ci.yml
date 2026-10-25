@@ -34,7 +34,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
+      # ubuntu runners ship the Android SDK preinstalled; just accept licenses
+      # and add the platform the library compiles against.
+      - name: Android SDK licenses + platform 36
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" >/dev/null
       - name: Compile Android + JVM targets
         working-directory: examples/android-demo
         run: ./gradlew :luciola:compileAndroidMain :luciola:compileKotlinJvm --no-daemon

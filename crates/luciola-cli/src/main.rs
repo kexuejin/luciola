@@ -1,12 +1,12 @@
 use clap::{Parser, Subcommand};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use luciola_net::NetworkDetector;
 use luciola_proto::Profile;
 use qrcode::render::unicode;
 use qrcode::QrCode;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
 use tracing_subscriber::EnvFilter;
 
 /// Render a UTF-8 compact QR code for terminal display.
@@ -82,10 +82,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Scan { port, timeout_secs } => {
-            println!("🔍 Scanning for peers on port {} (timeout: {}s)...", port, timeout_secs);
-            let mut config = DiscoveryConfig::default();
-            config.listen_port = 0; // Random ephemeral port to avoid conflict
-            config.broadcast_port = port;
+            println!(
+                "🔍 Scanning for peers on port {} (timeout: {}s)...",
+                port, timeout_secs
+            );
+            let config = DiscoveryConfig {
+                listen_port: 0, // Random ephemeral port to avoid conflict
+                broadcast_port: port,
+                ..Default::default()
+            };
 
             let engine = DiscoveryEngine::bind(config).await?;
             let mut events = engine.subscribe();
@@ -123,7 +128,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Beacon { name, port, qr } => {
             let node_id = format!("luciola_{:x}", rand::random::<u32>());
-            println!("📢 Broadcasting beacon as '{}' ({}) on port {}...", name, node_id, port);
+            println!(
+                "📢 Broadcasting beacon as '{}' ({}) on port {}...",
+                name, node_id, port
+            );
 
             let candidates = NetworkDetector::local_candidate_addresses();
             let profile = Profile {
@@ -153,11 +161,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let mut config = DiscoveryConfig::default();
-            config.self_profile = profile;
-            config.listen_port = port;
-            config.broadcast_port = port;
-            config.presence_interval = Duration::from_secs(3);
+            let config = DiscoveryConfig {
+                self_profile: profile,
+                listen_port: port,
+                broadcast_port: port,
+                presence_interval: Duration::from_secs(3),
+                ..Default::default()
+            };
 
             let engine = DiscoveryEngine::bind(config).await?;
             let mut events = engine.subscribe();
@@ -201,8 +211,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ref model) = device_meta.model {
                 println!("  💻 Hardware Model: {}", model);
             }
-            println!("  {} Form Factor: {:?} ({})", device_meta.device_type.icon(), device_meta.device_type, device_meta.device_type.as_str());
-            println!("  🌐 OS & Architecture: {} ({})", device_meta.os, device_meta.arch);
+            println!(
+                "  {} Form Factor: {:?} ({})",
+                device_meta.device_type.icon(),
+                device_meta.device_type,
+                device_meta.device_type.as_str()
+            );
+            println!(
+                "  🌐 OS & Architecture: {} ({})",
+                device_meta.os, device_meta.arch
+            );
 
             println!("\n[1] Subnet Broadcast Targets (Bypassing Clash/TUN 0.0.0.0/1 capture):");
             let broadcasts = NetworkDetector::subnet_broadcast_addresses();
@@ -231,7 +249,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         format!("http://{}:{}", best_ip, port)
                     };
-                    println!("\n📱 [Single-Subnet Web QR] Primary Wi-Fi Direct URL (Port {}):", port);
+                    println!(
+                        "\n📱 [Single-Subnet Web QR] Primary Wi-Fi Direct URL (Port {}):",
+                        port
+                    );
                     println!("👉 Direct URL: {}", url);
                     if let Some(qr_art) = render_qr_terminal(&url) {
                         println!("\n{}", qr_art);
@@ -242,12 +263,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("💡 Multi-Subnet Notice: This device is connected to {} candidate network interfaces.", candidates.len());
                     println!("   If the scanning device is on a different subnet/dock, use these direct URLs:");
                     for (i, c) in candidates.iter().enumerate().skip(1) {
-                        let u = if c.contains(':') { format!("http://[{}]:{}", c, port) } else { format!("http://{}:{}", c, port) };
+                        let u = if c.contains(':') {
+                            format!("http://[{}]:{}", c, port)
+                        } else {
+                            format!("http://{}:{}", c, port)
+                        };
                         println!("   [{}] Subnet candidate: {}", i + 1, u);
                     }
 
-                    let clean_name = device_meta.hostname.as_deref().unwrap_or("node").replace(' ', "%20");
-                    let pair_payload = format!("luciola://pair?name={}&port={}&addrs={}", clean_name, port, candidates.join(","));
+                    let clean_name = device_meta
+                        .hostname
+                        .as_deref()
+                        .unwrap_or("node")
+                        .replace(' ', "%20");
+                    let pair_payload = format!(
+                        "luciola://pair?name={}&port={}&addrs={}",
+                        clean_name,
+                        port,
+                        candidates.join(",")
+                    );
                     println!("\n⚡ [Multi-Subnet Universal QR] (For Apps: dials all subnets in parallel via Happy Eyeballs):");
                     println!("👉 Universal Pairing URI: {}", pair_payload);
                     if let Some(qr_art) = render_qr_terminal(&pair_payload) {
@@ -286,10 +320,12 @@ async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::erro
         device_id: None,
         product: Some("luciola-agent".into()),
     };
-    let mut config = DiscoveryConfig::default();
-    config.self_profile = profile;
-    config.listen_port = port;
-    config.broadcast_port = port;
+    let config = DiscoveryConfig {
+        self_profile: profile,
+        listen_port: port,
+        broadcast_port: port,
+        ..Default::default()
+    };
 
     let engine = DiscoveryEngine::bind(config).await?;
     let mut events = engine.subscribe();
@@ -354,7 +390,7 @@ async fn handle_agent_client(
             line = rx.recv() => {
                 if let Ok(l) = line {
                     if writer.write_all(l.as_bytes()).await.is_err() || writer.write_all(b"
-").await.is_err() {
+        ").await.is_err() {
                         break;
                     }
                 }
@@ -363,9 +399,8 @@ async fn handle_agent_client(
                 match cmd {
                     Ok(Some(text)) => {
                         let t = text.trim();
-                        if t == "ping" {
-                            if writer.write_all(b"{\"type\":\"pong\"}\n").await.is_err() { break; }
-                        }
+                        if t == "ping"
+                            && writer.write_all(b"{\"type\":\"pong\"}\n").await.is_err() { break; }
                         // unknown commands are ignored; the event stream continues
                     }
                     _ => break,

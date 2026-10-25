@@ -27,7 +27,7 @@ use aes_gcm::Aes256Gcm;
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -118,7 +118,13 @@ impl SecureStream {
         let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
         let ct = self
             .send_cipher
-            .encrypt(&nonce, Payload { msg: plaintext, aad: &[] })
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: plaintext,
+                    aad: &[],
+                },
+            )
             .map_err(|_| LinkError::Tamper("encrypt failed".into()))?;
         let len = (ct.len() as u32).to_be_bytes();
         self.socket.write_all(&len).await?;
@@ -188,9 +194,10 @@ pub async fn connect_secure_raced(
     pinned_peer_public_key: &[u8],
 ) -> Result<SecureStream, LinkError> {
     use crate::link::race_stream;
-    let Some((socket, _addr, _rtt)) = race_stream(addresses, port, Default::default()).await
-    else {
-        return Err(LinkError::Handshake("no candidate address reachable".into()));
+    let Some((socket, _addr, _rtt)) = race_stream(addresses, port, Default::default()).await else {
+        return Err(LinkError::Handshake(
+            "no candidate address reachable".into(),
+        ));
     };
     secure_handshake_client(socket, identity_seed, pinned_peer_public_key).await
 }
@@ -209,7 +216,7 @@ pub async fn secure_handshake_client(
     let peer_key: [u8; PUB_LEN] = pinned_peer_public_key
         .try_into()
         .map_err(|_| LinkError::Handshake("peer key must be 32 bytes".into()))?;
-    
+
     // I -> R
     let eph_i_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
     let eph_i = XPublicKey::from(&eph_i_secret).as_bytes().to_vec();
@@ -217,9 +224,7 @@ pub async fn secure_handshake_client(
     rand::thread_rng().fill_bytes(&mut nonce_i);
     socket.write_all(&eph_i).await?;
     socket.write_all(&nonce_i).await?;
-    socket
-        .write_all(signing.verifying_key().as_bytes())
-        .await?;
+    socket.write_all(signing.verifying_key().as_bytes()).await?;
 
     // R -> I
     let mut eph_r = [0u8; PUB_LEN];
@@ -242,8 +247,7 @@ pub async fn secure_handshake_client(
     let sig_i = signing.sign(&ts);
     socket.write_all(&sig_i.to_bytes()).await?;
 
-    let shared = eph_i_secret
-        .diffie_hellman(&XPublicKey::from(eph_r));
+    let shared = eph_i_secret.diffie_hellman(&XPublicKey::from(eph_r));
     let (send, recv) = derive_keys(shared.as_bytes(), &nonce_i, &nonce_r, &fp_i, &fp_r);
     Ok(SecureStream {
         socket,
@@ -326,8 +330,7 @@ pub async fn secure_handshake_server(
         .verify(&ts, &ed25519_dalek::Signature::from_bytes(&sig_i))
         .map_err(|_| LinkError::UntrustedPeer)?;
 
-    let shared = eph_r_secret
-        .diffie_hellman(&XPublicKey::from(eph_i));
+    let shared = eph_r_secret.diffie_hellman(&XPublicKey::from(eph_i));
     let (recv, send) = derive_keys(shared.as_bytes(), &nonce_i, &nonce_r, &fp_i, &fp_r);
     Ok(SecureStream {
         socket,
@@ -352,7 +355,8 @@ mod tests {
 
         let seed_b = b.seed.clone();
         let key_a = a.public_key.clone();
-        let server = tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
         let client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key).await;
         let mut client = client.expect("client handshake");
         let mut server = server.await.unwrap().expect("server handshake");
@@ -384,12 +388,16 @@ mod tests {
         // the channel is unusable.
         let seed_b = b.seed.clone();
         let key_a = a.public_key.clone();
-        let server = tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
         // The pinned responder drops the connection before signing anything;
         // the attacker's handshake fails reading the responder's flight.
         let client = connect_secure("127.0.0.1", port, &attacker.seed, &b.public_key).await;
         assert!(client.is_err(), "attacker handshake must fail");
-        assert!(server.await.unwrap().is_err(), "server rejects the attacker");
+        assert!(
+            server.await.unwrap().is_err(),
+            "server rejects the attacker"
+        );
     }
 
     #[tokio::test]
@@ -400,7 +408,8 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let seed_b = b.seed.clone();
         let key_a = a.public_key.clone();
-        let server = tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
         let mut client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
             .await
             .unwrap();
@@ -416,12 +425,9 @@ mod tests {
         // mismatches, standing in for any replay/reorder/tamper.
         server.recv_counter = 2;
         client.send(b"frame-1").await.unwrap();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            server.recv(&mut buf),
-        )
-        .await
-        .expect("recv must not hang");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), server.recv(&mut buf))
+            .await
+            .expect("recv must not hang");
         assert!(matches!(result, Err(LinkError::Tamper(_))));
     }
 
@@ -433,19 +439,17 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let seed_b = b.seed.clone();
         let key_a = a.public_key.clone();
-        let server = tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
-        let mut client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
             .await
             .unwrap();
         let mut server = server.await.unwrap().unwrap();
         drop(client); // close the socket
         let mut buf = Vec::new();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            server.recv(&mut buf),
-        )
-        .await
-        .expect("recv on closed socket must not hang");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), server.recv(&mut buf))
+            .await
+            .expect("recv on closed socket must not hang");
         assert!(result.is_err());
     }
 
@@ -462,7 +466,10 @@ mod tests {
             .await
             .unwrap();
         let server = server.await.unwrap().expect("tofu handshake");
-        assert_eq!(server.peer_public_key, a.public_key, "TOFU captures peer key");
+        assert_eq!(
+            server.peer_public_key, a.public_key,
+            "TOFU captures peer key"
+        );
         client.send(b"hi").await.unwrap();
     }
 }

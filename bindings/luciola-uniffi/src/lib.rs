@@ -334,11 +334,13 @@ impl DiscoverySession {
                         product,
                         device: Some(detected),
                     };
-                    let mut config = DiscoveryConfig::default();
-                    config.self_profile = profile;
-                    config.listen_port = port;
-                    config.broadcast_port = port;
-                    config.manual_peers = manual_peers;
+                    let config = DiscoveryConfig {
+                        self_profile: profile,
+                        listen_port: port,
+                        broadcast_port: port,
+                        manual_peers,
+                        ..Default::default()
+                    };
 
                     // A restart may race the previous socket releasing the port;
                     // retry instead of silently falling back to an ephemeral
@@ -406,7 +408,6 @@ impl DiscoverySession {
             })
             .ok();
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -542,30 +543,39 @@ impl TrustStore {
         let inner = from_json
             .and_then(|j| luciola::trust::TrustStore::from_json(&j).ok())
             .unwrap_or_default();
-        Self { inner: std::sync::Mutex::new(inner) }
+        Self {
+            inner: std::sync::Mutex::new(inner),
+        }
     }
 
     /// Pair or re-pair a device (replaces the entry with the same public key).
     pub fn trust_device(&self, device: TrustedDeviceInfo) {
-        self.inner.lock().unwrap().trust_device(luciola::trust::TrustedDevice {
-            device_id: device.device_id,
-            name: device.name,
-            public_key: device.public_key,
-            fingerprint: device.fingerprint,
-            level: match device.level {
-                TrustLevel::Full => luciola::trust::TrustLevel::Full,
-                TrustLevel::Partial => luciola::trust::TrustLevel::Partial,
-            },
-            pinned_at_ms: device.pinned_at_ms,
-        });
+        self.inner
+            .lock()
+            .unwrap()
+            .trust_device(luciola::trust::TrustedDevice {
+                device_id: device.device_id,
+                name: device.name,
+                public_key: device.public_key,
+                fingerprint: device.fingerprint,
+                level: match device.level {
+                    TrustLevel::Full => luciola::trust::TrustLevel::Full,
+                    TrustLevel::Partial => luciola::trust::TrustLevel::Partial,
+                },
+                pinned_at_ms: device.pinned_at_ms,
+            });
     }
 
     /// Trust level for a public key; absent = unpaired.
     pub fn level_of(&self, public_key: Vec<u8>) -> Option<TrustLevel> {
-        self.inner.lock().unwrap().level_of(&public_key).map(|l| match l {
-            luciola::trust::TrustLevel::Full => TrustLevel::Full,
-            luciola::trust::TrustLevel::Partial => TrustLevel::Partial,
-        })
+        self.inner
+            .lock()
+            .unwrap()
+            .level_of(&public_key)
+            .map(|l| match l {
+                luciola::trust::TrustLevel::Full => TrustLevel::Full,
+                luciola::trust::TrustLevel::Partial => TrustLevel::Partial,
+            })
     }
 
     /// Remove a paired device by fingerprint.
@@ -603,14 +613,24 @@ impl TrustStore {
 #[uniffi::export]
 pub fn generate_device_identity() -> DeviceIdentityInfo {
     let id = luciola::trust::generate_identity();
-    DeviceIdentityInfo { seed: id.seed, public_key: id.public_key, fingerprint: id.fingerprint, short_pin: id.short_pin }
+    DeviceIdentityInfo {
+        seed: id.seed,
+        public_key: id.public_key,
+        fingerprint: id.fingerprint,
+        short_pin: id.short_pin,
+    }
 }
 
 /// Restore an identity from a persisted 32-byte seed.
 #[uniffi::export]
 pub fn identity_from_seed(seed: Vec<u8>) -> DeviceIdentityInfo {
     let id = luciola::trust::identity_from_seed(&seed);
-    DeviceIdentityInfo { seed: id.seed, public_key: id.public_key, fingerprint: id.fingerprint, short_pin: id.short_pin }
+    DeviceIdentityInfo {
+        seed: id.seed,
+        public_key: id.public_key,
+        fingerprint: id.fingerprint,
+        short_pin: id.short_pin,
+    }
 }
 
 /// `sha256:<hex>` fingerprint of an Ed25519 public key.
@@ -657,11 +677,6 @@ pub trait SecureSessionListener: Send + Sync {
     /// fingerprint on connect and the error message on failure.
     fn on_state(&self, state: String, detail: Option<String>);
     fn on_message(&self, message: Vec<u8>);
-}
-
-enum LinkEvent {
-    State(String, Option<String>),
-    Message(Vec<u8>),
 }
 
 #[derive(Clone)]
@@ -782,7 +797,8 @@ impl SecureSession {
             let _ = tx.send(());
         }
         *self.outbound_tx.lock().unwrap() = None;
-        self.connected.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.connected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
