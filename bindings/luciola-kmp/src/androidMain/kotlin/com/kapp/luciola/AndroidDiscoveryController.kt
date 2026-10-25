@@ -15,6 +15,7 @@ class AndroidDiscoveryController(
     context: Context,
     sessionName: String,
     discoveryPort: UShort = 17878u,
+    manualPeers: List<Pair<String, UShort>> = emptyList(),
     private val onPeersChanged: (List<PeerUiModel>) -> Unit,
 ) : AutoCloseable {
 
@@ -22,7 +23,7 @@ class AndroidDiscoveryController(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val multicastLock: WifiManager.MulticastLock
-    private val engine = UniffiEngineAdapter(sessionName, discoveryPort)
+    private val engine = UniffiEngineAdapter(sessionName, discoveryPort, manualPeers)
     private val network = AndroidNetworkMonitor(appContext)
 
     val nodeId: String? get() = engine.nodeId()

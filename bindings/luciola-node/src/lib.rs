@@ -112,6 +112,13 @@ pub fn get_device_meta() -> JsDeviceMeta {
     }
 }
 
+/// Manually configured peer for cross-subnet / VPN / localhost setups.
+#[napi(object)]
+pub struct JsManualPeer {
+    pub host: String,
+    pub port: u32,
+}
+
 /// Discovered peer record returned to JavaScript.
 #[napi(object)]
 pub struct JsPeerRecord {
@@ -138,17 +145,25 @@ pub struct DiscoverySession {
     port: u16,
     shutdown_tx: Option<oneshot::Sender<()>>,
     node_id: std::sync::Mutex<Option<String>>,
+    manual_peers: std::sync::Mutex<Vec<(String, u16)>>,
 }
 
 #[napi]
 impl DiscoverySession {
     #[napi(constructor)]
-    pub fn new(name: Option<String>, port: Option<u32>) -> Self {
+    pub fn new(name: Option<String>, port: Option<u32>, manual_peers: Option<Vec<JsManualPeer>>) -> Self {
         Self {
             name: name.unwrap_or_else(|| "NodeJS Peer".to_string()),
             port: port.unwrap_or(17878) as u16,
             shutdown_tx: None,
             node_id: std::sync::Mutex::new(None),
+            manual_peers: std::sync::Mutex::new(
+                manual_peers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| (p.host, p.port as u16))
+                    .collect(),
+            ),
         }
     }
 
@@ -194,6 +209,7 @@ impl DiscoverySession {
         let name = self.name.clone();
         let port = self.port;
         let node_id = format!("node_{:x}", rand::random::<u32>());
+        let manual_peers = self.manual_peers.lock().unwrap().clone();
         *self.node_id.lock().unwrap() = Some(node_id.clone());
 
         std::thread::spawn(move || {
@@ -217,6 +233,7 @@ impl DiscoverySession {
                 config.self_profile = profile;
                 config.listen_port = port;
                 config.broadcast_port = port;
+                config.manual_peers = manual_peers;
 
                 if let Ok(engine) = luciola::DiscoveryEngine::bind(config).await {
                     let mut events = engine.subscribe();

@@ -17,6 +17,13 @@ pub enum DeviceType {
     Unknown,
 }
 
+/// A manually configured peer for cross-subnet / VPN / localhost setups.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ManualPeer {
+    pub host: String,
+    pub port: u16,
+}
+
 /// Device hardware and OS metadata.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceMeta {
@@ -161,6 +168,7 @@ pub struct DiscoverySession {
     name: Mutex<String>,
     port: Mutex<u16>,
     node_id: Mutex<String>,
+    manual_peers: Mutex<Vec<ManualPeer>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     listener: Mutex<Option<std::sync::Arc<dyn OnPeerDiscovered>>>,
     last_activity: std::sync::Arc<Mutex<std::time::SystemTime>>,
@@ -189,17 +197,27 @@ fn map_device_meta(meta: luciola_proto::DeviceMeta) -> DeviceMeta {
 #[uniffi::export]
 impl DiscoverySession {
     /// Create a session announcing `name` on the given UDP discovery port.
+    ///
+    /// `manualPeers` are unicast-only targets (host:port is the UDP discovery
+    /// port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
+    /// overlays (Tailscale/ZeroTier), or localhost debugging.
     #[uniffi::constructor]
-    pub fn new(name: String, port: u16) -> Self {
+    pub fn new(name: String, port: u16, manual_peers: Option<Vec<ManualPeer>>) -> Self {
         Self {
             name: Mutex::new(name),
             port: Mutex::new(port),
+            manual_peers: Mutex::new(manual_peers.unwrap_or_default()),
             node_id: Mutex::new(format!("uniffi_{:x}", rand::random::<u32>())),
             shutdown_tx: Mutex::new(None),
             listener: Mutex::new(None),
             last_activity: std::sync::Arc::new(Mutex::new(std::time::SystemTime::now())),
             bound: std::sync::Arc::new(Mutex::new(false)),
         }
+    }
+
+    /// Replace the manual peer list; takes effect on the next `restart()`.
+    pub fn set_manual_peers(&self, peers: Vec<ManualPeer>) {
+        *self.manual_peers.lock().unwrap() = peers;
     }
 
     /// This session's stable engine node id. Companion sockets (sweeps, unicast
@@ -260,6 +278,13 @@ impl DiscoverySession {
         let name = self.name.lock().unwrap().clone();
         let port = *self.port.lock().unwrap();
         let node_id = self.node_id.lock().unwrap().clone();
+        let manual_peers: Vec<(String, u16)> = self
+            .manual_peers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|p| (p.host.clone(), p.port))
+            .collect();
         let last_activity = std::sync::Arc::clone(&self.last_activity);
         let bound = std::sync::Arc::clone(&self.bound);
         *bound.lock().unwrap() = false;
@@ -288,6 +313,7 @@ impl DiscoverySession {
                     config.self_profile = profile;
                     config.listen_port = port;
                     config.broadcast_port = port;
+                    config.manual_peers = manual_peers;
 
                     // A restart may race the previous socket releasing the port;
                     // retry instead of silently falling back to an ephemeral

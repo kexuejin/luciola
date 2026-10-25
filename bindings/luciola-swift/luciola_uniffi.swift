@@ -541,6 +541,11 @@ public protocol DiscoverySessionProtocol : AnyObject {
     func secondsSinceIdle()  -> Double
     
     /**
+     * Replace the manual peer list; takes effect on the next `restart()`.
+     */
+    func setManualPeers(peers: [ManualPeer]) 
+    
+    /**
      * Start the engine on a dedicated background thread.
      */
     func start(listener: OnPeerDiscovered) 
@@ -606,13 +611,18 @@ open class DiscoverySession:
     }
     /**
      * Create a session announcing `name` on the given UDP discovery port.
+     *
+     * `manualPeers` are unicast-only targets (host:port is the UDP discovery
+     * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
+     * overlays (Tailscale/ZeroTier), or localhost debugging.
      */
-public convenience init(name: String, port: UInt16) {
+public convenience init(name: String, port: UInt16, manualPeers: [ManualPeer]?) {
     let pointer =
         try! rustCall() {
     uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
         FfiConverterString.lower(name),
-        FfiConverterUInt16.lower(port),$0
+        FfiConverterUInt16.lower(port),
+        FfiConverterOptionSequenceTypeManualPeer.lower(manualPeers),$0
     )
 }
     self.init(unsafeFromRawPointer: pointer)
@@ -673,6 +683,16 @@ open func secondsSinceIdle() -> Double {
     uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(self.uniffiClonePointer(),$0
     )
 })
+}
+    
+    /**
+     * Replace the manual peer list; takes effect on the next `restart()`.
+     */
+open func setManualPeers(peers: [ManualPeer]) {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeManualPeer.lower(peers),$0
+    )
+}
 }
     
     /**
@@ -942,6 +962,75 @@ public func FfiConverterTypeDiscoveredPeer_lower(_ value: DiscoveredPeer) -> Rus
     return FfiConverterTypeDiscoveredPeer.lower(value)
 }
 
+
+/**
+ * A manually configured peer for cross-subnet / VPN / localhost setups.
+ */
+public struct ManualPeer {
+    public var host: String
+    public var port: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(host: String, port: UInt16) {
+        self.host = host
+        self.port = port
+    }
+}
+
+
+
+extension ManualPeer: Equatable, Hashable {
+    public static func ==(lhs: ManualPeer, rhs: ManualPeer) -> Bool {
+        if lhs.host != rhs.host {
+            return false
+        }
+        if lhs.port != rhs.port {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(host)
+        hasher.combine(port)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeManualPeer: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ManualPeer {
+        return
+            try ManualPeer(
+                host: FfiConverterString.read(from: &buf), 
+                port: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ManualPeer, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterUInt16.write(value.port, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeManualPeer_lift(_ buf: RustBuffer) throws -> ManualPeer {
+    return try FfiConverterTypeManualPeer.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeManualPeer_lower(_ value: ManualPeer) -> RustBuffer {
+    return FfiConverterTypeManualPeer.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -1203,6 +1292,30 @@ fileprivate struct FfiConverterOptionTypeDeviceMeta: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeManualPeer: FfiConverterRustBuffer {
+    typealias SwiftType = [ManualPeer]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeManualPeer.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeManualPeer.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1220,6 +1333,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer {
+    typealias SwiftType = [ManualPeer]
+
+    public static func write(_ value: [ManualPeer], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeManualPeer.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ManualPeer] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ManualPeer]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeManualPeer.read(from: &buf))
         }
         return seq
     }
@@ -1384,13 +1522,16 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idle() != 7024) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers() != 43607) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_start() != 53880) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 2971) {
+    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 53696) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {

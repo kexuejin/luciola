@@ -25,9 +25,9 @@ final class DiscoveryModel: ObservableObject {
     private let watchdogIdle: TimeInterval = 45
     private let watchdogMaxConsecutive = 3
 
-    func start(sessionName: String, port: UInt16 = 17878) {
+    func start(sessionName: String, port: UInt16 = 17878, manualPeers: [ManualPeer] = []) {
         do {
-            let s = try DiscoverySession(name: sessionName, port: port)
+            let s = try DiscoverySession(name: sessionName, port: port, manualPeers: manualPeers)
             s.start(listener: PeerRelay { [weak self] peer in
                 Task { @MainActor in
                     self?.onPeer(peer)

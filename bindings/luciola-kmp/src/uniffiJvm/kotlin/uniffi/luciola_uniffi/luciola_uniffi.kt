@@ -769,6 +769,8 @@ internal open class UniffiVTableCallbackInterfaceOnPeerDiscovered(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -793,7 +795,7 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_luciola_uniffi_fn_free_discoverysession(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_luciola_uniffi_fn_constructor_discoverysession_new(`name`: RustBuffer.ByValue,`port`: Short,`manualPeers`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -803,6 +805,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Double
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(`ptr`: Pointer,`peers`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_luciola_uniffi_fn_method_discoverysession_start(`ptr`: Pointer,`listener`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_luciola_uniffi_fn_method_discoverysession_stop(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -969,6 +973,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idle(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_start(
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_stop(
@@ -1036,13 +1042,16 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idle() != 7024.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers() != 43607.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_start() != 53880.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 2971.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 53696.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116.toShort()) {
@@ -1428,6 +1437,11 @@ public interface DiscoverySessionInterface {
     fun `secondsSinceIdle`(): kotlin.Double
     
     /**
+     * Replace the manual peer list; takes effect on the next `restart()`.
+     */
+    fun `setManualPeers`(`peers`: List<ManualPeer>)
+    
+    /**
      * Start the engine on a dedicated background thread.
      */
     fun `start`(`listener`: OnPeerDiscovered)
@@ -1474,12 +1488,16 @@ open class DiscoverySession: Disposable, AutoCloseable, DiscoverySessionInterfac
     }
     /**
      * Create a session announcing `name` on the given UDP discovery port.
+     *
+     * `manualPeers` are unicast-only targets (host:port is the UDP discovery
+     * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
+     * overlays (Tailscale/ZeroTier), or localhost debugging.
      */
-    constructor(`name`: kotlin.String, `port`: kotlin.UShort) :
+    constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?) :
         this(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
-        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),_status)
+        FfiConverterString.lower(`name`),FfiConverterUShort.lower(`port`),FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),_status)
 }
     )
 
@@ -1610,6 +1628,20 @@ open class DiscoverySession: Disposable, AutoCloseable, DiscoverySessionInterfac
     }
     )
     }
+    
+
+    
+    /**
+     * Replace the manual peer list; takes effect on the next `restart()`.
+     */override fun `setManualPeers`(`peers`: List<ManualPeer>)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(
+        it, FfiConverterSequenceTypeManualPeer.lower(`peers`),_status)
+}
+    }
+    
     
 
     
@@ -1771,6 +1803,41 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
             FfiConverterUShort.write(value.`udpPort`, buf)
             FfiConverterUShort.write(value.`tcpPort`, buf)
             FfiConverterOptionalTypeDeviceMeta.write(value.`device`, buf)
+    }
+}
+
+
+
+/**
+ * A manually configured peer for cross-subnet / VPN / localhost setups.
+ */
+data class ManualPeer (
+    var `host`: kotlin.String, 
+    var `port`: kotlin.UShort
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeManualPeer: FfiConverterRustBuffer<ManualPeer> {
+    override fun read(buf: ByteBuffer): ManualPeer {
+        return ManualPeer(
+            FfiConverterString.read(buf),
+            FfiConverterUShort.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ManualPeer) = (
+            FfiConverterString.allocationSize(value.`host`) +
+            FfiConverterUShort.allocationSize(value.`port`)
+    )
+
+    override fun write(value: ManualPeer, buf: ByteBuffer) {
+            FfiConverterString.write(value.`host`, buf)
+            FfiConverterUShort.write(value.`port`, buf)
     }
 }
 
@@ -1969,6 +2036,38 @@ public object FfiConverterOptionalTypeDeviceMeta: FfiConverterRustBuffer<DeviceM
 /**
  * @suppress
  */
+public object FfiConverterOptionalSequenceTypeManualPeer: FfiConverterRustBuffer<List<ManualPeer>?> {
+    override fun read(buf: ByteBuffer): List<ManualPeer>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceTypeManualPeer.read(buf)
+    }
+
+    override fun allocationSize(value: List<ManualPeer>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceTypeManualPeer.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<ManualPeer>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceTypeManualPeer.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -1987,6 +2086,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer<List<ManualPeer>> {
+    override fun read(buf: ByteBuffer): List<ManualPeer> {
+        val len = buf.getInt()
+        return List<ManualPeer>(len) {
+            FfiConverterTypeManualPeer.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ManualPeer>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeManualPeer.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ManualPeer>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeManualPeer.write(it, buf)
         }
     }
 }

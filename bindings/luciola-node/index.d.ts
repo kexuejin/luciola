@@ -69,6 +69,15 @@ export interface JsDeviceMeta {
  */
 export function getDeviceMeta(): JsDeviceMeta;
 
+/**
+ * Manually configured peer for cross-subnet / VPN / localhost setups.
+ * `port` is the peer's UDP discovery port.
+ */
+export interface JsManualPeer {
+  host: string;
+  port: number;
+}
+
 export interface JsPeerRecord {
   nodeId: string;
   name: string;
@@ -82,7 +91,7 @@ export interface JsPeerRecord {
  * Active P2P discovery session in Node.js.
  */
 export class DiscoverySession {
-  constructor(name?: string, port?: number);
+  constructor(name?: string, port?: number, manualPeers?: JsManualPeer[]);
   /**
    * This session's engine node id (available after `start`).
    */

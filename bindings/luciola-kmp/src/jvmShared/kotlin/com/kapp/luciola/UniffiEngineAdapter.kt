@@ -2,6 +2,7 @@ package com.kapp.luciola
 
 import uniffi.luciola_uniffi.DiscoveredPeer
 import uniffi.luciola_uniffi.DiscoverySession
+import uniffi.luciola_uniffi.ManualPeer
 import uniffi.luciola_uniffi.OnPeerDiscovered
 
 /**
@@ -13,9 +14,14 @@ import uniffi.luciola_uniffi.OnPeerDiscovered
 class UniffiEngineAdapter(
     sessionName: String,
     discoveryPort: UShort = 17878u,
+    manualPeers: List<Pair<String, UShort>> = emptyList(),
 ) : DiscoveryEnginePort {
 
-    private val session = DiscoverySession(sessionName, discoveryPort)
+    private val session = DiscoverySession(
+        sessionName,
+        discoveryPort,
+        manualPeers.map { ManualPeer(host = it.first, port = it.second) },
+    )
 
     override fun nodeId(): String? = session.nodeId()
 
