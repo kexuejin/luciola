@@ -1,4 +1,4 @@
-package io.github.kexuejin.luciola.demo
+package com.kapp.luciola.demo
 
 import android.os.Build
 import android.os.Bundle
