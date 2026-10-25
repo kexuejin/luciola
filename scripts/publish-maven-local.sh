@@ -18,13 +18,13 @@ cargo ndk -t arm64-v8a -o "$KMP/src/androidMain/jniLibs" build --release -p luci
 test -f "$SO_DIR/libluciola_uniffi.so" || { echo ".so missing after build" >&2; exit 1; }
 
 echo "==> [2/3] Publishing luciola-kmp to mavenLocal..."
-(cd examples/android-demo && ./gradlew :luciola-kmp:publishToMavenLocal --no-daemon -q)
+(cd examples/android-demo && ./gradlew :luciola:publishToMavenLocal --no-daemon -q)
 
 echo "==> [3/3] Verifying the published AAR embeds the native lib..."
-AAR=$(ls -t ~/.m2/repository/com/kapp/luciola/luciola-kmp-android/*/luciola-kmp-android-*.aar | head -1)
+AAR=$(ls -t ~/.m2/repository/io/github/kexuejin/luciola-android/*/luciola-kmp-android-*.aar | head -1)
 if ! unzip -l "$AAR" | grep -q "jni/arm64-v8a/libluciola_uniffi.so"; then
   echo "Published AAR does NOT contain the native lib: $AAR" >&2
   exit 1
 fi
 echo "OK: $AAR contains jni/arm64-v8a/libluciola_uniffi.so"
-echo "Done. Consumers: implementation(\"com.kapp.luciola:luciola-kmp:<version>\") + mavenLocal()"
+echo "Done. Consumers: implementation(\"io.github.kexuejin:luciola:<version>\") + mavenLocal()"

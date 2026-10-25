@@ -37,7 +37,7 @@ android {
 dependencies {
     // The KMP library: uniffi engine adapter + supervision core (watchdog,
     // network watcher, debounced restarts, MulticastLock) + generated bindings.
-    implementation(project(":luciola-kmp"))
+    implementation(project(":luciola"))
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")

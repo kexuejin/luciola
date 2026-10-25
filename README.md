@@ -17,7 +17,7 @@ Luciola is the foundation layer for **local-first apps** — LAN clipboard sync,
 - 🔐 **Trust & pairing primitives** — Ed25519 device identities, `sha256:` fingerprints, 6-digit comparison PINs, and a **leveled trust store** (Full = own devices / silent push, Partial = per-action confirm, unpaired = deny). Built for clipboard-sync-grade privacy: *discovery is open, data planes are not*.
 - 🔒 **Authenticated encrypted channels** — SIGMA-style handshake (X25519 + Ed25519 transcript signatures + HKDF + AES-256-GCM, replay-proof counters), deny-by-default pinning, TOFU capture, auto-reconnect with backoff, keepalive dead-peer detection, bounded queues.
 - 🧭 **Supervision built in** — stable node identity across engine restarts, port-conflict detection (`bind_failed` events for same-device multi-product setups), watchdog + debounced network-change rebuilds, Android `MulticastLock` handling.
-- 🔌 **One core, every platform** — Rust core; **KMP library** (`com.kapp.luciola:luciola-kmp`, ships the arm64 `.so` in the AAR), Swift bindings + xcframework for iOS, Node.js N-API (`@luciola/core`), plus a desktop **agent** (`luciola-cli agent`) that funnels discovery to multiple same-machine products over a unix socket.
+- 🔌 **One core, every platform** — Rust core; **KMP library** (`io.github.kexuejin:luciola-kmp`, ships the arm64 `.so` in the AAR), Swift bindings + xcframework for iOS, Node.js N-API (`@luciola/core`), plus a desktop **agent** (`luciola-cli agent`) that funnels discovery to multiple same-machine products over a unix socket.
 
 ## Why Luciola (real-world networks)
 
@@ -48,7 +48,7 @@ cargo run -p luciola-cli -- agent   # per-device discovery daemon (unix-socket e
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("com.kapp.luciola:luciola-kmp:0.3.0")
+implementation("io.github.kexuejin:luciola:0.3.0")
 
 val controller = AndroidDiscoveryController(
     context = this,

@@ -1,4 +1,4 @@
-package com.kapp.luciola
+package io.github.kexuejin.luciola
 
 import platform.Foundation.NSLock
 

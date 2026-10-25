@@ -1,4 +1,4 @@
-package com.kapp.luciola.demo
+package io.github.kexuejin.luciola.demo
 
 import android.os.Build
 import android.os.Bundle
@@ -56,13 +56,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import com.kapp.luciola.AndroidDiscoveryController
-import com.kapp.luciola.PeerUiModel
-import com.kapp.luciola.luciolaDeviceMeta
-import com.kapp.luciola.luciolaLocalCandidates
-import com.kapp.luciola.luciolaParsePairingUri
-import com.kapp.luciola.luciolaRaceConnect
-import com.kapp.luciola.luciolaSubnetBroadcasts
+import io.github.kexuejin.luciola.AndroidDiscoveryController
+import io.github.kexuejin.luciola.PeerUiModel
+import io.github.kexuejin.luciola.luciolaDeviceMeta
+import io.github.kexuejin.luciola.luciolaLocalCandidates
+import io.github.kexuejin.luciola.luciolaParsePairingUri
+import io.github.kexuejin.luciola.luciolaRaceConnect
+import io.github.kexuejin.luciola.luciolaSubnetBroadcasts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

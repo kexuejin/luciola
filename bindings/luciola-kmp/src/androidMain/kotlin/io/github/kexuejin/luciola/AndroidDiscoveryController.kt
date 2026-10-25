@@ -1,4 +1,4 @@
-package com.kapp.luciola
+package io.github.kexuejin.luciola
 
 import android.content.Context
 import android.net.wifi.WifiManager

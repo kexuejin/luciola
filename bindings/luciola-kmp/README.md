@@ -4,7 +4,7 @@ Kotlin Multiplatform library over the Luciola Rust core (`luciola-uniffi`):
 peer discovery, supervision (watchdog / network self-healing), Happy Eyeballs
 path racing, trust & pairing primitives, and authenticated encrypted channels.
 
-Package: `com.kapp.luciola:luciola-kmp` (Kotlin package `com.kapp.luciola`).
+Package: `io.github.kexuejin:luciola` (Kotlin package `io.github.kexuejin.luciola`).
 
 ## Targets
 
@@ -23,7 +23,7 @@ Package: `com.kapp.luciola:luciola-kmp` (Kotlin package `com.kapp.luciola`).
 dependencyResolutionManagement { repositories { mavenLocal(); ... } }
 
 // build.gradle.kts
-implementation("com.kapp.luciola:luciola-kmp:0.3.0")
+implementation("io.github.kexuejin:luciola:0.3.0")
 ```
 
 KMP consumers resolve per-target variants automatically via Gradle module

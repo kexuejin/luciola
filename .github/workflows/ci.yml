@@ -37,7 +37,7 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Compile Android + JVM targets
         working-directory: examples/android-demo
-        run: ./gradlew :luciola-kmp:compileAndroidMain :luciola-kmp:compileKotlinJvm --no-daemon
+        run: ./gradlew :luciola:compileAndroidMain :luciola:compileKotlinJvm --no-daemon
 
   kmp-ios:
     name: KMP bindings (iOS klib)
@@ -50,7 +50,7 @@ jobs:
           java-version: 21
       - name: Compile iOS targets
         working-directory: examples/android-demo
-        run: ./gradlew :luciola-kmp:compileKotlinIosArm64 :luciola-kmp:compileKotlinIosSimulatorArm64 --no-daemon
+        run: ./gradlew :luciola:compileKotlinIosArm64 :luciola:compileKotlinIosSimulatorArm64 --no-daemon
 
   node-smoke:
     name: Node bindings smoke

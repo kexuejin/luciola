@@ -1,7 +1,7 @@
 # Luciola 产品接入手册
 
 面向基于 luciola 构建的产品(剪贴板同步、文件传输、投屏类)的集成指南。
-坐标:`com.kapp.luciola:luciola-kmp`(KMP)、`@luciola/core`(Node)。
+坐标:`io.github.kexuejin:luciola`(KMP)、`@luciola/core`(Node)。
 
 ## 1. 端口分配(同机多产品)
 

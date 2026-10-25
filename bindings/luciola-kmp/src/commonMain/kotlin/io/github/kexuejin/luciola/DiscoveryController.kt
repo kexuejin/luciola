@@ -1,4 +1,4 @@
-package com.kapp.luciola
+package io.github.kexuejin.luciola
 
 /**
  * Platform-agnostic supervision core for a Luciola discovery session.

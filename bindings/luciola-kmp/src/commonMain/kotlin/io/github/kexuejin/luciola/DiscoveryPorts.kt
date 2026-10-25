@@ -1,4 +1,4 @@
-package com.kapp.luciola
+package io.github.kexuejin.luciola
 
 /** A discovered LAN peer, normalized for UI layers. */
 data class PeerUiModel(

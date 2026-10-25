@@ -17,7 +17,7 @@ Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输�
 - 🔐 **信任与配对原语** — Ed25519 设备身份、`sha256:` 指纹、6 位屏上比对 PIN、**分级信任库**(Full=自己的设备/无感推送,Partial=逐次确认,未配对=默认拒绝)。为剪贴板级隐私而生:*发现开放,数据面不开放*。
 - 🔒 **认证加密信道** — SIGMA 式握手(X25519 + Ed25519 全 transcript 签名 + HKDF + AES-256-GCM,计数器防重放)、默认拒绝的 pin 校验、TOFU 捕获、断线指数退避自动重连、keepalive 判死、有界发送队列。
 - 🧭 **内置监督自愈** — 引擎重启身份稳定、端口冲突显式上报(`bind_failed`,同机多产品场景)、看门狗 + 网络变化防抖重建、Android MulticastLock 处理。
-- 🔌 **一个核心,全平台** — Rust 核心;**KMP 库**(`com.kapp.luciola:luciola-kmp`,AAR 内嵌 arm64 `.so`)、iOS Swift 绑定 + xcframework、Node.js N-API(`@luciola/core`),以及桌面 **agent**(`luciola-cli agent`,unix socket 向同机多产品分发发现事件)。
+- 🔌 **一个核心,全平台** — Rust 核心;**KMP 库**(`io.github.kexuejin:luciola-kmp`,AAR 内嵌 arm64 `.so`)、iOS Swift 绑定 + xcframework、Node.js N-API(`@luciola/core`),以及桌面 **agent**(`luciola-cli agent`,unix socket 向同机多产品分发发现事件)。
 
 ## 为什么需要 Luciola(真实网络)
 
@@ -48,7 +48,7 @@ cargo run -p luciola-cli -- agent   # 设备级发现 daemon(unix socket 事件�
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("com.kapp.luciola:luciola-kmp:0.3.0")
+implementation("io.github.kexuejin:luciola:0.3.0")
 
 val controller = AndroidDiscoveryController(
     context = this,

@@ -4,7 +4,7 @@ plugins {
     `maven-publish`
 }
 
-group = "com.kapp.luciola"
+group = "io.github.kexuejin"
 version = "0.3.0"
 
 repositories {
@@ -16,7 +16,7 @@ kotlin {
     // Android via the AGP KMP plugin (built-in Kotlin on AGP 9; KGP androidTarget
     // is intentionally not used with AGP 9).
     androidLibrary {
-        namespace = "com.kapp.luciola"
+        namespace = "io.github.kexuejin.luciola"
         compileSdk = 36
         minSdk = 26
     }

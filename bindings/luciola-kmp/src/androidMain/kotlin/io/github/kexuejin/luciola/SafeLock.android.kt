@@ -1,4 +1,4 @@
-package com.kapp.luciola
+package io.github.kexuejin.luciola
 
 internal actual class SafeLock {
     private val monitor = Any()
