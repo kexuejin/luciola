@@ -26,6 +26,8 @@ class DiscoveryController(
     private val config: ControllerConfig = ControllerConfig(),
     private val scheduler: TaskScheduler,
     private val onPeersChanged: (List<PeerUiModel>) -> Unit,
+    /** Fatal engine problems (e.g. port occupied); hosts surface these in UI. */
+    private val onEngineError: ((code: String, message: String) -> Unit)? = null,
 ) {
     private val lock = SafeLock()
     private val peers = LinkedHashMap<String, PeerUiModel>()
@@ -42,7 +44,7 @@ class DiscoveryController(
             was
         }
         if (wasStarted) return
-        engine.start(::onPeerFromEngine)
+        engine.start(::onEventFromEngine)
         network.onChange { scheduleRestart("network change") }
         scheduleWatchdog()
     }
@@ -81,7 +83,22 @@ class DiscoveryController(
         }
     }
 
-    private fun onPeerFromEngine(peer: PeerUiModel) {
+    private fun onEventFromEngine(event: DiscoveryEventUi) {
+        when (event) {
+            is DiscoveryEventUi.Found -> upsert(event.peer)
+            is DiscoveryEventUi.Updated -> upsert(event.peer)
+            is DiscoveryEventUi.Lost -> {
+                val snapshot = lock.withLock {
+                    peers.remove(event.nodeId)
+                    peers.values.toList()
+                }
+                onPeersChanged(snapshot)
+            }
+            is DiscoveryEventUi.Error -> onEngineError?.invoke(event.code, event.message)
+        }
+    }
+
+    private fun upsert(peer: PeerUiModel) {
         val snapshot = lock.withLock {
             peers[peer.nodeId] = peer
             watchdogConsecutive = 0

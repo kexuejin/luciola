@@ -173,6 +173,32 @@ pub async fn connect_secure(
     identity_seed: &[u8],
     pinned_peer_public_key: &[u8],
 ) -> Result<SecureStream, LinkError> {
+    let socket = TcpStream::connect((address, port)).await?;
+    secure_handshake_client(socket, identity_seed, pinned_peer_public_key).await
+}
+
+/// Race-dial every candidate address (Happy Eyeballs) and run the client
+/// handshake on the winning socket — no gap between racing and connecting.
+pub async fn connect_secure_raced(
+    addresses: Vec<String>,
+    port: u16,
+    identity_seed: &[u8],
+    pinned_peer_public_key: &[u8],
+) -> Result<SecureStream, LinkError> {
+    use crate::link::race_stream;
+    let Some((socket, _addr, _rtt)) = race_stream(addresses, port, Default::default()).await
+    else {
+        return Err(LinkError::Handshake("no candidate address reachable".into()));
+    };
+    secure_handshake_client(socket, identity_seed, pinned_peer_public_key).await
+}
+
+/// Client side of the handshake over an ALREADY-CONNECTED socket.
+pub async fn secure_handshake_client(
+    mut socket: TcpStream,
+    identity_seed: &[u8],
+    pinned_peer_public_key: &[u8],
+) -> Result<SecureStream, LinkError> {
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
@@ -181,8 +207,7 @@ pub async fn connect_secure(
     let peer_key: [u8; PUB_LEN] = pinned_peer_public_key
         .try_into()
         .map_err(|_| LinkError::Handshake("peer key must be 32 bytes".into()))?;
-    let mut socket = TcpStream::connect((address, port)).await?;
-
+    
     // I -> R
     let eph_i_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
     let eph_i = XPublicKey::from(&eph_i_secret).as_bytes().to_vec();
@@ -237,7 +262,16 @@ pub async fn accept_secure(
     identity_seed: &[u8],
     expected_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError> {
-    let (mut socket, _) = listener.accept().await?;
+    let (socket, _) = listener.accept().await?;
+    secure_handshake_server(socket, identity_seed, expected_peer_public_key).await
+}
+
+/// Server side of the handshake over an ALREADY-ACCEPTED socket.
+pub async fn secure_handshake_server(
+    mut socket: TcpStream,
+    identity_seed: &[u8],
+    expected_peer_public_key: Option<&[u8]>,
+) -> Result<SecureStream, LinkError> {
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()

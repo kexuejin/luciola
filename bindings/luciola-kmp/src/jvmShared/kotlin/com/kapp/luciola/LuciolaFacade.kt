@@ -48,3 +48,26 @@ fun luciolaRaceConnect(
 /** Shared selection policy: first 3 IPv4 candidates plus the first IPv6 GUA. */
 fun luciolaRaceCandidates(addresses: List<String>): List<String> =
     uniffi.luciola_uniffi.defaultRaceCandidates(addresses)
+
+/** Parse a canonical pairing URI (`luciola://pair` v1/v2 or plain http). */
+fun luciolaParsePairingUri(uri: String): PairingUi? {
+    val info = uniffi.luciola_uniffi.parsePairingUri(uri) ?: return null
+    return PairingUi(
+        name = info.name,
+        product = info.product,
+        port = info.port.toInt(),
+        addrs = info.addrs,
+        fingerprint = info.fingerprint,
+        pin = info.pin,
+    )
+}
+
+/** Build the canonical pairing URI. */
+fun luciolaBuildPairingUri(
+    name: String,
+    product: String?,
+    port: Int,
+    addrs: List<String>,
+    fingerprint: String?,
+    pin: String?,
+): String = uniffi.luciola_uniffi.buildPairingUri(name, product, port.toUShort(), addrs, fingerprint, pin)

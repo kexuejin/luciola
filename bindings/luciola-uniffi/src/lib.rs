@@ -151,10 +151,16 @@ use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
 use std::sync::Mutex;
 use tokio::sync::oneshot;
 
-/// Callback invoked from a background engine thread whenever a new peer is discovered.
+/// Callbacks from the discovery engine. Products must implement all four;
+/// `on_peer_updated` fires on profile/address changes, `on_peer_lost` when a
+/// peer exits or ages out (update your peer table), `on_error` reports
+/// fatal setup problems (e.g. discovery port occupied by another product).
 #[uniffi::export(callback_interface)]
 pub trait OnPeerDiscovered: Send + Sync {
     fn on_peer_discovered(&self, peer: DiscoveredPeer);
+    fn on_peer_updated(&self, peer: DiscoveredPeer);
+    fn on_peer_lost(&self, node_id: String);
+    fn on_error(&self, code: String, message: String);
 }
 
 /// Active P2P discovery session backed by the Luciola UDP broadcast engine.
@@ -352,6 +358,11 @@ impl DiscoverySession {
                         }
                     }
                     let Some(engine) = engine else {
+                        *bound.lock().unwrap() = false;
+                        listener.on_error(
+                            "bind_failed".into(),
+                            format!("discovery port {} occupied by another process", port),
+                        );
                         return;
                     };
                     let mut events = engine.subscribe();
@@ -374,18 +385,21 @@ impl DiscoverySession {
                                 Err(_) => break,
                             },
                         };
-                        if let PeerEvent::Found(p) = event {
-                            *last_activity.lock().unwrap() = std::time::SystemTime::now();
-                            listener.on_peer_discovered(DiscoveredPeer {
-                                node_id: p.node_id,
-                                name: p.name,
-                                ip: p.ip,
-                                udp_port: p.udp_port,
-                                tcp_port: p.tcp_port,
-                                device: p.device.map(map_device_meta),
-                                device_id: p.device_id,
-                                product: p.product,
-                            });
+                        *last_activity.lock().unwrap() = std::time::SystemTime::now();
+                        let record = |p: luciola::PeerRecord| DiscoveredPeer {
+                            node_id: p.node_id,
+                            name: p.name,
+                            ip: p.ip,
+                            udp_port: p.udp_port,
+                            tcp_port: p.tcp_port,
+                            device: p.device.map(map_device_meta),
+                            device_id: p.device_id,
+                            product: p.product,
+                        };
+                        match event {
+                            PeerEvent::Found(p) => listener.on_peer_discovered(record(p)),
+                            PeerEvent::Updated(p) => listener.on_peer_updated(record(p)),
+                            PeerEvent::Lost(id) => listener.on_peer_lost(id),
                         }
                     }
                 });
@@ -633,7 +647,7 @@ pub fn verify_message(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>)
 // Secure link session exports
 // ---------------------------------------------------------------------------
 
-use luciola::link::secure::{accept_secure, connect_secure};
+use luciola::link::secure::{accept_secure, connect_secure_raced};
 use tokio::sync::mpsc;
 
 /// Events from a [SecureSession]: state transitions and decrypted messages.
@@ -650,10 +664,15 @@ enum LinkEvent {
     Message(Vec<u8>),
 }
 
+#[derive(Clone)]
 enum LinkRole {
-    Dial(String, u16, Vec<u8>),
+    Dial(Vec<String>, u16, Vec<u8>, bool),
     Listen(u16, Option<Vec<u8>>),
 }
+
+const KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(15);
+const RECONNECT_MIN: std::time::Duration = std::time::Duration::from_secs(1);
+const RECONNECT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// One authenticated encrypted channel (see `luciola::link::secure`).
 /// Message-oriented for FFI friendliness: `send` queues an encrypted frame;
@@ -661,7 +680,7 @@ enum LinkRole {
 #[derive(uniffi::Object)]
 pub struct SecureSession {
     identity_seed: Vec<u8>,
-    outbound_tx: Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>,
+    outbound_tx: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -678,22 +697,28 @@ impl SecureSession {
         }
     }
 
-    /// Dial a peer at `address:port` with a PINNED peer public key.
+    /// Race-dial every candidate address (Happy Eyeballs) and run the
+    /// authenticated handshake on the winning socket, with a PINNED peer key.
+    ///
+    /// With `auto_reconnect` the session re-dials with exponential backoff
+    /// (1s..30s) whenever the channel drops, until `disconnect()`.
     pub fn connect(
         self: std::sync::Arc<Self>,
-        address: String,
+        addresses: Vec<String>,
         port: u16,
         pinned_peer_public_key: Vec<u8>,
+        auto_reconnect: bool,
         listener: Box<dyn SecureSessionListener>,
     ) {
         self.spawn_link(
-            LinkRole::Dial(address, port, pinned_peer_public_key),
+            LinkRole::Dial(addresses, port, pinned_peer_public_key, auto_reconnect),
             listener,
         );
     }
 
-    /// Listen for ONE incoming connection. `expected_peer`: pin the peer key,
-    /// or None to accept any identity (TOFU — check the reported fingerprint).
+    /// Accept connections in a LOOP (one at a time). `expected_peer`: pin the
+    /// peer key, or None to accept any identity (TOFU — check the reported
+    /// fingerprint). The listener re-arms after each channel closes.
     pub fn listen(
         self: std::sync::Arc<Self>,
         port: u16,
@@ -703,13 +728,14 @@ impl SecureSession {
         self.spawn_link(LinkRole::Listen(port, expected_peer), listener);
     }
 
-    /// Queue an encrypted frame. Returns false when not connected.
+    /// Queue an encrypted frame. False when not connected OR the outbound
+    /// queue is full (peer stalled) — back off and retry.
     pub fn send(&self, message: Vec<u8>) -> bool {
         if !self.connected.load(std::sync::atomic::Ordering::SeqCst) {
             return false;
         }
         match self.outbound_tx.lock().unwrap().as_ref() {
-            Some(tx) => tx.send(message).is_ok(),
+            Some(tx) => tx.try_send(message).is_ok(),
             None => false,
         }
     }
@@ -739,7 +765,8 @@ impl SecureSession {
         let listener: std::sync::Arc<dyn SecureSessionListener> = listener.into();
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
-        let (out_tx, out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        // Bounded outbound queue: a stalled peer must not grow our memory.
+        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(64);
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
@@ -758,67 +785,158 @@ impl SecureSession {
 
                 rt.block_on(async move {
                     let mut out_rx = out_rx;
+                    let mut backoff = RECONNECT_MIN;
 
-                    // Establish the channel.
-                    let stream: SecureStream = match role {
-                        LinkRole::Dial(address, port, pinned) => {
-                            match connect_secure(&address, port, &seed, &pinned).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    listener.on_state("error".into(), Some(e.to_string()));
-                                    return;
-                                }
-                            }
-                        }
-                        LinkRole::Listen(port, expected) => {
-                            let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
-                                Ok(l) => l,
-                                Err(e) => {
-                                    listener.on_state("error".into(), Some(e.to_string()));
-                                    return;
-                                }
-                            };
-                            match accept_secure(&l, &seed, expected.as_deref()).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    listener.on_state("error".into(), Some(e.to_string()));
-                                    return;
-                                }
-                            }
-                        }
-                    };
-                    let mut stream = stream;
-                    connected.store(true, std::sync::atomic::Ordering::SeqCst);
-                    listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
-
-                    // Pump both directions until shutdown or transport error.
-                    loop {
-                        let mut buf: Vec<u8> = Vec::new();
-                        tokio::select! {
-                            _ = &mut shutdown => {
-                                let _ = stream.socket_mut().shutdown().await;
-                                break;
-                            }
-                            msg = out_rx.recv() => match msg {
-                                Some(m) => {
-                                    if stream.send(&m).await.is_err() {
-                                        break;
+                    'outer: loop {
+                        // Establish the channel.
+                        let stream: SecureStream = match role.clone() {
+                            LinkRole::Dial(addresses, port, pinned, auto) => {
+                                match connect_secure_raced(addresses, port, &seed, &pinned).await {
+                                    Ok(s) => {
+                                        backoff = RECONNECT_MIN;
+                                        s
+                                    }
+                                    Err(e) => {
+                                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        if !auto {
+                                            listener.on_state("error".into(), Some(e.to_string()));
+                                            return;
+                                        }
+                                        listener.on_state("retrying".into(), Some(format!(
+                                            "{}; next attempt in {:?}",
+                                            e, backoff
+                                        )));
+                                        tokio::select! {
+                                            _ = tokio::time::sleep(backoff) => {}
+                                            _ = &mut shutdown => break 'outer,
+                                        }
+                                        backoff = std::cmp::min(backoff * 2, RECONNECT_MAX);
+                                        continue 'outer;
                                     }
                                 }
-                                None => break,
-                            },
-                            frame = stream.recv(&mut buf) => {
-                                if frame.is_err() {
-                                    break;
+                            }
+                            LinkRole::Listen(port, expected) => {
+                                let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+                                    Ok(l) => l,
+                                    Err(e) => {
+                                        listener.on_state("error".into(), Some(e.to_string()));
+                                        return;
+                                    }
+                                };
+                                match accept_secure(&l, &seed, expected.as_deref()).await {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        // A failed handshake (wrong initiator)
+                                        // must not kill the listener; keep accepting.
+                                        listener.on_state("retrying".into(), Some(e.to_string()));
+                                        continue 'outer;
+                                    }
                                 }
-                                listener.on_message(buf.clone());
+                            }
+                        };
+                        let mut stream = stream;
+                        connected.store(true, std::sync::atomic::Ordering::SeqCst);
+                        listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
+
+                        // Pump both directions; keepalive pings when idle.
+                        let mut keepalive = tokio::time::interval(KEEPALIVE_IDLE);
+                        keepalive.reset();
+                        let mut awaiting_pong = false;
+                        loop {
+                            let mut buf: Vec<u8> = Vec::new();
+                            tokio::select! {
+                                _ = &mut shutdown => {
+                                    let _ = stream.socket_mut().shutdown().await;
+                                    break 'outer;
+                                }
+                                _ = keepalive.tick() => {
+                                    if awaiting_pong {
+                                        // Peer silent for 2 intervals: dead.
+                                        break;
+                                    }
+                                    if stream.send(&[]).await.is_err() {
+                                        break;
+                                    }
+                                    awaiting_pong = true;
+                                }
+                                msg = out_rx.recv() => match msg {
+                                    Some(m) => {
+                                        keepalive.reset();
+                                        awaiting_pong = false;
+                                        if stream.send(&m).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    None => break 'outer,
+                                },
+                                frame = stream.recv(&mut buf) => {
+                                    keepalive.reset();
+                                    awaiting_pong = false;
+                                    if frame.is_err() {
+                                        break;
+                                    }
+                                    if !buf.is_empty() {
+                                        listener.on_message(buf.clone());
+                                    }
+                                }
                             }
                         }
+                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                        listener.on_state("closed".into(), None);
+                        // Loop back: dial again (if auto) / accept next (listener).
+                        if let LinkRole::Dial(_, _, _, false) = role {
+                            break 'outer;
+                        }
                     }
-                    connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                    listener.on_state("closed".into(), None);
                 });
             })
             .ok();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Pairing payload exports (luciola://pair v2)
+// ---------------------------------------------------------------------------
+
+/// Canonical pairing payload. `fingerprint` is the host's identity
+/// fingerprint — bind trust on it; `pin` is the optional 6-digit compare.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct PairingInfo {
+    pub name: String,
+    pub product: Option<String>,
+    pub port: u16,
+    pub addrs: Vec<String>,
+    pub fingerprint: Option<String>,
+    pub pin: Option<String>,
+}
+
+#[uniffi::export]
+pub fn build_pairing_uri(
+    name: String,
+    product: Option<String>,
+    port: u16,
+    addrs: Vec<String>,
+    fingerprint: Option<String>,
+    pin: Option<String>,
+) -> String {
+    luciola::pairing::build_pairing_uri(
+        &name,
+        product.as_deref(),
+        port,
+        &addrs,
+        fingerprint.as_deref(),
+        pin.as_deref(),
+    )
+}
+
+#[uniffi::export]
+pub fn parse_pairing_uri(uri: String) -> Option<PairingInfo> {
+    luciola::pairing::parse_pairing_uri(&uri).map(|p| PairingInfo {
+        name: p.name,
+        product: p.product,
+        port: p.port,
+        addrs: p.addrs,
+        fingerprint: p.fingerprint,
+        pin: p.pin,
+    })
 }

@@ -28,11 +28,22 @@ final class DiscoveryModel: ObservableObject {
     func start(sessionName: String, port: UInt16 = 17878, manualPeers: [ManualPeer] = []) {
         do {
             let s = try DiscoverySession(name: sessionName, port: port, manualPeers: manualPeers, product: "luciola-radar-demo")
-            s.start(listener: PeerRelay { [weak self] peer in
-                Task { @MainActor in
-                    self?.onPeer(peer)
+            s.start(listener: PeerRelay(
+                onPeer: { [weak self] peer in
+                    Task { @MainActor in self?.onPeer(peer) }
+                },
+                onLost: { [weak self] nodeId in
+                    Task { @MainActor in
+                        self?.peers.removeAll { $0.nodeId == nodeId }
+                        self?.lastEvent = "peer lost: \(nodeId)"
+                    }
+                },
+                onError: { [weak self] code, message in
+                    Task { @MainActor in
+                        self?.lastEvent = "engine error [\(code)]: \(message)"
+                    }
                 }
-            })
+            ))
             session = s
             engineOn = true
             // The engine binds asynchronously (with retry); reflect the real
@@ -111,9 +122,22 @@ final class DiscoveryModel: ObservableObject {
     }
 }
 
-/// Bridges the uniffi callback interface to a closure.
+/// Bridges the uniffi callback interface to closures.
 final class PeerRelay: OnPeerDiscovered {
     private let onPeer: (DiscoveredPeer) -> Void
-    init(onPeer: @escaping (DiscoveredPeer) -> Void) { self.onPeer = onPeer }
+    private let onLost: (String) -> Void
+    private let onError: (String, String) -> Void
+    init(
+        onPeer: @escaping (DiscoveredPeer) -> Void,
+        onLost: @escaping (String) -> Void = { _ in },
+        onError: @escaping (String, String) -> Void = { _, _ in }
+    ) {
+        self.onPeer = onPeer
+        self.onLost = onLost
+        self.onError = onError
+    }
     func onPeerDiscovered(peer: DiscoveredPeer) { onPeer(peer) }
+    func onPeerUpdated(peer: DiscoveredPeer) { onPeer(peer) }
+    func onPeerLost(nodeId: String) { onLost(nodeId) }
+    func onError(code: String, message: String) { onError(code, message) }
 }

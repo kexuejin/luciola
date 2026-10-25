@@ -211,3 +211,40 @@ mod tests {
         );
     }
 }
+
+/// Race TCP dials like [race_connect] but hand back the WINNING socket
+/// (unopened handshake) so callers can continue on the same connection
+/// instead of re-dialing the raced address (no TOCTOU gap).
+pub async fn race_stream(
+    addresses: Vec<String>,
+    port: u16,
+    config: RaceConfig,
+) -> Option<(tokio::net::TcpStream, String, f64)> {
+    let mut seen = std::collections::HashSet::new();
+    let channels: Vec<String> = addresses
+        .into_iter()
+        .filter(|a| seen.insert(a.clone()))
+        .collect();
+
+    let mut set = tokio::task::JoinSet::new();
+    for (i, address) in channels.iter().enumerate() {
+        let address = address.clone();
+        let timeout = config.attempt_timeout;
+        let stagger = config.stagger;
+        set.spawn(async move {
+            tokio::time::sleep(stagger * i as u32).await;
+            let start = std::time::Instant::now();
+            match tokio::time::timeout(timeout, tokio::net::TcpStream::connect((address.as_str(), port))).await {
+                Ok(Ok(s)) => Some((s, address, start.elapsed().as_secs_f64() * 1000.0)),
+                _ => None,
+            }
+        });
+    }
+    while let Some(joined) = set.join_next().await {
+        if let Ok(Some(winner)) = joined {
+            set.abort_all();
+            return Some(winner);
+        }
+    }
+    None
+}

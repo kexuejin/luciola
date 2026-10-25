@@ -814,9 +814,13 @@ public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) ->
 public protocol SecureSessionProtocol : AnyObject {
     
     /**
-     * Dial a peer at `address:port` with a PINNED peer public key.
+     * Race-dial every candidate address (Happy Eyeballs) and run the
+     * authenticated handshake on the winning socket, with a PINNED peer key.
+     *
+     * With `auto_reconnect` the session re-dials with exponential backoff
+     * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-    func connect(address: String, port: UInt16, pinnedPeerPublicKey: Data, listener: SecureSessionListener) 
+    func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener) 
     
     /**
      * Close the channel; the peer sees the socket close. (Named
@@ -828,13 +832,15 @@ public protocol SecureSessionProtocol : AnyObject {
     func isConnected()  -> Bool
     
     /**
-     * Listen for ONE incoming connection. `expected_peer`: pin the peer key,
-     * or None to accept any identity (TOFU — check the reported fingerprint).
+     * Accept connections in a LOOP (one at a time). `expected_peer`: pin the
+     * peer key, or None to accept any identity (TOFU — check the reported
+     * fingerprint). The listener re-arms after each channel closes.
      */
     func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener) 
     
     /**
-     * Queue an encrypted frame. Returns false when not connected.
+     * Queue an encrypted frame. False when not connected OR the outbound
+     * queue is full (peer stalled) — back off and retry.
      */
     func send(message: Data)  -> Bool
     
@@ -904,13 +910,18 @@ public convenience init(identitySeed: Data) {
 
     
     /**
-     * Dial a peer at `address:port` with a PINNED peer public key.
+     * Race-dial every candidate address (Happy Eyeballs) and run the
+     * authenticated handshake on the winning socket, with a PINNED peer key.
+     *
+     * With `auto_reconnect` the session re-dials with exponential backoff
+     * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-open func connect(address: String, port: UInt16, pinnedPeerPublicKey: Data, listener: SecureSessionListener) {try! rustCall() {
+open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener) {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_connect(self.uniffiClonePointer(),
-        FfiConverterString.lower(address),
+        FfiConverterSequenceString.lower(addresses),
         FfiConverterUInt16.lower(port),
         FfiConverterData.lower(pinnedPeerPublicKey),
+        FfiConverterBool.lower(autoReconnect),
         FfiConverterCallbackInterfaceSecureSessionListener.lower(listener),$0
     )
 }
@@ -935,8 +946,9 @@ open func isConnected() -> Bool {
 }
     
     /**
-     * Listen for ONE incoming connection. `expected_peer`: pin the peer key,
-     * or None to accept any identity (TOFU — check the reported fingerprint).
+     * Accept connections in a LOOP (one at a time). `expected_peer`: pin the
+     * peer key, or None to accept any identity (TOFU — check the reported
+     * fingerprint). The listener re-arms after each channel closes.
      */
 open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener) {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_listen(self.uniffiClonePointer(),
@@ -948,7 +960,8 @@ open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListe
 }
     
     /**
-     * Queue an encrypted frame. Returns false when not connected.
+     * Queue an encrypted frame. False when not connected OR the outbound
+     * queue is full (peer stalled) — back off and retry.
      */
 open func send(message: Data) -> Bool {
     return try!  FfiConverterBool.lift(try! rustCall() {
@@ -1675,6 +1688,108 @@ public func FfiConverterTypeManualPeer_lower(_ value: ManualPeer) -> RustBuffer 
 
 
 /**
+ * Canonical pairing payload. `fingerprint` is the host's identity
+ * fingerprint — bind trust on it; `pin` is the optional 6-digit compare.
+ */
+public struct PairingInfo {
+    public var name: String
+    public var product: String?
+    public var port: UInt16
+    public var addrs: [String]
+    public var fingerprint: String?
+    public var pin: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, pin: String?) {
+        self.name = name
+        self.product = product
+        self.port = port
+        self.addrs = addrs
+        self.fingerprint = fingerprint
+        self.pin = pin
+    }
+}
+
+
+
+extension PairingInfo: Equatable, Hashable {
+    public static func ==(lhs: PairingInfo, rhs: PairingInfo) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.product != rhs.product {
+            return false
+        }
+        if lhs.port != rhs.port {
+            return false
+        }
+        if lhs.addrs != rhs.addrs {
+            return false
+        }
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        if lhs.pin != rhs.pin {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(product)
+        hasher.combine(port)
+        hasher.combine(addrs)
+        hasher.combine(fingerprint)
+        hasher.combine(pin)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePairingInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PairingInfo {
+        return
+            try PairingInfo(
+                name: FfiConverterString.read(from: &buf), 
+                product: FfiConverterOptionString.read(from: &buf), 
+                port: FfiConverterUInt16.read(from: &buf), 
+                addrs: FfiConverterSequenceString.read(from: &buf), 
+                fingerprint: FfiConverterOptionString.read(from: &buf), 
+                pin: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PairingInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.product, into: &buf)
+        FfiConverterUInt16.write(value.port, into: &buf)
+        FfiConverterSequenceString.write(value.addrs, into: &buf)
+        FfiConverterOptionString.write(value.fingerprint, into: &buf)
+        FfiConverterOptionString.write(value.pin, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePairingInfo_lift(_ buf: RustBuffer) throws -> PairingInfo {
+    return try FfiConverterTypePairingInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePairingInfo_lower(_ value: PairingInfo) -> RustBuffer {
+    return FfiConverterTypePairingInfo.lower(value)
+}
+
+
+/**
  * Overall race outcome: winning address plus per-channel detail.
  */
 public struct RaceOutcome {
@@ -2101,11 +2216,20 @@ extension TrustLevel: Equatable, Hashable {}
 
 
 /**
- * Callback invoked from a background engine thread whenever a new peer is discovered.
+ * Callbacks from the discovery engine. Products must implement all four;
+ * `on_peer_updated` fires on profile/address changes, `on_peer_lost` when a
+ * peer exits or ages out (update your peer table), `on_error` reports
+ * fatal setup problems (e.g. discovery port occupied by another product).
  */
 public protocol OnPeerDiscovered : AnyObject {
     
     func onPeerDiscovered(peer: DiscoveredPeer) 
+    
+    func onPeerUpdated(peer: DiscoveredPeer) 
+    
+    func onPeerLost(nodeId: String) 
+    
+    func onError(code: String, message: String) 
     
 }
 
@@ -2136,6 +2260,80 @@ fileprivate struct UniffiCallbackInterfaceOnPeerDiscovered {
                 }
                 return uniffiObj.onPeerDiscovered(
                      peer: try FfiConverterTypeDiscoveredPeer.lift(peer)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onPeerUpdated: { (
+            uniffiHandle: UInt64,
+            peer: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceOnPeerDiscovered.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onPeerUpdated(
+                     peer: try FfiConverterTypeDiscoveredPeer.lift(peer)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onPeerLost: { (
+            uniffiHandle: UInt64,
+            nodeId: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceOnPeerDiscovered.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onPeerLost(
+                     nodeId: try FfiConverterString.lift(nodeId)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onError: { (
+            uniffiHandle: UInt64,
+            code: RustBuffer,
+            message: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceOnPeerDiscovered.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onError(
+                     code: try FfiConverterString.lift(code),
+                     message: try FfiConverterString.lift(message)
                 )
             }
 
@@ -2462,6 +2660,30 @@ fileprivate struct FfiConverterOptionTypeDeviceMeta: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypePairingInfo: FfiConverterRustBuffer {
+    typealias SwiftType = PairingInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePairingInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePairingInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeTrustLevel: FfiConverterRustBuffer {
     typealias SwiftType = TrustLevel?
 
@@ -2615,6 +2837,18 @@ public func advertisedAddresses() -> [String] {
     )
 })
 }
+public func buildPairingUri(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, pin: String?) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_build_pairing_uri(
+        FfiConverterString.lower(name),
+        FfiConverterOptionString.lower(product),
+        FfiConverterUInt16.lower(port),
+        FfiConverterSequenceString.lower(addrs),
+        FfiConverterOptionString.lower(fingerprint),
+        FfiConverterOptionString.lower(pin),$0
+    )
+})
+}
 /**
  * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
  */
@@ -2736,6 +2970,13 @@ public func localCandidateAddresses() -> [String] {
     )
 })
 }
+public func parsePairingUri(uri: String) -> PairingInfo? {
+    return try!  FfiConverterOptionTypePairingInfo.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_parse_pairing_uri(
+        FfiConverterString.lower(uri),$0
+    )
+})
+}
 /**
  * Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
  * connect wins, the rest are cancelled. Blocking; call off the UI thread.
@@ -2825,6 +3066,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 6080) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2859,6 +3103,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 57854) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_race_connect() != 26451) {
@@ -2900,7 +3147,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 37541) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 20557) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_disconnect() != 52412) {
@@ -2909,10 +3156,10 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 49295) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 14622) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 9741) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {
@@ -2940,6 +3187,15 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated() != 47301) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost() != 28239) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error() != 29273) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161) {

@@ -124,14 +124,27 @@ impl MsgType {
     }
 }
 
+/// Current wire protocol version.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// Wire envelope carrying discovery datagrams.
+///
+/// `v` is optional on the wire for backward compatibility: frames from
+/// pre-versioning nodes decode as [PROTOCOL_VERSION] (old serde structs also
+/// ignore the unknown field, so both directions interop).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
+    #[serde(default = "current_version")]
+    pub v: u32,
     pub id: String,
     pub kind: String,
     pub from: String,
     pub ts: u64,
     pub payload: serde_json::Value,
+}
+
+fn current_version() -> u32 {
+    PROTOCOL_VERSION
 }
 
 impl Envelope {
@@ -142,6 +155,7 @@ impl Envelope {
             .as_millis() as u64;
         let id = format!("{}:{}", from, ts);
         Self {
+            v: PROTOCOL_VERSION,
             id,
             kind: kind.as_str().to_string(),
             from,
@@ -218,6 +232,27 @@ impl Codec {
 
     pub fn make_exit(node_id: &str) -> Envelope {
         Envelope::new(MsgType::Exit, node_id.to_string(), serde_json::json!({}))
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_frame_without_version_decodes_as_v1() {
+        let legacy = r#"{"id":"a:1","kind":"presence","from":"a","ts":1,"payload":{}}"#;
+        let env = Codec::decode(legacy.as_bytes()).expect("legacy decodes");
+        assert_eq!(env.v, PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn versioned_frame_roundtrips() {
+        let env = Envelope::new(MsgType::Entry, "n".into(), serde_json::json!({}));
+        let bytes = Codec::encode(&env).unwrap();
+        let back = Codec::decode(&bytes).unwrap();
+        assert_eq!(back.v, PROTOCOL_VERSION);
+        assert_eq!(back, env);
     }
 }
 

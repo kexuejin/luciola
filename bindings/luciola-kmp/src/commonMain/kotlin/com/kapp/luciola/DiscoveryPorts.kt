@@ -18,6 +18,15 @@ data class PeerUiModel(
     val product: String? = null,
 )
 
+/** Discovery lifecycle events delivered to [DiscoveryController]. */
+sealed interface DiscoveryEventUi {
+    data class Found(val peer: PeerUiModel) : DiscoveryEventUi
+    data class Updated(val peer: PeerUiModel) : DiscoveryEventUi
+    data class Lost(val nodeId: String) : DiscoveryEventUi
+    /** Fatal setup problems, e.g. discovery port occupied by another product. */
+    data class Error(val code: String, val message: String) : DiscoveryEventUi
+}
+
 /**
  * Port to the platform engine binding. Implementations:
  * - Android/JVM: the uniffi-generated Kotlin bindings (`uniffi.luciola_uniffi`).
@@ -29,8 +38,8 @@ interface DiscoveryEnginePort {
      *  unicast reconciliation) must present the same id and name. */
     fun nodeId(): String?
 
-    /** Begin discovery. `onPeer` may be invoked from any thread. */
-    fun start(onPeer: (PeerUiModel) -> Unit)
+    /** Begin discovery. `onEvent` may be invoked from any thread. */
+    fun start(onEvent: (DiscoveryEventUi) -> Unit)
 
     /** Rebuild the engine in place (same listener + identity). */
     fun restart()
@@ -42,6 +51,18 @@ interface DiscoveryEnginePort {
      *  networked device mean the engine stalled. */
     fun secondsSinceIdle(): Double
 }
+
+/** Canonical pairing payload (`luciola://pair` v2), common UI model. */
+data class PairingUi(
+    val name: String,
+    val product: String?,
+    val port: Int,
+    val addrs: List<String>,
+    /** Host identity fingerprint (`sha256:<hex>`) — bind trust on it. */
+    val fingerprint: String?,
+    /** Optional 6-digit on-screen comparison pin. */
+    val pin: String?,
+)
 
 /** Port to platform network-state observation. */
 interface NetworkMonitorPort {

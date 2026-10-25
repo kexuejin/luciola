@@ -108,9 +108,16 @@ export class DiscoverySession {
    */
   nodeId(): string | null;
   /**
-   * Start discovery session and listen for discovered peers via callback.
+   * Start discovery and consume lifecycle events.
+   * `found`/`updated` carry `peer`; `lost` carries `nodeId` (remove it from
+   * your UI); `error` carries `message` (e.g. bind_failed: port occupied).
    */
-  start(callback: (peer: JsPeerRecord) => void): void;
+  start(callback: (event: {
+    type: 'found' | 'updated' | 'lost' | 'error';
+    peer?: JsPeerRecord;
+    nodeId?: string;
+    message?: string;
+  }) => void): void;
   /**
    * Stop discovery session and broadcast exit to neighbors.
    */
@@ -201,14 +208,16 @@ export function verifyMessage(publicKey: Buffer, message: Buffer, signature: Buf
 export class SecureChannel {
   constructor(identitySeed: Buffer);
   /**
-   * Dial with a PINNED peer public key (deny-by-default).
-   * Events: { state: 'connected' | 'closed' | 'error', detail?: string } and
-   * { message: Buffer } for decrypted frames.
+   * Race-dial every candidate address (Happy Eyeballs), handshake on the
+   * winning socket with a PINNED peer public key. With autoReconnect the
+   * channel re-dials with 1s..30s backoff after drops until close().
+   * States: 'connected' | 'retrying' | 'closed' | 'error'.
    */
   connect(
-    address: string,
+    addresses: string[],
     port: number,
     pinnedPeerPublicKey: Buffer,
+    autoReconnect: boolean,
     onEvent: (event: { state?: string; detail?: string; message?: Buffer }) => void,
   ): void;
   /**
@@ -220,8 +229,36 @@ export class SecureChannel {
     expectedPeerPublicKey: Buffer | null | undefined,
     onEvent: (event: { state?: string; detail?: string; message?: Buffer }) => void,
   ): void;
-  /** Queue an encrypted frame; returns false when not connected. */
+  /**
+   * Queue an encrypted frame. False when not connected OR the bounded queue
+   * (64) is full because the peer stalled — back off and retry.
+   */
   send(message: Buffer): boolean;
   isConnected(): boolean;
   close(): void;
 }
+
+/** Canonical pairing payload (`luciola://pair` v2). */
+export interface JsPairingInfo {
+  name: string;
+  product?: string;
+  port: number;
+  addrs: string[];
+  /** Host identity fingerprint (`sha256:<hex>`) — bind trust on it. */
+  fingerprint?: string;
+  /** Optional 6-digit on-screen comparison pin. */
+  pin?: string;
+}
+
+/** Build the canonical pairing URI (URL-encoded). */
+export function buildPairingUri(
+  name: string,
+  product?: string | null,
+  port: number,
+  addrs: string[],
+  fingerprint?: string | null,
+  pin?: string | null,
+): string;
+
+/** Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`). */
+export function parsePairingUri(uri: string): JsPairingInfo | null;

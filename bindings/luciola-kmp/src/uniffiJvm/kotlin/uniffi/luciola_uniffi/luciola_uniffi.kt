@@ -657,24 +657,42 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 internal interface UniffiCallbackInterfaceOnPeerDiscoveredMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`peer`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+internal interface UniffiCallbackInterfaceOnPeerDiscoveredMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`peer`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceOnPeerDiscoveredMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`nodeId`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceOnPeerDiscoveredMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`code`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfaceSecureSessionListenerMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`detail`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
 internal interface UniffiCallbackInterfaceSecureSessionListenerMethod1 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
-@Structure.FieldOrder("onPeerDiscovered", "uniffiFree")
+@Structure.FieldOrder("onPeerDiscovered", "onPeerUpdated", "onPeerLost", "onError", "uniffiFree")
 internal open class UniffiVTableCallbackInterfaceOnPeerDiscovered(
     @JvmField internal var `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0? = null,
+    @JvmField internal var `onPeerUpdated`: UniffiCallbackInterfaceOnPeerDiscoveredMethod1? = null,
+    @JvmField internal var `onPeerLost`: UniffiCallbackInterfaceOnPeerDiscoveredMethod2? = null,
+    @JvmField internal var `onError`: UniffiCallbackInterfaceOnPeerDiscoveredMethod3? = null,
     @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
 ) : Structure() {
     class UniffiByValue(
         `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0? = null,
+        `onPeerUpdated`: UniffiCallbackInterfaceOnPeerDiscoveredMethod1? = null,
+        `onPeerLost`: UniffiCallbackInterfaceOnPeerDiscoveredMethod2? = null,
+        `onError`: UniffiCallbackInterfaceOnPeerDiscoveredMethod3? = null,
         `uniffiFree`: UniffiCallbackInterfaceFree? = null,
-    ): UniffiVTableCallbackInterfaceOnPeerDiscovered(`onPeerDiscovered`,`uniffiFree`,), Structure.ByValue
+    ): UniffiVTableCallbackInterfaceOnPeerDiscovered(`onPeerDiscovered`,`onPeerUpdated`,`onPeerLost`,`onError`,`uniffiFree`,), Structure.ByValue
 
    internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceOnPeerDiscovered) {
         `onPeerDiscovered` = other.`onPeerDiscovered`
+        `onPeerUpdated` = other.`onPeerUpdated`
+        `onPeerLost` = other.`onPeerLost`
+        `onError` = other.`onError`
         `uniffiFree` = other.`uniffiFree`
     }
 
@@ -698,6 +716,13 @@ internal open class UniffiVTableCallbackInterfaceSecureSessionListener(
     }
 
 }
+
+
+
+
+
+
+
 
 
 
@@ -892,7 +917,7 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_constructor_securesession_new(`identitySeed`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
-    fun uniffi_luciola_uniffi_fn_method_securesession_connect(`ptr`: Pointer,`address`: RustBuffer.ByValue,`port`: Short,`pinnedPeerPublicKey`: RustBuffer.ByValue,`listener`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_luciola_uniffi_fn_method_securesession_connect(`ptr`: Pointer,`addresses`: RustBuffer.ByValue,`port`: Short,`pinnedPeerPublicKey`: RustBuffer.ByValue,`autoReconnect`: Byte,`listener`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_luciola_uniffi_fn_method_securesession_disconnect(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -924,6 +949,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_fn_func_advertised_addresses(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_build_pairing_uri(`name`: RustBuffer.ByValue,`product`: RustBuffer.ByValue,`port`: Short,`addrs`: RustBuffer.ByValue,`fingerprint`: RustBuffer.ByValue,`pin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_comparison_pin(`localPk`: RustBuffer.ByValue,`remotePk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_default_race_candidates(`addresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -947,6 +974,8 @@ internal interface UniffiLib : Library {
     fun uniffi_luciola_uniffi_fn_func_is_virtual_nic(`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     fun uniffi_luciola_uniffi_fn_func_local_candidate_addresses(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_luciola_uniffi_fn_func_parse_pairing_uri(`uri`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_luciola_uniffi_fn_func_race_connect(`addresses`: RustBuffer.ByValue,`port`: Short,`attemptTimeoutMs`: RustBuffer.ByValue,`staggerMs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1074,6 +1103,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_luciola_uniffi_checksum_func_advertised_addresses(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_func_build_pairing_uri(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_func_comparison_pin(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
@@ -1097,6 +1128,8 @@ internal interface UniffiLib : Library {
     fun uniffi_luciola_uniffi_checksum_func_is_virtual_nic(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_local_candidate_addresses(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_func_parse_pairing_uri(
     ): Short
     fun uniffi_luciola_uniffi_checksum_func_race_connect(
     ): Short
@@ -1152,6 +1185,12 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered(
     ): Short
+    fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost(
+    ): Short
+    fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error(
+    ): Short
     fun uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state(
     ): Short
     fun uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message(
@@ -1174,6 +1213,9 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 6080.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657.toShort()) {
@@ -1210,6 +1252,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 57854.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_func_race_connect() != 26451.toShort()) {
@@ -1251,7 +1296,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_connect() != 37541.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_connect() != 20557.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_securesession_disconnect() != 52412.toShort()) {
@@ -1260,10 +1305,10 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_listen() != 49295.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_listen() != 14622.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_send() != 9741.toShort()) {
+    if (lib.uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413.toShort()) {
@@ -1291,6 +1336,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated() != 47301.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost() != 28239.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error() != 29273.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161.toShort()) {
@@ -2099,9 +2153,13 @@ public object FfiConverterTypeDiscoverySession: FfiConverter<DiscoverySession, P
 public interface SecureSessionInterface {
     
     /**
-     * Dial a peer at `address:port` with a PINNED peer public key.
+     * Race-dial every candidate address (Happy Eyeballs) and run the
+     * authenticated handshake on the winning socket, with a PINNED peer key.
+     *
+     * With `auto_reconnect` the session re-dials with exponential backoff
+     * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-    fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `listener`: SecureSessionListener)
+    fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
     
     /**
      * Close the channel; the peer sees the socket close. (Named
@@ -2113,13 +2171,15 @@ public interface SecureSessionInterface {
     fun `isConnected`(): kotlin.Boolean
     
     /**
-     * Listen for ONE incoming connection. `expected_peer`: pin the peer key,
-     * or None to accept any identity (TOFU — check the reported fingerprint).
+     * Accept connections in a LOOP (one at a time). `expected_peer`: pin the
+     * peer key, or None to accept any identity (TOFU — check the reported
+     * fingerprint). The listener re-arms after each channel closes.
      */
     fun `listen`(`port`: kotlin.UShort, `expectedPeer`: kotlin.ByteArray?, `listener`: SecureSessionListener)
     
     /**
-     * Queue an encrypted frame. Returns false when not connected.
+     * Queue an encrypted frame. False when not connected OR the outbound
+     * queue is full (peer stalled) — back off and retry.
      */
     fun `send`(`message`: kotlin.ByteArray): kotlin.Boolean
     
@@ -2221,13 +2281,17 @@ open class SecureSession: Disposable, AutoCloseable, SecureSessionInterface {
 
     
     /**
-     * Dial a peer at `address:port` with a PINNED peer public key.
-     */override fun `connect`(`address`: kotlin.String, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `listener`: SecureSessionListener)
+     * Race-dial every candidate address (Happy Eyeballs) and run the
+     * authenticated handshake on the winning socket, with a PINNED peer key.
+     *
+     * With `auto_reconnect` the session re-dials with exponential backoff
+     * (1s..30s) whenever the channel drops, until `disconnect()`.
+     */override fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
         = 
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_method_securesession_connect(
-        it, FfiConverterString.lower(`address`),FfiConverterUShort.lower(`port`),FfiConverterByteArray.lower(`pinnedPeerPublicKey`),FfiConverterTypeSecureSessionListener.lower(`listener`),_status)
+        it, FfiConverterSequenceString.lower(`addresses`),FfiConverterUShort.lower(`port`),FfiConverterByteArray.lower(`pinnedPeerPublicKey`),FfiConverterBoolean.lower(`autoReconnect`),FfiConverterTypeSecureSessionListener.lower(`listener`),_status)
 }
     }
     
@@ -2263,8 +2327,9 @@ open class SecureSession: Disposable, AutoCloseable, SecureSessionInterface {
 
     
     /**
-     * Listen for ONE incoming connection. `expected_peer`: pin the peer key,
-     * or None to accept any identity (TOFU — check the reported fingerprint).
+     * Accept connections in a LOOP (one at a time). `expected_peer`: pin the
+     * peer key, or None to accept any identity (TOFU — check the reported
+     * fingerprint). The listener re-arms after each channel closes.
      */override fun `listen`(`port`: kotlin.UShort, `expectedPeer`: kotlin.ByteArray?, `listener`: SecureSessionListener)
         = 
     callWithPointer {
@@ -2278,7 +2343,8 @@ open class SecureSession: Disposable, AutoCloseable, SecureSessionInterface {
 
     
     /**
-     * Queue an encrypted frame. Returns false when not connected.
+     * Queue an encrypted frame. False when not connected OR the outbound
+     * queue is full (peer stalled) — back off and retry.
      */override fun `send`(`message`: kotlin.ByteArray): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     callWithPointer {
@@ -2894,6 +2960,58 @@ public object FfiConverterTypeManualPeer: FfiConverterRustBuffer<ManualPeer> {
 
 
 /**
+ * Canonical pairing payload. `fingerprint` is the host's identity
+ * fingerprint — bind trust on it; `pin` is the optional 6-digit compare.
+ */
+data class PairingInfo (
+    var `name`: kotlin.String, 
+    var `product`: kotlin.String?, 
+    var `port`: kotlin.UShort, 
+    var `addrs`: List<kotlin.String>, 
+    var `fingerprint`: kotlin.String?, 
+    var `pin`: kotlin.String?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
+    override fun read(buf: ByteBuffer): PairingInfo {
+        return PairingInfo(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterUShort.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PairingInfo) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`product`) +
+            FfiConverterUShort.allocationSize(value.`port`) +
+            FfiConverterSequenceString.allocationSize(value.`addrs`) +
+            FfiConverterOptionalString.allocationSize(value.`fingerprint`) +
+            FfiConverterOptionalString.allocationSize(value.`pin`)
+    )
+
+    override fun write(value: PairingInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`product`, buf)
+            FfiConverterUShort.write(value.`port`, buf)
+            FfiConverterSequenceString.write(value.`addrs`, buf)
+            FfiConverterOptionalString.write(value.`fingerprint`, buf)
+            FfiConverterOptionalString.write(value.`pin`, buf)
+    }
+}
+
+
+
+/**
  * Overall race outcome: winning address plus per-channel detail.
  */
 data class RaceOutcome (
@@ -3094,11 +3212,20 @@ public object FfiConverterTypeTrustLevel: FfiConverterRustBuffer<TrustLevel> {
 
 
 /**
- * Callback invoked from a background engine thread whenever a new peer is discovered.
+ * Callbacks from the discovery engine. Products must implement all four;
+ * `on_peer_updated` fires on profile/address changes, `on_peer_lost` when a
+ * peer exits or ages out (update your peer table), `on_error` reports
+ * fatal setup problems (e.g. discovery port occupied by another product).
  */
 public interface OnPeerDiscovered {
     
     fun `onPeerDiscovered`(`peer`: DiscoveredPeer)
+    
+    fun `onPeerUpdated`(`peer`: DiscoveredPeer)
+    
+    fun `onPeerLost`(`nodeId`: kotlin.String)
+    
+    fun `onError`(`code`: kotlin.String, `message`: kotlin.String)
     
     companion object
 }
@@ -3150,6 +3277,43 @@ internal object uniffiCallbackInterfaceOnPeerDiscovered {
             uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
         }
     }
+    internal object `onPeerUpdated`: UniffiCallbackInterfaceOnPeerDiscoveredMethod1 {
+        override fun callback(`uniffiHandle`: Long,`peer`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeOnPeerDiscovered.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPeerUpdated`(
+                    FfiConverterTypeDiscoveredPeer.lift(`peer`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onPeerLost`: UniffiCallbackInterfaceOnPeerDiscoveredMethod2 {
+        override fun callback(`uniffiHandle`: Long,`nodeId`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeOnPeerDiscovered.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPeerLost`(
+                    FfiConverterString.lift(`nodeId`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onError`: UniffiCallbackInterfaceOnPeerDiscoveredMethod3 {
+        override fun callback(`uniffiHandle`: Long,`code`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeOnPeerDiscovered.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onError`(
+                    FfiConverterString.lift(`code`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
 
     internal object uniffiFree: UniffiCallbackInterfaceFree {
         override fun callback(handle: Long) {
@@ -3159,6 +3323,9 @@ internal object uniffiCallbackInterfaceOnPeerDiscovered {
 
     internal var vtable = UniffiVTableCallbackInterfaceOnPeerDiscovered.UniffiByValue(
         `onPeerDiscovered`,
+        `onPeerUpdated`,
+        `onPeerLost`,
+        `onError`,
         uniffiFree,
     )
 
@@ -3418,6 +3585,38 @@ public object FfiConverterOptionalTypeDeviceMeta: FfiConverterRustBuffer<DeviceM
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypePairingInfo: FfiConverterRustBuffer<PairingInfo?> {
+    override fun read(buf: ByteBuffer): PairingInfo? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypePairingInfo.read(buf)
+    }
+
+    override fun allocationSize(value: PairingInfo?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypePairingInfo.allocationSize(value)
+        }
+    }
+
+    override fun write(value: PairingInfo?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypePairingInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeTrustLevel: FfiConverterRustBuffer<TrustLevel?> {
     override fun read(buf: ByteBuffer): TrustLevel? {
         if (buf.get().toInt() == 0) {
@@ -3598,6 +3797,15 @@ public object FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBuffer<
     )
     }
     
+ fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `pin`: kotlin.String?): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_build_pairing_uri(
+        FfiConverterString.lower(`name`),FfiConverterOptionalString.lower(`product`),FfiConverterUShort.lower(`port`),FfiConverterSequenceString.lower(`addrs`),FfiConverterOptionalString.lower(`fingerprint`),FfiConverterOptionalString.lower(`pin`),_status)
+}
+    )
+    }
+    
 
         /**
          * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
@@ -3740,6 +3948,15 @@ public object FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBuffer<
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_local_candidate_addresses(
         _status)
+}
+    )
+    }
+    
+ fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo? {
+            return FfiConverterOptionalTypePairingInfo.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_luciola_uniffi_fn_func_parse_pairing_uri(
+        FfiConverterString.lower(`uri`),_status)
 }
     )
     }

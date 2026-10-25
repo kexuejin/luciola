@@ -16,6 +16,19 @@ const SWEEP_INTERVAL_MS = 25_000;
 // ---------------------------------------------------------------------------
 // Local identity (real, from @luciola/core native engine)
 // ---------------------------------------------------------------------------
+// Persistent device identity (for the pairing fingerprint in the QR).
+const os = require('os');
+const pathMod = require('path');
+const identityFile = pathMod.join(os.tmpdir(), 'luciola-web-demo-identity.json');
+let identity;
+try {
+  const saved = JSON.parse(fs.readFileSync(identityFile, 'utf8'));
+  identity = luciola.identityFromSeed(Buffer.from(saved.seed, 'hex'));
+} catch (_e) {
+  identity = luciola.generateDeviceIdentity();
+  fs.writeFileSync(identityFile, JSON.stringify({ seed: identity.seed.toString('hex') }));
+}
+
 const localDevice = luciola.getDeviceMeta();
 const lanIp = luciola.selectLanIp();
 const candidates = luciola.localCandidateAddresses();
@@ -92,10 +105,23 @@ setInterval(() => {
 // Luciola engine session (instant Found events on the official UDP port)
 // ---------------------------------------------------------------------------
 const session = new luciola.DiscoverySession(sessionName, DISCOVERY_PORT, null, 'web-radar-demo');
-session.start((peer) => {
-  if (peer.nodeId === selfNodeId) return; // our own sweeper envelopes echoed back
-  console.log(`👋 [Engine Found] ${peer.name} (${peer.nodeId}) @ ${peer.ip}:${peer.udpPort}`);
-  upsertPeer(peer, 'engine');
+session.start((event) => {
+  if (event.type === 'found' || event.type === 'updated') {
+    const peer = event.peer;
+    if (peer.nodeId === selfNodeId) return; // our own sweeper envelopes echoed back
+    if (event.type === 'found') {
+      console.log(`👋 [Engine Found] ${peer.name} (${peer.nodeId}) @ ${peer.ip}:${peer.udpPort}`);
+    }
+    upsertPeer(peer, 'engine');
+  } else if (event.type === 'lost') {
+    if (peers.delete(event.nodeId)) {
+      broadcastSSE('peer_expired', { nodeId: event.nodeId });
+      console.log(`💨 [Engine Lost] ${event.nodeId}`);
+    }
+  } else if (event.type === 'error') {
+    console.error(`🛑 [Engine Error] ${event.message}`);
+    broadcastSSE('engine_error', { message: event.message });
+  }
 });
 const selfNodeId = session.nodeId() || `web_${Math.random().toString(16).slice(2, 10)}`;
 
@@ -207,6 +233,7 @@ function sweepProfile() {
 function craftEnvelope(kind, payload) {
   const ts = Date.now();
   return Buffer.from(JSON.stringify({
+    v: 1,
     id: `${selfNodeId}:${ts}:${Math.random().toString(16).slice(2, 6)}`,
     kind,
     from: selfNodeId,
@@ -407,6 +434,8 @@ const server = http.createServer(async (req, res) => {
       subnetBroadcasts,
       advertised,
       pairingUri,
+      pairingFingerprint: identity.fingerprint,
+      pairingPin: identity.shortPin,
       httpUrl,
       discoveryPort: DISCOVERY_PORT,
       selfNodeId,

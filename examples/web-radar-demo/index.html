@@ -139,6 +139,7 @@
               <div class="text-[11px] text-neutral-400 leading-snug" id="qrSubnetDesc">
                 包含多网段候选地址，彻底解决跨网段死锁。
               </div>
+              <div class="text-[11px] text-amber-400 font-mono hidden" id="qrPinRow">配对核对 PIN: <span id="qrPin"></span></div>
             </div>
           </div>
 
@@ -247,6 +248,13 @@
       document.getElementById('qrSubnetDesc').innerText =
         `包含 ${ipv4} 个 IPv4 子网 + ${ipv6} 个国内宽带 IPv6 GUA，彻底解决跨网段死锁。`;
       img.src = `/api/qr.svg?url=${encodeURIComponent(payload)}&t=${Date.now()}`;
+      const pinRow = document.getElementById('qrPinRow');
+      if (isUniversalQr && data.pairingPin) {
+        document.getElementById('qrPin').innerText = data.pairingPin;
+        pinRow.classList.remove('hidden');
+      } else {
+        pinRow.classList.add('hidden');
+      }
     }
 
     function toggleQrMode() {
@@ -439,6 +447,8 @@
             appendLog(`💨 对端离线: ${p ? p.name : data.nodeId}`, 'text-neutral-500');
           } else if (data.type === 'beacon_sent') {
             appendLog(`📡 entry 心跳定向广播 → ${(data.targets || []).join(' , ')}`, 'text-sky-400');
+          } else if (data.type === 'engine_error') {
+            appendLog(`🛑 引擎错误: ${data.message}`, 'text-red-400');
           } else if (data.type === 'race_done') {
             appendLog(`⚡ Happy Eyeballs 竞速结束, 胜出通道: ${data.winner || '无'}`, 'text-emerald-400');
           }

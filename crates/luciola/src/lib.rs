@@ -6,6 +6,7 @@ pub use luciola_ip as ip;
 
 pub mod link;
 pub mod trust;
+pub mod pairing;
 pub use luciola_net as net;
 pub use luciola_proto as proto;
 

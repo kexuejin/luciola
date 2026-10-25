@@ -140,6 +140,39 @@ use napi::threadsafe_function::{
 };
 use tokio::sync::oneshot;
 
+fn make_peer_obj(env: &napi::Env, p: &JsPeerRecord) -> napi::Result<napi::JsObject> {
+    let mut peer = env.create_object()?;
+    peer.set_named_property("nodeId", &p.node_id)?;
+    peer.set_named_property("name", &p.name)?;
+    peer.set_named_property("ip", &p.ip)?;
+    peer.set_named_property("udpPort", p.udp_port)?;
+    peer.set_named_property("tcpPort", p.tcp_port)?;
+    if let Some(ref v) = p.device_id {
+        peer.set_named_property("deviceId", v)?;
+    }
+    if let Some(ref v) = p.product {
+        peer.set_named_property("product", v)?;
+    }
+    if let Some(ref d) = p.device {
+        let mut dev = env.create_object()?;
+        dev.set_named_property("deviceType", &d.device_type)?;
+        dev.set_named_property("icon", &d.icon)?;
+        dev.set_named_property("os", &d.os)?;
+        dev.set_named_property("arch", &d.arch)?;
+        if let Some(ref m) = d.model {
+            dev.set_named_property("model", m)?;
+        }
+        if let Some(ref h) = d.hostname {
+            dev.set_named_property("hostname", h)?;
+        }
+        if let Some(ref di) = d.device_id {
+            dev.set_named_property("deviceId", di)?;
+        }
+        peer.set_named_property("device", dev)?;
+    }
+    Ok(peer)
+}
+
 /// Active P2P discovery session in Node.js.
 ///
 /// Discovers other Luciola/downstream nodes across the local network and emits real-time events.
@@ -192,36 +225,35 @@ impl DiscoverySession {
     /// Start discovery session and listen for discovered peers via callback.
     #[napi]
     pub fn start(&mut self, _env: Env, callback: JsFunction) -> Result<()> {
-        let tsfn: ThreadsafeFunction<JsPeerRecord, ErrorStrategy::Fatal> = callback
-            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<JsPeerRecord>| {
+        enum DiscoveryEvent {
+            Found(JsPeerRecord),
+            Updated(JsPeerRecord),
+            Lost(String),
+            Error(String, String),
+        }
+        let tsfn: ThreadsafeFunction<DiscoveryEvent, ErrorStrategy::Fatal> = callback
+            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<DiscoveryEvent>| {
                 let mut obj = ctx.env.create_object()?;
-                obj.set_named_property("nodeId", &ctx.value.node_id)?;
-                obj.set_named_property("name", &ctx.value.name)?;
-                obj.set_named_property("ip", &ctx.value.ip)?;
-                obj.set_named_property("udpPort", ctx.value.udp_port)?;
-                obj.set_named_property("tcpPort", ctx.value.tcp_port)?;
-                if let Some(ref v) = ctx.value.device_id {
-                    obj.set_named_property("deviceId", v)?;
-                }
-                if let Some(ref v) = ctx.value.product {
-                    obj.set_named_property("product", v)?;
-                }
-                if let Some(ref d) = ctx.value.device {
-                    let mut dev = ctx.env.create_object()?;
-                    dev.set_named_property("deviceType", &d.device_type)?;
-                    dev.set_named_property("icon", &d.icon)?;
-                    dev.set_named_property("os", &d.os)?;
-                    dev.set_named_property("arch", &d.arch)?;
-                    if let Some(ref m) = d.model {
-                        dev.set_named_property("model", m)?;
+                let event = ctx.value;
+                match event {
+                    DiscoveryEvent::Found(p) => {
+                        obj.set_named_property("type", "found")?;
+                        let peer = make_peer_obj(&ctx.env, &p)?;
+                        obj.set_named_property("peer", peer)?;
                     }
-                    if let Some(ref h) = d.hostname {
-                        dev.set_named_property("hostname", h)?;
+                    DiscoveryEvent::Updated(p) => {
+                        obj.set_named_property("type", "updated")?;
+                        let peer = make_peer_obj(&ctx.env, &p)?;
+                        obj.set_named_property("peer", peer)?;
                     }
-                    if let Some(ref di) = d.device_id {
-                        dev.set_named_property("deviceId", di)?;
+                    DiscoveryEvent::Lost(id) => {
+                        obj.set_named_property("type", "lost")?;
+                        obj.set_named_property("nodeId", id)?;
                     }
-                    obj.set_named_property("device", dev)?;
+                    DiscoveryEvent::Error(code, m) => {
+                        obj.set_named_property("type", "error")?;
+                        obj.set_named_property("message", format!("{code}: {m}"))?;
+                    }
                 }
                 Ok(vec![obj])
             })?;
@@ -278,7 +310,7 @@ impl DiscoverySession {
                                 break;
                             }
                             Ok(event) = events.recv() => {
-                                if let luciola::PeerEvent::Found(p) = event {
+                                let conv = |p: luciola::PeerRecord| {
                                     let device = p.device.map(|d| JsDeviceMeta {
                                         device_type: d.device_type.as_str().to_string(),
                                         icon: d.device_type.icon().to_string(),
@@ -288,7 +320,7 @@ impl DiscoverySession {
                                         hostname: d.hostname,
                                         device_id: d.device_id,
                                     });
-                                    let record = JsPeerRecord {
+                                    JsPeerRecord {
                                         node_id: p.node_id,
                                         name: p.name,
                                         ip: p.ip,
@@ -297,8 +329,18 @@ impl DiscoverySession {
                                         device,
                                         device_id: p.device_id,
                                         product: p.product,
-                                    };
-                                    tsfn.call(record, ThreadsafeFunctionCallMode::NonBlocking);
+                                    }
+                                };
+                                match event {
+                                    luciola::PeerEvent::Found(p) => {
+                                        tsfn.call(DiscoveryEvent::Found(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
+                                    }
+                                    luciola::PeerEvent::Updated(p) => {
+                                        tsfn.call(DiscoveryEvent::Updated(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
+                                    }
+                                    luciola::PeerEvent::Lost(id) => {
+                                        tsfn.call(DiscoveryEvent::Lost(id), ThreadsafeFunctionCallMode::NonBlocking);
+                                    }
                                 }
                             }
                         }
@@ -441,15 +483,20 @@ pub fn verify_message(public_key: Buffer, message: Buffer, signature: Buffer) ->
 #[napi]
 pub struct SecureChannel {
     identity_seed: Vec<u8>,
-    outbound_tx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
+    outbound_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>,
     shutdown_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[derive(Clone)]
 enum ChannelRole {
-    Dial(String, u16, Vec<u8>),
+    Dial(Vec<String>, u16, Vec<u8>, bool),
     Listen(u16, Option<Vec<u8>>),
 }
+
+const KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(15);
+const RECONNECT_MIN: std::time::Duration = std::time::Duration::from_secs(1);
+const RECONNECT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[napi]
 impl SecureChannel {
@@ -465,10 +512,10 @@ impl SecureChannel {
 
     /// Dial with a PINNED peer public key. Events: state = "connected" |
     /// "closed" | "error"; message = decrypted frame bytes.
-    #[napi(ts_args_type = "address: string, port: number, pinnedPeerPublicKey: Buffer, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void")]
-    pub fn connect(&self, address: String, port: u16, pinned_peer_public_key: Buffer, on_event: JsFunction) -> Result<()> {
+    #[napi(ts_args_type = "addresses: string[], port: number, pinnedPeerPublicKey: Buffer, autoReconnect: boolean, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void")]
+    pub fn connect(&self, addresses: Vec<String>, port: u16, pinned_peer_public_key: Buffer, auto_reconnect: bool, on_event: JsFunction) -> Result<()> {
         self.spawn_link(
-            ChannelRole::Dial(address, port, pinned_peer_public_key.to_vec()),
+            ChannelRole::Dial(addresses, port, pinned_peer_public_key.to_vec(), auto_reconnect),
             on_event,
         )
     }
@@ -490,7 +537,7 @@ impl SecureChannel {
             return false;
         }
         match self.outbound_tx.lock().unwrap().as_ref() {
-            Some(tx) => tx.send(message.to_vec()).is_ok(),
+            Some(tx) => tx.try_send(message.to_vec()).is_ok(),
             None => false,
         }
     }
@@ -535,7 +582,8 @@ impl SecureChannel {
         self.close();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
-        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        // Bounded outbound queue: a stalled peer must not grow our memory.
+        let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
@@ -543,7 +591,7 @@ impl SecureChannel {
         std::thread::Builder::new()
             .name("luciola-node-secure-link".to_string())
             .spawn(move || {
-                use luciola::link::secure::{accept_secure, connect_secure};
+                use luciola::link::secure::{accept_secure, connect_secure_raced};
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -555,65 +603,149 @@ impl SecureChannel {
 
                 rt.block_on(async move {
                     let mut out_rx = out_rx;
-                    let stream = match role {
-                        ChannelRole::Dial(address, port, pinned) => {
-                            match connect_secure(&address, port, &seed, &pinned).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    tsfn.call((Some("error".into()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
-                                    return;
-                                }
-                            }
-                        }
-                        ChannelRole::Listen(port, expected) => {
-                            let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
-                                Ok(l) => l,
-                                Err(e) => {
-                                    tsfn.call((Some("error".into()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
-                                    return;
-                                }
-                            };
-                            match accept_secure(&l, &seed, expected.as_deref()).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    tsfn.call((Some("error".into()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
-                                    return;
-                                }
-                            }
-                        }
-                    };
-                    let mut stream = stream;
-                    connected.store(true, std::sync::atomic::Ordering::SeqCst);
-                    tsfn.call((Some("connected".into()), Some(stream.peer_fingerprint()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                    let mut backoff = RECONNECT_MIN;
 
-                    loop {
-                        let mut buf: Vec<u8> = Vec::new();
-                        tokio::select! {
-                            _ = &mut shutdown => {
-                                let _ = stream.socket_mut().shutdown().await;
-                                break;
-                            }
-                            msg = out_rx.recv() => match msg {
-                                Some(m) => {
-                                    if stream.send(&m).await.is_err() {
-                                        break;
+                    'outer: loop {
+                        let stream = match role.clone() {
+                            ChannelRole::Dial(addresses, port, pinned, auto) => {
+                                match connect_secure_raced(addresses, port, &seed, &pinned).await {
+                                    Ok(s) => {
+                                        backoff = RECONNECT_MIN;
+                                        s
+                                    }
+                                    Err(e) => {
+                                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        if !auto {
+                                            tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            return;
+                                        }
+                                        tsfn.call((Some("retrying".to_string()), Some(format!("{}; next attempt in {:?}", e, backoff)), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                        tokio::select! {
+                                            _ = tokio::time::sleep(backoff) => {}
+                                            _ = &mut shutdown => break 'outer,
+                                        }
+                                        backoff = std::cmp::min(backoff * 2, RECONNECT_MAX);
+                                        continue 'outer;
                                     }
                                 }
-                                None => break,
-                            },
-                            frame = stream.recv(&mut buf) => {
-                                if frame.is_err() {
-                                    break;
+                            }
+                            ChannelRole::Listen(port, expected) => {
+                                let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+                                    Ok(l) => l,
+                                    Err(e) => {
+                                        tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                        return;
+                                    }
+                                };
+                                match accept_secure(&l, &seed, expected.as_deref()).await {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        // Handshake failures (wrong initiator) keep the listener alive.
+                                        tsfn.call((Some("retrying".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                        continue 'outer;
+                                    }
                                 }
-                                tsfn.call((None, None, Some(buf.clone())), ThreadsafeFunctionCallMode::NonBlocking);
+                            }
+                        };
+                        let mut stream = stream;
+                        connected.store(true, std::sync::atomic::Ordering::SeqCst);
+                        tsfn.call((Some("connected".to_string()), Some(stream.peer_fingerprint()), None), ThreadsafeFunctionCallMode::NonBlocking);
+
+                        let mut keepalive = tokio::time::interval(KEEPALIVE_IDLE);
+                        keepalive.reset();
+                        let mut awaiting_pong = false;
+                        loop {
+                            let mut buf: Vec<u8> = Vec::new();
+                            tokio::select! {
+                                _ = &mut shutdown => {
+                                    let _ = stream.socket_mut().shutdown().await;
+                                    break 'outer;
+                                }
+                                _ = keepalive.tick() => {
+                                    if awaiting_pong {
+                                        break;
+                                    }
+                                    if stream.send(&[]).await.is_err() {
+                                        break;
+                                    }
+                                    awaiting_pong = true;
+                                }
+                                msg = out_rx.recv() => match msg {
+                                    Some(m) => {
+                                        keepalive.reset();
+                                        awaiting_pong = false;
+                                        if stream.send(&m).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    None => break 'outer,
+                                },
+                                frame = stream.recv(&mut buf) => {
+                                    keepalive.reset();
+                                    awaiting_pong = false;
+                                    if frame.is_err() {
+                                        break;
+                                    }
+                                    if !buf.is_empty() {
+                                        tsfn.call((None, None, Some(buf.clone())), ThreadsafeFunctionCallMode::NonBlocking);
+                                    }
+                                }
                             }
                         }
+                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                        tsfn.call((Some("closed".to_string()), None, None), ThreadsafeFunctionCallMode::NonBlocking);
+                        if let ChannelRole::Dial(_, _, _, false) = role {
+                            break 'outer;
+                        }
                     }
-                    connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                    tsfn.call((Some("closed".into()), None, None), ThreadsafeFunctionCallMode::NonBlocking);
                 });
             })
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         Ok(())
     }
+}
+
+/// Canonical pairing payload (`luciola://pair` v2). `fingerprint` is the
+/// host's identity fingerprint — bind trust on it.
+#[napi(object)]
+pub struct JsPairingInfo {
+    pub name: String,
+    pub product: Option<String>,
+    pub port: u16,
+    pub addrs: Vec<String>,
+    pub fingerprint: Option<String>,
+    pub pin: Option<String>,
+}
+
+/// Build the canonical pairing URI (URL-encoded).
+#[napi]
+pub fn build_pairing_uri(
+    name: String,
+    product: Option<String>,
+    port: u16,
+    addrs: Vec<String>,
+    fingerprint: Option<String>,
+    pin: Option<String>,
+) -> String {
+    luciola::pairing::build_pairing_uri(
+        &name,
+        product.as_deref(),
+        port,
+        &addrs,
+        fingerprint.as_deref(),
+        pin.as_deref(),
+    )
+}
+
+/// Parse a pairing URI (`luciola://pair?...` v1/v2 or plain `http://host:port`).
+#[napi]
+pub fn parse_pairing_uri(uri: String) -> Option<JsPairingInfo> {
+    luciola::pairing::parse_pairing_uri(&uri).map(|p| JsPairingInfo {
+        name: p.name,
+        product: p.product,
+        port: p.port,
+        addrs: p.addrs,
+        fingerprint: p.fingerprint,
+        pin: p.pin,
+    })
 }

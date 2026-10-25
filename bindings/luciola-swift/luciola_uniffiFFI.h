@@ -258,6 +258,27 @@ typedef void (*UniffiCallbackInterfaceOnPeerDiscoveredMethod0)(uint64_t, RustBuf
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD1
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD1
+typedef void (*UniffiCallbackInterfaceOnPeerDiscoveredMethod1)(uint64_t, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD2
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD2
+typedef void (*UniffiCallbackInterfaceOnPeerDiscoveredMethod2)(uint64_t, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD3
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD3
+typedef void (*UniffiCallbackInterfaceOnPeerDiscoveredMethod3)(uint64_t, RustBuffer, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_SECURE_SESSION_LISTENER_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_SECURE_SESSION_LISTENER_METHOD0
 typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod0)(uint64_t, RustBuffer, RustBuffer, void* _Nonnull, 
@@ -276,6 +297,9 @@ typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(uint64_t, Ru
 #define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_ON_PEER_DISCOVERED
 typedef struct UniffiVTableCallbackInterfaceOnPeerDiscovered {
     UniffiCallbackInterfaceOnPeerDiscoveredMethod0 _Nonnull onPeerDiscovered;
+    UniffiCallbackInterfaceOnPeerDiscoveredMethod1 _Nonnull onPeerUpdated;
+    UniffiCallbackInterfaceOnPeerDiscoveredMethod2 _Nonnull onPeerLost;
+    UniffiCallbackInterfaceOnPeerDiscoveredMethod3 _Nonnull onError;
     UniffiCallbackInterfaceFree _Nonnull uniffiFree;
 } UniffiVTableCallbackInterfaceOnPeerDiscovered;
 
@@ -356,7 +380,7 @@ void*_Nonnull uniffi_luciola_uniffi_fn_constructor_securesession_new(RustBuffer 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_CONNECT
-void uniffi_luciola_uniffi_fn_method_securesession_connect(void*_Nonnull ptr, RustBuffer address, uint16_t port, RustBuffer pinned_peer_public_key, uint64_t listener, RustCallStatus *_Nonnull out_status
+void uniffi_luciola_uniffi_fn_method_securesession_connect(void*_Nonnull ptr, RustBuffer addresses, uint16_t port, RustBuffer pinned_peer_public_key, int8_t auto_reconnect, uint64_t listener, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_DISCONNECT
@@ -435,6 +459,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_BUILD_PAIRING_URI
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_BUILD_PAIRING_URI
+RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri(RustBuffer name, RustBuffer product, uint16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer pin, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
 RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer local_pk, RustBuffer remote_pk, RustCallStatus *_Nonnull out_status
@@ -496,6 +525,11 @@ int8_t uniffi_luciola_uniffi_fn_func_is_virtual_nic(RustBuffer name, RustCallSta
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_LOCAL_CANDIDATE_ADDRESSES
 RustBuffer uniffi_luciola_uniffi_fn_func_local_candidate_addresses(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_PARSE_PAIRING_URI
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_PARSE_PAIRING_URI
+RustBuffer uniffi_luciola_uniffi_fn_func_parse_pairing_uri(RustBuffer uri, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RACE_CONNECT
@@ -816,6 +850,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_advertised_addresses(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_BUILD_PAIRING_URI
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_BUILD_PAIRING_URI
+uint16_t uniffi_luciola_uniffi_checksum_func_build_pairing_uri(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_COMPARISON_PIN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_COMPARISON_PIN
 uint16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
@@ -885,6 +925,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_is_virtual_nic(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_LOCAL_CANDIDATE_ADDRESSES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_LOCAL_CANDIDATE_ADDRESSES
 uint16_t uniffi_luciola_uniffi_checksum_func_local_candidate_addresses(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_PARSE_PAIRING_URI
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_PARSE_PAIRING_URI
+uint16_t uniffi_luciola_uniffi_checksum_func_parse_pairing_uri(void
     
 );
 #endif
@@ -1047,6 +1093,24 @@ uint16_t uniffi_luciola_uniffi_checksum_constructor_truststore_new(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_PEER_DISCOVERED
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_PEER_DISCOVERED
 uint16_t uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_PEER_UPDATED
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_PEER_UPDATED
+uint16_t uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_PEER_LOST
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_PEER_LOST
+uint16_t uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_ERROR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_ONPEERDISCOVERED_ON_ERROR
+uint16_t uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error(void
     
 );
 #endif

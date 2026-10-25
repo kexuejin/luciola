@@ -60,12 +60,12 @@ import com.kapp.luciola.AndroidDiscoveryController
 import com.kapp.luciola.PeerUiModel
 import com.kapp.luciola.luciolaDeviceMeta
 import com.kapp.luciola.luciolaLocalCandidates
+import com.kapp.luciola.luciolaParsePairingUri
 import com.kapp.luciola.luciolaRaceConnect
 import com.kapp.luciola.luciolaSubnetBroadcasts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.URLDecoder
 
 private const val TAG = "LuciolaRadar"
 private val DISCOVERY_PORT: UShort = 17878u
@@ -86,24 +86,18 @@ data class ChannelUi(
     var rttMs: Double? = null,
 )
 
-data class PairPayload(val name: String, val port: Int, val addrs: List<String>)
+data class PairPayload(
+    val name: String,
+    val port: Int,
+    val addrs: List<String>,
+    val fingerprint: String? = null,
+    val pin: String? = null,
+)
 
+/** Canonical parsing via the luciola core (pairing payload spec v2). */
 fun parsePairUri(uri: String): PairPayload? {
-    if (uri.startsWith("luciola://pair")) {
-        val params = uri.substringAfter('?', "")
-            .split('&')
-            .mapNotNull { p ->
-                val kv = p.split('=', limit = 2)
-                if (kv.size == 2) kv[0] to URLDecoder.decode(kv[1], "UTF-8") else null
-            }
-            .toMap()
-        val port = params["port"]?.toIntOrNull() ?: return null
-        val addrs = params["addrs"]?.split(',')?.filter { it.isNotBlank() } ?: return null
-        return PairPayload(params["name"] ?: "Desktop", port, addrs)
-    }
-    // Plain http://ip:port QR (single-subnet mode): race against it directly.
-    val m = Regex("""http://\[?([0-9a-fA-F:.]+)\]?:(\d+)""").find(uri) ?: return null
-    return PairPayload("Desktop (HTTP)", m.groupValues[2].toInt(), listOf(m.groupValues[1]))
+    val p = luciolaParsePairingUri(uri) ?: return null
+    return PairPayload(p.name, p.port, p.addrs, p.fingerprint, p.pin)
 }
 
 class MainActivity : ComponentActivity() {

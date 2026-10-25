@@ -18,6 +18,7 @@ class AndroidDiscoveryController(
     manualPeers: List<Pair<String, UShort>> = emptyList(),
     product: String? = null,
     private val onPeersChanged: (List<PeerUiModel>) -> Unit,
+    private val onEngineError: ((code: String, message: String) -> Unit)? = null,
 ) : AutoCloseable {
 
     private val appContext: Context = context.applicationContext
@@ -34,6 +35,9 @@ class AndroidDiscoveryController(
         network = network,
         scheduler = { delayMs, task -> mainHandler.postDelayed(task, delayMs) },
         onPeersChanged = { peers -> mainHandler.post { onPeersChanged(peers) } },
+        onEngineError = { code, message ->
+            mainHandler.post { onEngineError?.invoke(code, message) }
+        },
     )
 
     init {

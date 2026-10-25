@@ -20,4 +20,5 @@ ed25519-dalek.workspace = true
 x25519-dalek.workspace = true
 hkdf.workspace = true
 aes-gcm.workspace = true
+percent-encoding.workspace = true
 rand.workspace = true

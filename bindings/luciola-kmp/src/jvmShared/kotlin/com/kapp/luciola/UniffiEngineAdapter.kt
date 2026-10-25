@@ -27,10 +27,22 @@ class UniffiEngineAdapter(
 
     override fun nodeId(): String? = session.nodeId()
 
-    override fun start(onPeer: (PeerUiModel) -> Unit) {
+    override fun start(onEvent: (DiscoveryEventUi) -> Unit) {
         session.start(object : OnPeerDiscovered {
             override fun onPeerDiscovered(peer: DiscoveredPeer) {
-                onPeer(peer.toUiModel())
+                onEvent(DiscoveryEventUi.Found(peer.toUiModel()))
+            }
+
+            override fun onPeerUpdated(peer: DiscoveredPeer) {
+                onEvent(DiscoveryEventUi.Updated(peer.toUiModel()))
+            }
+
+            override fun onPeerLost(nodeId: String) {
+                onEvent(DiscoveryEventUi.Lost(nodeId))
+            }
+
+            override fun onError(code: String, message: String) {
+                onEvent(DiscoveryEventUi.Error(code, message))
             }
         })
     }
