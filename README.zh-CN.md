@@ -1,100 +1,126 @@
-# Luciola (萤火)
+# Luciola (萤火) — 高韧性局域网对等发现与安全本地连接引擎
 
-<p align="center">
-  <strong>轻量、高韧性、解决真实世界网络暗坑的局域网对等发现与网卡感知引擎</strong>
-</p>
+**为真实网络环境打造的 Rust 本地网络引擎**:在局域网内发现对等设备、竞速选出最优连接路径、通过认证加密信道传输数据——在 Clash/Sing-box TUN 代理、国内宽带 IPv6-only、ZeroTier/Tailscale 虚拟网络、以及不转发多播的路由器面前依然可用。
 
-<p align="center">
-  <a href="#特性">特性</a> •
-  <a href="#为什么需要-luciola">解决的痛点</a> •
-  <a href="#快速开始">快速开始</a> •
-  <a href="#多语言绑定">多语言支持</a> •
-  <a href="#架构分层">架构分层</a> •
-  <a href="README.md">English</a>
-</p>
+Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输、投屏、本地 AI 伴侣)的底座层,让每个产品不必重复发明(并反复踩坑)局域网网络。一个 Rust 核心,**Kotlin Multiplatform(Android/JVM)、iOS/Swift、Node.js/Electron** 三方绑定均为一等公民。
+
+> 为什么不用 mDNS/Bonjour/Zeroconf?企业/酒店 Wi-Fi 丢组播;代理 TUN 模式吞广播;移动系统冻结后台监听。Luciola 正是围绕这些故障设计的——见[为什么需要 Luciola](#为什么需要-luciola真实网络)。
 
 ---
 
 ## 特性
 
-- 🌐 **懂“国内宽带国情”的 IPv6 直连**：全面支持 RFC 4291/4193 作用域分类；内置 `/64` 前缀感知算法，能把中国电信/联通/移动分配给家庭 LAN 的全球单播 IPv6（GUA）智能识别为“局域网”，打破公网防火墙限制，实现端到端免中继直连。
-- 🛡️ **彻底免疫代理 TUN 截流（Anti-TUN）**：当用户开启 Clash、Sing-box 等 TUN 增强模式时，`0.0.0.0/1` 路由会强行吸走受限广播 `255.255.255.255`。Luciola 自动为每个物理网卡计算直连定向 **Subnet Broadcast（子网广播，如 `192.168.2.255`）**，由于 `/24` 路由优先级更高，强制从物理网卡发出，彻底打破代理截流。
-- 🎯 **网卡物理真实性与打分优选**：精准识别并降权 Docker、VMware、Tailscale、Radmin 以及 Windows 移动热点虚拟适配器（`192.168.137.x`），并支持 WSL2 内部穿透获取 Windows 宿主机物理 IP，保证生成的直连二维码百分之百可达。
-- ⚡ **零开销对等发现协议**：轻量级 UDP 状态机（`entry` 握手、`alive` 应答、`presence` 周期心跳、`exit` 离线挥手），自带随机防风暴抖动（Jitter）与时间窗口去重。
-- 🔌 **全生态一等公民多语言绑定**：Rust 核心内核，零 GC、极低内存，提供 Node.js（`@luciola/core` via N-API）、Android/JVM 及 iOS/macOS 绑定。
+- 🛡️ **免疫代理 TUN 截流** — Clash / Sing-box 增强模式用 `0.0.0.0/1` 抢走路由、吞掉受限广播。Luciola 为每块物理网卡计算**子网定向广播**(`192.168.2.255`),其 `/24` 直连路由无法被代理截走。
+- 🌐 **为真实宽带做好 IPv6** — RFC 4291/4193 作用域分类 + `/64` 前缀匹配,把电信/联通/移动分配的 GUA(`2408:…`)识别为同局域网;引擎双栈,`ff02::1` 链路本地多播,支持 IPv6-only 发现与直连。
+- 🎯 **网卡智能** — 物理网卡打分优选,过滤 Docker/VMware/Tailscale/Radmin/Windows 移动热点(`192.168.137.x`)虚拟网卡;WSL2 穿透解析 Windows 宿主真实 IP;生成的二维码百分之百可拨。
+- ⚡ **Happy Eyeballs 路径竞速** — 跨全部候选网段(IPv4 + IPv6 GUA)错峰并发拨号,首胜即定,加密握手直接在胜出 socket 上完成(无竞速-建连间隙)。
+- 🔐 **信任与配对原语** — Ed25519 设备身份、`sha256:` 指纹、6 位屏上比对 PIN、**分级信任库**(Full=自己的设备/无感推送,Partial=逐次确认,未配对=默认拒绝)。为剪贴板级隐私而生:*发现开放,数据面不开放*。
+- 🔒 **认证加密信道** — SIGMA 式握手(X25519 + Ed25519 全 transcript 签名 + HKDF + AES-256-GCM,计数器防重放)、默认拒绝的 pin 校验、TOFU 捕获、断线指数退避自动重连、keepalive 判死、有界发送队列。
+- 🧭 **内置监督自愈** — 引擎重启身份稳定、端口冲突显式上报(`bind_failed`,同机多产品场景)、看门狗 + 网络变化防抖重建、Android MulticastLock 处理。
+- 🔌 **一个核心,全平台** — Rust 核心;**KMP 库**(`com.kapp.luciola:luciola-kmp`,AAR 内嵌 arm64 `.so`)、iOS Swift 绑定 + xcframework、Node.js N-API(`@luciola/core`),以及桌面 **agent**(`luciola-cli agent`,unix socket 向同机多产品分发发现事件)。
 
----
+## 为什么需要 Luciola(真实网络)
 
-## 为什么需要 Luciola？（对比传统方案）
-
-| 真实世界痛点 | 传统 mDNS / Bonjour | 手写正则 / ipconfig 粗糙选网卡脚本 | **Luciola (萤火)** |
+| 真实世界隐患 | mDNS / Bonjour | 手写脚本 | **Luciola** |
 | :--- | :--- | :--- | :--- |
-| **企业/校园/酒店 Wi-Fi** | 组播（Multicast）被路由器强制丢弃，完全失联 | — | **子网定向广播 + 单播对账**，多网卡冗余兜底 |
-| **家庭宽带 IPv6 (GUA)** | 误判为公网 WAN，安全策略误拦截 | 完全忽略 IPv6，只做 IPv4 | **`/64` 同前缀同 LAN 算法**，优先直连 |
-| **Clash / Sing-box TUN 模式** | 广播包被 `0.0.0.0/1` 代理吞掉，静默失联 | 忽略 TUN 截流问题 | **定向子网广播**（直连直达物理链路） |
-| **WSL2 / 虚拟网卡环境** | 暴露内部 NAT IP `172.x`，手机扫码打不开 | 极容易误挑 Docker/Tailscale 网卡 | **网卡多维正负评分 + WSL2 物理穿透** |
-| **移动端 Doze 省电模式** | 后台强行杀掉 mDNS 监听 | 仅支持 PC Web | **平台生命周期感知与空闲回退** |
-
----
+| 企业/酒店/校园 Wi-Fi(丢组播) | 失联 | — | 子网定向广播 + 单播对账 |
+| Clash / Sing-box TUN 模式 | 静默失联 | 无感知 | 每网卡 `/24` 广播绕过截流 |
+| 国内宽带 IPv6(GUA-only 局域网) | 误判公网 | 仅 IPv4 | `/64` 同前缀匹配 + IPv6 发现/直连 |
+| WSL2 / Docker / Tailscale 虚拟网卡 | — | 选错 IP | 网卡打分 + WSL2 宿主穿透 |
+| 路由器不转发客户端间多播 | mDNS 时好时坏 | — | manualPeers 单播兜底(实测后写入文档) |
+| Android Doze / 应用冻结 | 监听死亡 | 只考虑 PC | 看门狗、网络变化重建、前台服务手册 |
+| 同机多产品 | 端口互抢 | — | `device_id` 分组、按产品分配端口、桌面 agent |
 
 ## 快速开始
 
-### 1. 命令行 CLI 工具
+### CLI(一条命令诊断你的局域网)
 
 ```bash
-# 查看本机网卡诊断、子网广播与干净候选 IP
-cargo run -p luciola-cli -- ip
-
-# 实时扫描并监听局域网对端
-cargo run -p luciola-cli -- scan
-
-# 广播本机存在（作为节点）
-cargo run -p luciola-cli -- beacon --name "My Laptop"
+cargo run -p luciola-cli -- ip      # 网卡诊断、TUN 检测、候选 IP、二维码
+cargo run -p luciola-cli -- scan    # 实时对等雷达
+cargo run -p luciola-cli -- beacon --name "My Laptop" --qr
+cargo run -p luciola-cli -- agent   # 设备级发现 daemon(unix socket 事件流)
 ```
 
-### 2. 在 Node.js / Electron 中使用（替代旧版选网卡脚本）
+### Android / KMP 产品接入
 
-```javascript
-const { selectLanIp, subnetBroadcastAddresses } = require('@luciola/core');
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-// 1. 自动挑出手机最可能可达的局域网 IP（用于生成二维码）
-const bestIp = selectLanIp();
-console.log(`请用手机扫描直连: http://${bestIp}:3000`);
+implementation("com.kapp.luciola:luciola-kmp:0.3.0")
 
-// 2. 获取防代理劫持的子网广播列表
-const broadcasts = subnetBroadcastAddresses();
-console.log('子网广播地址:', broadcasts);
+val controller = AndroidDiscoveryController(
+    context = this,
+    sessionName = Build.MODEL,
+    product = "my-clipboard-app",
+    onPeersChanged = { peers -> /* PeerUiModel 列表,主线程 */ },
+    onEngineError = { code, msg -> /* 上报 bind_failed 等 */ },
+)
+controller.start()
 ```
 
-### 3. Web 双端联动演示（桌面中控台 + 移动端模拟器）
+### Node.js / Electron
 
-```bash
-cd examples/web-radar-demo
-node server.js   # 打开 http://localhost:3000
+```js
+const luciola = require('@luciola/core');
+
+const ip = luciola.selectLanIp();               // 最佳可拨 LAN IP(TUN/WSL/ICS 感知)
+const broadcasts = luciola.subnetBroadcastAddresses(); // 防 TUN 广播目标
+
+const session = new luciola.DiscoverySession('My App', 17878, null, 'my-app');
+session.start((ev) => {  // found | updated | lost | error
+  if (ev.type === 'found') console.log('peer:', ev.peer.name, ev.peer.ip);
+});
+
+// 与已配对对端建立加密信道
+const id = luciola.generateDeviceIdentity();     // seed 务必安全持久化!
+const channel = new luciola.SecureChannel(id.seed);
+channel.connect(['192.168.2.82'], 3000, pinnedPeerKey, true, (ev) => {
+  if (ev.message) console.log('decrypted:', ev.message);
+});
 ```
 
-真实 UDP 协议心跳、子网定向广播、Happy Eyeballs 多网段竞速与实时雷达，详见 [examples/web-radar-demo](examples/web-radar-demo)。
+### 演示
 
----
+- **Web 雷达中控台**([examples/web-radar-demo](examples/web-radar-demo))— 实时雷达、真实协议心跳、带指纹 + PIN 的配对二维码。
+- **Android 应用**([examples/android-demo](examples/android-demo))— 基于 KMP 的 Compose 应用,扫码 + Happy Eyeballs 竞速,真机跨 Wi-Fi/ZeroTier 验证。
+- **iOS 应用**([examples/ios-demo](examples/ios-demo))— SwiftUI + uniffi Swift 绑定,模拟器验证。
+
+## 文档
+
+- 📖 **[产品接入手册](docs/INTEGRATION.md)** — 端口分配、Android 前台服务与冻结行为、信任/配对 UX、信道状态机、排障表(每一条都来自实测)。
+- 🔐 **[安全策略](SECURITY.md)** — 密码学清单、预审计状态、评审清单。
+- 📦 **发布** — `scripts/publish-maven-local.sh` 一条命令构建 Rust 核心并发布 KMP 库;原生产物永不入 git。
 
 ## 架构
 
 ```
 luciola/
 ├── crates/
-│   ├── luciola-ip/       # RFC 作用域、/64 GUA 前缀匹配、TUN 198.18 过滤 (no_std)
-│   ├── luciola-net/      # 硬件网卡枚举、打分优选、WSL 穿透、子网广播计算
-│   ├── luciola-proto/    # 零 IO 协议状态机、抖动防风暴调度器
-│   ├── luciola-core/     # 基于 Tokio 的异步 UDP 广播自愈引擎
-│   └── luciola-cli/      # 命令行雷达工具
+│   ├── luciola-ip/       # RFC 作用域、/64 GUA 匹配、198.18.0.0/15 TUN 过滤 (no_std)
+│   ├── luciola-net/      # 网卡打分、WSL2 穿透、子网广播、设备元数据
+│   ├── luciola-proto/    # 线协议:版本化信封、抖动/去重状态机
+│   ├── luciola/          # tokio 引擎:双栈发现、路径竞速、
+│   │                     #   安全信道、信任与配对原语
+│   └── luciola-cli/      # ip / scan / beacon / agent
 └── bindings/
-    └── luciola-node/     # Node.js 原生 N-API 模块 (@luciola/core)
+    ├── luciola-kmp/      # Kotlin Multiplatform 库(Android AAR + JVM + iOS klib)
+    ├── luciola-swift/    # Swift 绑定 + xcframework
+    └── luciola-node/     # @luciola/core (N-API)
 ```
+
+## 项目目标
+
+1. **让局域网对等网络变得"无聊"**:发现、最优路径连接、可信加密信道,一个依赖全搞定。
+2. **在真实用户所在的网络里工作** — VPN TUN、运营商 IPv6、虚拟网卡、廉价路由器、省电手机。上表每一项隐患都有测试或实测记录兜底。
+3. **一个核心,全平台** — 难的部分只有一份 Rust 实现;绑定层薄而地道,而不是 N 份各自漂移的再实现。
+4. **默认对安全诚实** — 发现开放、数据面默认拒绝、预审计状态公开披露(见 [SECURITY.md](SECURITY.md))。
+
+## 许可
+
+MIT / Apache-2.0 双许可,任选其一。GPL 项目依赖 Luciola 方向安全。
 
 ---
 
-## 开源许可
-
-本项目采用双重开源许可：
-- [MIT 许可证](LICENSE-MIT)
-- [Apache 2.0 许可证](LICENSE-APACHE)
+**English** · [README.md](README.md)
