@@ -191,3 +191,37 @@ export function signMessage(seed: Buffer, message: Buffer): Buffer;
  * Verify a signature against an Ed25519 public key.
  */
 export function verifyMessage(publicKey: Buffer, message: Buffer, signature: Buffer): boolean;
+
+/**
+ * One authenticated encrypted channel (SIGMA-style handshake: X25519 +
+ * Ed25519 identity signatures + HKDF/AES-256-GCM, replay-proof counters).
+ * Message-oriented: send() queues an encrypted frame; decrypted inbound
+ * frames arrive through the onEvent callback.
+ */
+export class SecureChannel {
+  constructor(identitySeed: Buffer);
+  /**
+   * Dial with a PINNED peer public key (deny-by-default).
+   * Events: { state: 'connected' | 'closed' | 'error', detail?: string } and
+   * { message: Buffer } for decrypted frames.
+   */
+  connect(
+    address: string,
+    port: number,
+    pinnedPeerPublicKey: Buffer,
+    onEvent: (event: { state?: string; detail?: string; message?: Buffer }) => void,
+  ): void;
+  /**
+   * Accept ONE connection; expectedPeerPublicKey pins the peer, or
+   * null/undefined for TOFU (verify the reported fingerprint out-of-band).
+   */
+  listen(
+    port: number,
+    expectedPeerPublicKey: Buffer | null | undefined,
+    onEvent: (event: { state?: string; detail?: string; message?: Buffer }) => void,
+  ): void;
+  /** Queue an encrypted frame; returns false when not connected. */
+  send(message: Buffer): boolean;
+  isConnected(): boolean;
+  close(): void;
+}

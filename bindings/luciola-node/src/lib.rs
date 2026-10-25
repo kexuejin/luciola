@@ -434,3 +434,186 @@ pub fn sign_message(seed: Buffer, message: Buffer) -> Buffer {
 pub fn verify_message(public_key: Buffer, message: Buffer, signature: Buffer) -> bool {
     luciola::trust::verify(&public_key, &message, &signature)
 }
+
+/// One authenticated encrypted channel (luciola::link::secure).
+/// Message-oriented: `send` queues an encrypted frame; decrypted inbound
+/// frames are delivered through the callback as `{ state, detail, message }`.
+#[napi]
+pub struct SecureChannel {
+    identity_seed: Vec<u8>,
+    outbound_tx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
+    shutdown_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+enum ChannelRole {
+    Dial(String, u16, Vec<u8>),
+    Listen(u16, Option<Vec<u8>>),
+}
+
+#[napi]
+impl SecureChannel {
+    #[napi(constructor)]
+    pub fn new(identity_seed: Buffer) -> Self {
+        Self {
+            identity_seed: identity_seed.to_vec(),
+            outbound_tx: std::sync::Mutex::new(None),
+            shutdown_tx: std::sync::Mutex::new(None),
+            connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Dial with a PINNED peer public key. Events: state = "connected" |
+    /// "closed" | "error"; message = decrypted frame bytes.
+    #[napi(ts_args_type = "address: string, port: number, pinnedPeerPublicKey: Buffer, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void")]
+    pub fn connect(&self, address: String, port: u16, pinned_peer_public_key: Buffer, on_event: JsFunction) -> Result<()> {
+        self.spawn_link(
+            ChannelRole::Dial(address, port, pinned_peer_public_key.to_vec()),
+            on_event,
+        )
+    }
+
+    /// Accept ONE connection; `expectedPeerPublicKey` pins the peer or
+    /// null/undefined for TOFU (check the reported fingerprint).
+    #[napi(ts_args_type = "port: number, expectedPeerPublicKey: Buffer | null | undefined, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void")]
+    pub fn listen(&self, port: u16, expected_peer_public_key: Option<Buffer>, on_event: JsFunction) -> Result<()> {
+        self.spawn_link(
+            ChannelRole::Listen(port, expected_peer_public_key.map(|b| b.to_vec())),
+            on_event,
+        )
+    }
+
+    /// Queue an encrypted frame; false when not connected.
+    #[napi]
+    pub fn send(&self, message: Buffer) -> bool {
+        if !self.connected.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
+        match self.outbound_tx.lock().unwrap().as_ref() {
+            Some(tx) => tx.send(message.to_vec()).is_ok(),
+            None => false,
+        }
+    }
+
+    #[napi]
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[napi]
+    pub fn close(&self) {
+        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        *self.outbound_tx.lock().unwrap() = None;
+        self.connected.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl SecureChannel {
+    fn spawn_link(&self, role: ChannelRole, on_event: JsFunction) -> Result<()> {
+        use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
+        use tokio::io::AsyncWriteExt as _;
+
+        let tsfn: ThreadsafeFunction<(Option<String>, Option<String>, Option<Vec<u8>>), ErrorStrategy::Fatal> =
+            on_event.create_threadsafe_function(0, |ctx| {
+                let mut obj = ctx.env.create_object()?;
+                let (state, detail, message): &(Option<String>, Option<String>, Option<Vec<u8>>) = &ctx.value;
+                if let Some(s) = state {
+                    obj.set_named_property("state", s)?;
+                }
+                if let Some(d) = detail {
+                    obj.set_named_property("detail", d)?;
+                }
+                if let Some(m) = message {
+                    let buf = ctx.env.create_buffer_copy(m.as_slice())?;
+                    obj.set_named_property("message", buf.into_raw())?;
+                }
+                Ok(vec![obj])
+            })?;
+
+        self.close();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
+        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        *self.outbound_tx.lock().unwrap() = Some(out_tx);
+        let connected = self.connected.clone();
+        let seed = self.identity_seed.clone();
+
+        std::thread::Builder::new()
+            .name("luciola-node-secure-link".to_string())
+            .spawn(move || {
+                use luciola::link::secure::{accept_secure, connect_secure};
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(_) => return,
+                };
+                let mut shutdown = shutdown_rx;
+
+                rt.block_on(async move {
+                    let mut out_rx = out_rx;
+                    let stream = match role {
+                        ChannelRole::Dial(address, port, pinned) => {
+                            match connect_secure(&address, port, &seed, &pinned).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    tsfn.call((Some("error".into()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                    return;
+                                }
+                            }
+                        }
+                        ChannelRole::Listen(port, expected) => {
+                            let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+                                Ok(l) => l,
+                                Err(e) => {
+                                    tsfn.call((Some("error".into()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                    return;
+                                }
+                            };
+                            match accept_secure(&l, &seed, expected.as_deref()).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    tsfn.call((Some("error".into()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                    return;
+                                }
+                            }
+                        }
+                    };
+                    let mut stream = stream;
+                    connected.store(true, std::sync::atomic::Ordering::SeqCst);
+                    tsfn.call((Some("connected".into()), Some(stream.peer_fingerprint()), None), ThreadsafeFunctionCallMode::NonBlocking);
+
+                    loop {
+                        let mut buf: Vec<u8> = Vec::new();
+                        tokio::select! {
+                            _ = &mut shutdown => {
+                                let _ = stream.socket_mut().shutdown().await;
+                                break;
+                            }
+                            msg = out_rx.recv() => match msg {
+                                Some(m) => {
+                                    if stream.send(&m).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                None => break,
+                            },
+                            frame = stream.recv(&mut buf) => {
+                                if frame.is_err() {
+                                    break;
+                                }
+                                tsfn.call((None, None, Some(buf.clone())), ThreadsafeFunctionCallMode::NonBlocking);
+                            }
+                        }
+                    }
+                    connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                    tsfn.call((Some("closed".into()), None, None), ThreadsafeFunctionCallMode::NonBlocking);
+                });
+            })
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(())
+    }
+}

@@ -807,6 +807,215 @@ public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) ->
 
 
 /**
+ * One authenticated encrypted channel (see `luciola::link::secure`).
+ * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
+ * received frames are decrypted and delivered through the listener.
+ */
+public protocol SecureSessionProtocol : AnyObject {
+    
+    /**
+     * Dial a peer at `address:port` with a PINNED peer public key.
+     */
+    func connect(address: String, port: UInt16, pinnedPeerPublicKey: Data, listener: SecureSessionListener) 
+    
+    /**
+     * Close the channel; the peer sees the socket close. (Named
+     * `disconnect` because the generated Disposable interface already owns
+     * `close`.)
+     */
+    func disconnect() 
+    
+    func isConnected()  -> Bool
+    
+    /**
+     * Listen for ONE incoming connection. `expected_peer`: pin the peer key,
+     * or None to accept any identity (TOFU — check the reported fingerprint).
+     */
+    func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener) 
+    
+    /**
+     * Queue an encrypted frame. Returns false when not connected.
+     */
+    func send(message: Data)  -> Bool
+    
+}
+
+/**
+ * One authenticated encrypted channel (see `luciola::link::secure`).
+ * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
+ * received frames are decrypted and delivered through the listener.
+ */
+open class SecureSession:
+    SecureSessionProtocol {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_securesession(self.pointer, $0) }
+    }
+public convenience init(identitySeed: Data) {
+    let pointer =
+        try! rustCall() {
+    uniffi_luciola_uniffi_fn_constructor_securesession_new(
+        FfiConverterData.lower(identitySeed),$0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_securesession(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * Dial a peer at `address:port` with a PINNED peer public key.
+     */
+open func connect(address: String, port: UInt16, pinnedPeerPublicKey: Data, listener: SecureSessionListener) {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_connect(self.uniffiClonePointer(),
+        FfiConverterString.lower(address),
+        FfiConverterUInt16.lower(port),
+        FfiConverterData.lower(pinnedPeerPublicKey),
+        FfiConverterCallbackInterfaceSecureSessionListener.lower(listener),$0
+    )
+}
+}
+    
+    /**
+     * Close the channel; the peer sees the socket close. (Named
+     * `disconnect` because the generated Disposable interface already owns
+     * `close`.)
+     */
+open func disconnect() {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_disconnect(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+open func isConnected() -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_is_connected(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Listen for ONE incoming connection. `expected_peer`: pin the peer key,
+     * or None to accept any identity (TOFU — check the reported fingerprint).
+     */
+open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener) {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_listen(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(port),
+        FfiConverterOptionData.lower(expectedPeer),
+        FfiConverterCallbackInterfaceSecureSessionListener.lower(listener),$0
+    )
+}
+}
+    
+    /**
+     * Queue an encrypted frame. Returns false when not connected.
+     */
+open func send(message: Data) -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_send(self.uniffiClonePointer(),
+        FfiConverterData.lower(message),$0
+    )
+})
+}
+    
+
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecureSession: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = SecureSession
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> SecureSession {
+        return SecureSession(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: SecureSession) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecureSession {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: SecureSession, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecureSession_lift(_ pointer: UnsafeMutableRawPointer) throws -> SecureSession {
+    return try FfiConverterTypeSecureSession.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecureSession_lower(_ value: SecureSession) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeSecureSession.lower(value)
+}
+
+
+
+
+/**
  * Persisted trust list. Serialize with [TrustStore::to_json] and store the
  * bytes in the product's secret storage; unpaired peers are simply absent
  * (default posture: deny).
@@ -1996,6 +2205,140 @@ extension FfiConverterCallbackInterfaceOnPeerDiscovered : FfiConverter {
     }
 }
 
+
+
+
+/**
+ * Events from a [SecureSession]: state transitions and decrypted messages.
+ */
+public protocol SecureSessionListener : AnyObject {
+    
+    /**
+     * `state`: "connected" | "closed" | "error"; `detail` carries the peer
+     * fingerprint on connect and the error message on failure.
+     */
+    func onState(state: String, detail: String?) 
+    
+    func onMessage(message: Data) 
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceSecureSessionListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    static var vtable: UniffiVTableCallbackInterfaceSecureSessionListener = UniffiVTableCallbackInterfaceSecureSessionListener(
+        onState: { (
+            uniffiHandle: UInt64,
+            state: RustBuffer,
+            detail: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceSecureSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onState(
+                     state: try FfiConverterString.lift(state),
+                     detail: try FfiConverterOptionString.lift(detail)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onMessage: { (
+            uniffiHandle: UInt64,
+            message: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceSecureSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onMessage(
+                     message: try FfiConverterData.lift(message)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceSecureSessionListener.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface SecureSessionListener: handle missing in uniffiFree")
+            }
+        }
+    )
+}
+
+private func uniffiCallbackInitSecureSessionListener() {
+    uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(&UniffiCallbackInterfaceSecureSessionListener.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceSecureSessionListener {
+    fileprivate static var handleMap = UniffiHandleMap<SecureSessionListener>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceSecureSessionListener : FfiConverter {
+    typealias SwiftType = SecureSessionListener
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -2063,6 +2406,30 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
+    typealias SwiftType = Data?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterData.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -2245,6 +2612,17 @@ fileprivate struct FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBu
 public func advertisedAddresses() -> [String] {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_advertised_addresses($0
+    )
+})
+}
+/**
+ * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
+ */
+public func comparisonPin(localPk: Data, remotePk: Data) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_comparison_pin(
+        FfiConverterData.lower(localPk),
+        FfiConverterData.lower(remotePk),$0
     )
 })
 }
@@ -2447,6 +2825,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2519,6 +2900,21 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 37541) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_disconnect() != 52412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 49295) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 9741) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2537,14 +2933,24 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 60635) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 24675) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 6008) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
     uniffiCallbackInitOnPeerDiscovered()
+    uniffiCallbackInitSecureSessionListener()
     return InitializationResult.ok
 }()
 

@@ -301,7 +301,10 @@ mod tests {
                 arch: "aarch64".to_string(),
                 model: Some("MacBookPro18,1".to_string()),
                 hostname: Some("Alex's Laptop".to_string()),
+                device_id: Some("dev_123".to_string()),
             }),
+            device_id: Some("dev_123".to_string()),
+            product: Some("my-app".to_string()),
         };
 
         let env = Codec::make_entry(&profile, Some("probe_1"));

@@ -611,6 +611,12 @@ pub fn identity_short_pin(public_key: Vec<u8>) -> String {
     luciola::trust::short_pin(&public_key)
 }
 
+/// Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
+#[uniffi::export]
+pub fn comparison_pin(local_pk: Vec<u8>, remote_pk: Vec<u8>) -> String {
+    luciola::trust::comparison_pin(&local_pk, &remote_pk)
+}
+
 /// Sign a message with a persisted seed.
 #[uniffi::export]
 pub fn sign_message(seed: Vec<u8>, message: Vec<u8>) -> Vec<u8> {
@@ -621,4 +627,198 @@ pub fn sign_message(seed: Vec<u8>, message: Vec<u8>) -> Vec<u8> {
 #[uniffi::export]
 pub fn verify_message(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>) -> bool {
     luciola::trust::verify(&public_key, &message, &signature)
+}
+
+// ---------------------------------------------------------------------------
+// Secure link session exports
+// ---------------------------------------------------------------------------
+
+use luciola::link::secure::{accept_secure, connect_secure};
+use tokio::sync::mpsc;
+
+/// Events from a [SecureSession]: state transitions and decrypted messages.
+#[uniffi::export(callback_interface)]
+pub trait SecureSessionListener: Send + Sync {
+    /// `state`: "connected" | "closed" | "error"; `detail` carries the peer
+    /// fingerprint on connect and the error message on failure.
+    fn on_state(&self, state: String, detail: Option<String>);
+    fn on_message(&self, message: Vec<u8>);
+}
+
+enum LinkEvent {
+    State(String, Option<String>),
+    Message(Vec<u8>),
+}
+
+enum LinkRole {
+    Dial(String, u16, Vec<u8>),
+    Listen(u16, Option<Vec<u8>>),
+}
+
+/// One authenticated encrypted channel (see `luciola::link::secure`).
+/// Message-oriented for FFI friendliness: `send` queues an encrypted frame;
+/// received frames are decrypted and delivered through the listener.
+#[derive(uniffi::Object)]
+pub struct SecureSession {
+    identity_seed: Vec<u8>,
+    outbound_tx: Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>,
+    shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
+    connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[uniffi::export]
+impl SecureSession {
+    #[uniffi::constructor]
+    pub fn new(identity_seed: Vec<u8>) -> Self {
+        Self {
+            identity_seed,
+            outbound_tx: Mutex::new(None),
+            shutdown_tx: Mutex::new(None),
+            connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Dial a peer at `address:port` with a PINNED peer public key.
+    pub fn connect(
+        self: std::sync::Arc<Self>,
+        address: String,
+        port: u16,
+        pinned_peer_public_key: Vec<u8>,
+        listener: Box<dyn SecureSessionListener>,
+    ) {
+        self.spawn_link(
+            LinkRole::Dial(address, port, pinned_peer_public_key),
+            listener,
+        );
+    }
+
+    /// Listen for ONE incoming connection. `expected_peer`: pin the peer key,
+    /// or None to accept any identity (TOFU — check the reported fingerprint).
+    pub fn listen(
+        self: std::sync::Arc<Self>,
+        port: u16,
+        expected_peer: Option<Vec<u8>>,
+        listener: Box<dyn SecureSessionListener>,
+    ) {
+        self.spawn_link(LinkRole::Listen(port, expected_peer), listener);
+    }
+
+    /// Queue an encrypted frame. Returns false when not connected.
+    pub fn send(&self, message: Vec<u8>) -> bool {
+        if !self.connected.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
+        match self.outbound_tx.lock().unwrap().as_ref() {
+            Some(tx) => tx.send(message).is_ok(),
+            None => false,
+        }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Close the channel; the peer sees the socket close. (Named
+    /// `disconnect` because the generated Disposable interface already owns
+    /// `close`.)
+    pub fn disconnect(&self) {
+        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        *self.outbound_tx.lock().unwrap() = None;
+        self.connected.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl SecureSession {
+    fn spawn_link(&self, role: LinkRole, listener: Box<dyn SecureSessionListener>) {
+        use luciola::link::secure::SecureStream;
+        use tokio::io::AsyncWriteExt as _;
+
+        self.disconnect();
+        let listener: std::sync::Arc<dyn SecureSessionListener> = listener.into();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
+        let (out_tx, out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        *self.outbound_tx.lock().unwrap() = Some(out_tx);
+        let connected = self.connected.clone();
+        let seed = self.identity_seed.clone();
+
+        std::thread::Builder::new()
+            .name("luciola-secure-link".to_string())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(_) => return,
+                };
+                let mut shutdown = shutdown_rx;
+
+                rt.block_on(async move {
+                    let mut out_rx = out_rx;
+
+                    // Establish the channel.
+                    let stream: SecureStream = match role {
+                        LinkRole::Dial(address, port, pinned) => {
+                            match connect_secure(&address, port, &seed, &pinned).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    listener.on_state("error".into(), Some(e.to_string()));
+                                    return;
+                                }
+                            }
+                        }
+                        LinkRole::Listen(port, expected) => {
+                            let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+                                Ok(l) => l,
+                                Err(e) => {
+                                    listener.on_state("error".into(), Some(e.to_string()));
+                                    return;
+                                }
+                            };
+                            match accept_secure(&l, &seed, expected.as_deref()).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    listener.on_state("error".into(), Some(e.to_string()));
+                                    return;
+                                }
+                            }
+                        }
+                    };
+                    let mut stream = stream;
+                    connected.store(true, std::sync::atomic::Ordering::SeqCst);
+                    listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
+
+                    // Pump both directions until shutdown or transport error.
+                    loop {
+                        let mut buf: Vec<u8> = Vec::new();
+                        tokio::select! {
+                            _ = &mut shutdown => {
+                                let _ = stream.socket_mut().shutdown().await;
+                                break;
+                            }
+                            msg = out_rx.recv() => match msg {
+                                Some(m) => {
+                                    if stream.send(&m).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                None => break,
+                            },
+                            frame = stream.recv(&mut buf) => {
+                                if frame.is_err() {
+                                    break;
+                                }
+                                listener.on_message(buf.clone());
+                            }
+                        }
+                    }
+                    connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                    listener.on_state("closed".into(), None);
+                });
+            })
+            .ok();
+    }
 }

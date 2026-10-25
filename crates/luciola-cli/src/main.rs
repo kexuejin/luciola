@@ -122,6 +122,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 udp_port: port,
                 tcp_port: port + 1,
                 device: Some(luciola_net::DeviceDetector::detect()),
+                device_id: None,
+                product: None,
             };
 
             if qr {

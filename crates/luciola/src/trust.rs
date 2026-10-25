@@ -134,10 +134,26 @@ pub fn fingerprint(public_key: &[u8]) -> String {
     format!("sha256:{}", hex(&digest))
 }
 
-/// 6-digit comparison pin derived from the public key: both sides display it
-/// during pairing; a mismatch means MITM.
+/// 6-digit comparison pin derived from a single public key.
 pub fn short_pin(public_key: &[u8]) -> String {
     let digest = Sha256::digest(public_key);
+    let n = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000;
+    format!("{n:06}")
+}
+
+/// Symmetrical 6-digit comparison pin derived from two public keys.
+/// Both sides compute the exact same 6 digits regardless of connection direction,
+/// making it ideal for on-screen numeric verification between two devices during pairing.
+pub fn comparison_pin(pk_a: &[u8], pk_b: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    if pk_a < pk_b {
+        hasher.update(pk_a);
+        hasher.update(pk_b);
+    } else {
+        hasher.update(pk_b);
+        hasher.update(pk_a);
+    }
+    let digest = hasher.finalize();
     let n = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000;
     format!("{n:06}")
 }
@@ -235,5 +251,14 @@ mod tests {
         assert_eq!(short_pin(&id.public_key), short_pin(&id.public_key));
         let other = generate_identity();
         assert_ne!(id.short_pin, other.short_pin);
+    }
+
+    #[test]
+    fn comparison_pin_is_symmetric_and_stable() {
+        let a = generate_identity();
+        let b = generate_identity();
+        // A comparing with B equals B comparing with A
+        assert_eq!(comparison_pin(&a.public_key, &b.public_key), comparison_pin(&b.public_key, &a.public_key));
+        assert_eq!(comparison_pin(&a.public_key, &b.public_key).len(), 6);
     }
 }

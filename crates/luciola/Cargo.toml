@@ -17,4 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 ed25519-dalek.workspace = true
+x25519-dalek.workspace = true
+hkdf.workspace = true
+aes-gcm.workspace = true
 rand.workspace = true

@@ -76,6 +76,8 @@ pub fn default_candidates(addresses: &[String]) -> Vec<String> {
 ///
 /// The candidate sockets are dropped (closed) immediately — this function
 /// measures and selects, the caller connects on the winner.
+pub mod secure;
+
 pub async fn race_connect(addresses: Vec<String>, port: u16, config: RaceConfig) -> RaceOutcome {
     // Dedupe preserving order.
     let mut seen = std::collections::HashSet::new();
