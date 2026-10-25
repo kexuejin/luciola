@@ -92,6 +92,8 @@ fn derive_keys(
     let mut recv = [0u8; KEY_LEN];
     send.copy_from_slice(&okm[..KEY_LEN]);
     recv.copy_from_slice(&okm[KEY_LEN..]);
+    use zeroize::Zeroize;
+    okm.zeroize();
     (send, recv)
 }
 
