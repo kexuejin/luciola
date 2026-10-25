@@ -73,17 +73,15 @@ val verifyNativeLib = tasks.register("verifyNativeLib") {
 }
 tasks.matching { it.name.startsWith("publish") }.configureEach { dependsOn(verifyNativeLib) }
 
-// Central requires javadoc jars; KMP ships real sources jars already.
-val javadocJar = tasks.register("javadocJar", Jar::class) {
-    archiveClassifier.set("javadoc")
-    // javadoc for a KMP library: an empty (stub) jar satisfies Central validation
-    from(resources.text.fromString("luciola KMP — see https://github.com/kexuejin/luciola")) {
-        into(".")
-    }
-}
-
 publishing {
     publications.withType<MavenPublication>().configureEach {
+        // Central requires a javadoc artifact per module; a per-publication
+        // stub task (shared files break Gradle's implicit-dependency checks).
+        val javadocJar = tasks.register("javadocJar-${name}", Jar::class) {
+            archiveFileName.set("luciola-${name}-0.3.0-javadoc.jar")
+            archiveClassifier.set("javadoc")
+            from(resources.text.fromString("luciola KMP — see https://github.com/kexuejin/luciola"))
+        }
         artifact(javadocJar.get())
         pom {
             name.set("luciola")
@@ -115,7 +113,7 @@ publishing {
     repositories {
         maven {
             name = "Local"
-            setUrl("${layout.buildDirectory}/repoLocal")
+            setUrl(layout.buildDirectory.dir("repoLocal").get())
         }
         // Enable with -PcentralUrl=... -PcentralUser=... -PcentralToken=...
         // (Maven Central portal: https://central.sonatype.com -> your namespace)

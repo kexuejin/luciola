@@ -9,3 +9,5 @@
 
 # Native artifacts are built by scripts/publish-maven-local.sh, never committed
 bindings/luciola-kmp/src/androidMain/jniLibs/
+# release credentials never live in the repo (they live in ~/.luciola/)
+release.env

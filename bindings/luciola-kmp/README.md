@@ -16,6 +16,14 @@ Package: `io.github.kexuejin:luciola` (Kotlin package `io.github.kexuejin.luciol
   engine calls on iOS go through the Swift bindings
   (`bindings/luciola-swift`), implementing the same surface.
 
+## Consume
+
+Published on Maven Central:
+
+```kotlin
+implementation("io.github.kexuejin:luciola:0.3.0")
+```
+
 ## Consume (local Maven)
 
 ```kotlin

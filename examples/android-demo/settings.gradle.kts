@@ -6,6 +6,7 @@ pluginManagement {
         maven("https://maven.aliyun.com/repository/gradle-plugin")
         maven("https://maven.aliyun.com/repository/central")
         google()
+        mavenLocal()
         mavenCentral()
         gradlePluginPortal()
     }
@@ -17,21 +18,29 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
         mavenLocal()
+        mavenCentral()
         maven("https://maven.aliyun.com/repository/google")
         maven("https://maven.aliyun.com/repository/central")
         google()
+        mavenLocal()
         mavenCentral()
     }
 }
 
 rootProject.name = "luciola-android-demo"
 include(":app")
-// Dev wiring: consume the library as an included project. Real consumers use
-// the published artifact: implementation("io.github.kexuejin:luciola:0.3.0")
-// with mavenLocal() in repositories (see bindings/luciola-kmp/README.md).
+// Dev wiring: consume the library as an included project. Released consumers
+// use mavenLocal()
+        mavenCentral(): implementation("io.github.kexuejin:luciola:0.3.0")
 include(":luciola")
 project(":luciola").projectDir = file("../../bindings/luciola-kmp")
 // Dev wiring: consume the library as an included project. Real consumers use
+// the published artifact: implementation("io.github.kexuejin:luciola:0.3.0")
+// with mavenLocal()
+        mavenCentral() in repositories (see bindings/luciola-kmp/README.md).
+
+// Dev wiring: consume the library as an included project. Real consumers use
 // the published artifact: implementation("io.github.kexuejin:luciola-kmp:0.1.0")
-// with mavenLocal() in repositories (see bindings/luciola-kmp/README.md).
+// with mavenLocal()
+        mavenCentral() in repositories (see bindings/luciola-kmp/README.md).
 
