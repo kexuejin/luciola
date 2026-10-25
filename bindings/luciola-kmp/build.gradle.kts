@@ -59,6 +59,20 @@ kotlin {
     }
 }
 
+// The AAR must embed the Rust core; publishing without it produces a broken
+// artifact. scripts/publish-maven-local.sh builds the .so before publishing.
+val verifyNativeLib = tasks.register("verifyNativeLib") {
+    val so = File(projectDir, "src/androidMain/jniLibs/arm64-v8a/libluciola_uniffi.so")
+    doLast {
+        if (!so.isFile) {
+            throw GradleException(
+                "Missing $so.\nBuild it first:  cargo ndk -t arm64-v8a -o bindings/luciola-kmp/src/androidMain/jniLibs build --release -p luciola-uniffi\nor just run scripts/publish-maven-local.sh"
+            )
+        }
+    }
+}
+tasks.matching { it.name.startsWith("publish") }.configureEach { dependsOn(verifyNativeLib) }
+
 publishing {
     publications.withType<MavenPublication>().configureEach {
         pom {

@@ -31,14 +31,12 @@ metadata. Consumers must use Kotlin 2.2.x.
 
 ## Publish locally
 
-From a build that includes this module (e.g. `examples/android-demo`):
+One command from the repo root — builds the Rust core for Android and
+publishes to `~/.m2` (native binaries are never committed to git):
 
 ```bash
-./gradlew :luciola-kmp:publishToMavenLocal
+scripts/publish-maven-local.sh
 ```
 
-## Rebuild native bits
-
-```bash
-cargo ndk -t arm64-v8a -o bindings/luciola-kmp/src/androidMain/jniLibs build --release -p luciola-uniffi
-```
+Publishing without the freshly built `.so` fails fast (`verifyNativeLib`
+task guards every publish task).

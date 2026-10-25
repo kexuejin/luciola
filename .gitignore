@@ -6,3 +6,6 @@
 .vscode/
 *.log
 *.node
+
+# Native artifacts are built by scripts/publish-maven-local.sh, never committed
+bindings/luciola-kmp/src/androidMain/jniLibs/
