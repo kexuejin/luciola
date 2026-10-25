@@ -5,7 +5,9 @@ use luciola_proto::Profile;
 use qrcode::render::unicode;
 use qrcode::QrCode;
 use std::time::Duration;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tracing_subscriber::EnvFilter;
 
@@ -302,6 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
 async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
@@ -361,6 +364,7 @@ async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::erro
     }
 }
 
+#[cfg(unix)]
 async fn handle_agent_client(
     stream: UnixStream,
     mut rx: tokio::sync::broadcast::Receiver<String>,
@@ -408,4 +412,9 @@ async fn handle_agent_client(
             }
         }
     }
+}
+
+#[cfg(not(unix))]
+async fn run_agent(_socket_path: &str, _port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    Err("the discovery agent requires unix domain sockets (unix platforms only)".into())
 }
