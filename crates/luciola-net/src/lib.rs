@@ -327,7 +327,7 @@ impl NetworkDetector {
         }
 
         // Sort IPv4 by score desc
-        scored_v4.sort_by(|a, b| b.score.cmp(&a.score));
+        scored_v4.sort_by_key(|c| std::cmp::Reverse(c.score));
 
         // Result: high-scoring IPv4 first, then IPv6 candidates
         let mut candidates: Vec<String> = scored_v4.into_iter().map(|a| a.ip).collect();

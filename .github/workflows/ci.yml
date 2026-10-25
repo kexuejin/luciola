@@ -38,6 +38,7 @@ jobs:
       # and add the platform the library compiles against.
       - name: Android SDK licenses + platform 36
         run: |
+          export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin"
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" >/dev/null
       - name: Compile Android + JVM targets
