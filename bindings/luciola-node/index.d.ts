@@ -234,6 +234,17 @@ export class SecureChannel {
    * (64) is full because the peer stalled — back off and retry.
    */
   send(message: Buffer): boolean;
+  /**
+   * Retry policy for auto-reconnect: 2x exponential from minMs to maxMs,
+   * each delay jittered +-jitterPct percent (anti-thundering-herd).
+   * Defaults: 1000..60000ms, 20%.
+   */
+  setRetryPolicy(minMs: number, maxMs: number, jitterPct: number): void;
+  /**
+   * Keepalive cadence: ping after intervalMs idle; peer considered dead after
+   * deadAfterMs of silence. Raise both under Android Doze. Defaults 15000/30000.
+   */
+  setKeepalive(intervalMs: number, deadAfterMs: number): void;
   isConnected(): boolean;
   /** Link health counters (sent/received frames, connections, retries). */
   stats(): {

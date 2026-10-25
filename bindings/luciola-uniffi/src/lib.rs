@@ -685,10 +685,6 @@ enum LinkRole {
     Listen(u16, Option<Vec<u8>>),
 }
 
-const KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(15);
-const RECONNECT_MIN: std::time::Duration = std::time::Duration::from_secs(1);
-const RECONNECT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
-
 /// Link health counters for UI/diagnostics.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct LinkStats {
@@ -708,6 +704,40 @@ pub struct SecureSession {
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
     stats: std::sync::Arc<LinkStatsCounters>,
+    timings: std::sync::Arc<LinkTimings>,
+}
+
+/// Retry/keepalive timings, adjustable before/after connect.
+struct LinkTimings {
+    reconnect_min_ms: std::sync::atomic::AtomicU64,
+    reconnect_max_ms: std::sync::atomic::AtomicU64,
+    jitter_pct: std::sync::atomic::AtomicU64,
+    keepalive_ms: std::sync::atomic::AtomicU64,
+    dead_after_ms: std::sync::atomic::AtomicU64,
+}
+
+impl Default for LinkTimings {
+    fn default() -> Self {
+        let v = |x: u64| std::sync::atomic::AtomicU64::new(x);
+        Self {
+            reconnect_min_ms: v(1_000),
+            reconnect_max_ms: v(60_000),
+            jitter_pct: v(20),
+            keepalive_ms: v(15_000),
+            dead_after_ms: v(30_000),
+        }
+    }
+}
+
+impl LinkTimings {
+    fn backoff(&self, base: std::time::Duration) -> std::time::Duration {
+        let jitter = self.jitter_pct.load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+        let factor = 1.0 + jitter * (2.0 * (rand::random::<f64>() - 0.5));
+        let max = self
+            .reconnect_max_ms
+            .load(std::sync::atomic::Ordering::Relaxed) as f64;
+        std::time::Duration::from_millis(((base.as_millis() as f64 * factor).min(max)) as u64)
+    }
 }
 
 #[derive(Default)]
@@ -728,7 +758,32 @@ impl SecureSession {
             shutdown_tx: Mutex::new(None),
             connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stats: std::sync::Arc::new(LinkStatsCounters::default()),
+            timings: std::sync::Arc::new(LinkTimings::default()),
         }
+    }
+
+    /// Retry policy for auto-reconnect: exponential 2x from `min_ms` to
+    /// `max_ms`, each delay jittered by +-`jitter_pct` percent (anti-thundering-herd).
+    pub fn set_retry_policy(&self, min_ms: u64, max_ms: u64, jitter_pct: u64) {
+        let t = &self.timings;
+        t.reconnect_min_ms
+            .store(min_ms, std::sync::atomic::Ordering::Relaxed);
+        t.reconnect_max_ms
+            .store(max_ms.max(min_ms), std::sync::atomic::Ordering::Relaxed);
+        t.jitter_pct
+            .store(jitter_pct.min(90), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Keepalive cadence: ping after `interval_ms` idle, peer considered dead
+    /// after `dead_after_ms` of silence. Hosts raise both under Android Doze.
+    pub fn set_keepalive(&self, interval_ms: u64, dead_after_ms: u64) {
+        let t = &self.timings;
+        t.keepalive_ms
+            .store(interval_ms, std::sync::atomic::Ordering::Relaxed);
+        t.dead_after_ms.store(
+            dead_after_ms.max(interval_ms),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// Link health counters (sent/received frames, connections, retries).
@@ -817,6 +872,7 @@ impl SecureSession {
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
         let stats = self.stats.clone();
+        let timings = self.timings.clone();
 
         std::thread::Builder::new()
             .name("luciola-secure-link".to_string())
@@ -832,7 +888,9 @@ impl SecureSession {
 
                 rt.block_on(async move {
                     let mut out_rx = out_rx;
-                    let mut backoff = RECONNECT_MIN;
+                    let min = std::time::Duration::from_millis(
+                        timings.reconnect_min_ms.load(std::sync::atomic::Ordering::Relaxed));
+                    let mut backoff = min;
 
                     'outer: loop {
                         // Establish the channel.
@@ -840,7 +898,7 @@ impl SecureSession {
                             LinkRole::Dial(addresses, port, pinned, auto) => {
                                 match connect_secure_raced(addresses, port, &seed, &pinned).await {
                                     Ok(s) => {
-                                        backoff = RECONNECT_MIN;
+                                        backoff = min;
                                         s
                                     }
                                     Err(e) => {
@@ -850,15 +908,17 @@ impl SecureSession {
                                             return;
                                         }
                                         stats.reconnects.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        let jittered = timings.backoff(backoff);
                                         listener.on_state("retrying".into(), Some(format!(
                                             "{}; next attempt in {:?}",
-                                            e, backoff
+                                            e, jittered
                                         )));
                                         tokio::select! {
-                                            _ = tokio::time::sleep(backoff) => {}
+                                            _ = tokio::time::sleep(jittered) => {}
                                             _ = &mut shutdown => break 'outer,
                                         }
-                                        backoff = std::cmp::min(backoff * 2, RECONNECT_MAX);
+                                        backoff = std::cmp::min(backoff * 2, min.max(std::time::Duration::from_millis(
+                                            timings.reconnect_max_ms.load(std::sync::atomic::Ordering::Relaxed))));
                                         continue 'outer;
                                     }
                                 }
@@ -888,9 +948,13 @@ impl SecureSession {
                         listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
 
                         // Pump both directions; keepalive pings when idle.
-                        let mut keepalive = tokio::time::interval(KEEPALIVE_IDLE);
+                        let mut keepalive = tokio::time::interval(std::time::Duration::from_millis(
+                            timings.keepalive_ms.load(std::sync::atomic::Ordering::Relaxed)));
                         keepalive.reset();
                         let mut awaiting_pong = false;
+                        let dead_after = std::time::Duration::from_millis(
+                            timings.dead_after_ms.load(std::sync::atomic::Ordering::Relaxed));
+                        let _ = dead_after;
                         loop {
                             let mut buf: Vec<u8> = Vec::new();
                             tokio::select! {

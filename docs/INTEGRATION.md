@@ -47,9 +47,9 @@ deviceId 折叠同一物理设备上的多个产品。
 
 - `connect(addresses, port, pinnedKey, autoReconnect, listener)`:多地址竞速
   (Happy Eyeballs)后直接在胜出 socket 上握手,无竞速-建连间隙。
-- 断线自动重连(1s→30s 指数退避),状态回调:
+- 断线自动重连(默认 1s→60s 指数退避 + ±20% 抖动,`setRetryPolicy` 可调),状态回调:
   `connecting/connected/retrying/closed/error`。
-- 15s 空闲发 keepalive,连续两个周期无响应判定对端死亡(应对 Wi-Fi 省电)。
+- 15s 空闲发 keepalive,~30s 判死(`setKeepalive` 可调;Android Doze 下建议调至 45s/90s)。
 - `send()` 有界队列(64 帧):返回 false = 未连接或对端卡住,退避重试,
   **不要同步自旋**。
 - 监听方 `listen()` 是循环接受:一条连接关闭后自动重新等待。

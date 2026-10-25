@@ -493,6 +493,7 @@ pub struct SecureChannel {
     frames_received: std::sync::Arc<std::sync::atomic::AtomicU64>,
     connections_established: std::sync::Arc<std::sync::atomic::AtomicU64>,
     reconnect_attempts: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    timings: std::sync::Arc<LinkTimings>,
 }
 
 /// Link health counters.
@@ -510,9 +511,38 @@ enum ChannelRole {
     Listen(u16, Option<Vec<u8>>),
 }
 
-const KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(15);
-const RECONNECT_MIN: std::time::Duration = std::time::Duration::from_secs(1);
-const RECONNECT_MAX: std::time::Duration = std::time::Duration::from_secs(30);
+/// Retry/keepalive timings, adjustable before/after connect.
+struct LinkTimings {
+    reconnect_min_ms: std::sync::atomic::AtomicU64,
+    reconnect_max_ms: std::sync::atomic::AtomicU64,
+    jitter_pct: std::sync::atomic::AtomicU64,
+    keepalive_ms: std::sync::atomic::AtomicU64,
+    dead_after_ms: std::sync::atomic::AtomicU64,
+}
+
+impl LinkTimings {
+    fn backoff(&self, base: std::time::Duration) -> std::time::Duration {
+        let jitter = self.jitter_pct.load(std::sync::atomic::Ordering::Relaxed) as f64 / 100.0;
+        let factor = 1.0 + jitter * (2.0 * (rand::random::<f64>() - 0.5));
+        let max = self
+            .reconnect_max_ms
+            .load(std::sync::atomic::Ordering::Relaxed) as f64;
+        std::time::Duration::from_millis(((base.as_millis() as f64 * factor).min(max)) as u64)
+    }
+}
+
+impl Default for LinkTimings {
+    fn default() -> Self {
+        let v = |x: u64| std::sync::atomic::AtomicU64::new(x);
+        Self {
+            reconnect_min_ms: v(1_000),
+            reconnect_max_ms: v(60_000),
+            jitter_pct: v(20),
+            keepalive_ms: v(15_000),
+            dead_after_ms: v(30_000),
+        }
+    }
+}
 
 #[napi]
 impl SecureChannel {
@@ -527,7 +557,34 @@ impl SecureChannel {
             frames_received: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             connections_established: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             reconnect_attempts: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            timings: std::sync::Arc::new(LinkTimings::default()),
         }
+    }
+
+    /// Retry policy for auto-reconnect: 2x exponential from minMs to maxMs,
+    /// each delay jittered +-jitterPct percent.
+    #[napi]
+    pub fn set_retry_policy(&self, min_ms: f64, max_ms: f64, jitter_pct: f64) {
+        let t = &self.timings;
+        let (mn, mx, j) = (min_ms as u64, max_ms as u64, jitter_pct as u64);
+        t.reconnect_min_ms
+            .store(mn, std::sync::atomic::Ordering::Relaxed);
+        t.reconnect_max_ms
+            .store(mx.max(mn), std::sync::atomic::Ordering::Relaxed);
+        t.jitter_pct
+            .store(j.min(90), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Keepalive cadence: ping after intervalMs idle; dead after deadAfterMs
+    /// of silence. Raise both under Android Doze.
+    #[napi]
+    pub fn set_keepalive(&self, interval_ms: f64, dead_after_ms: f64) {
+        let t = &self.timings;
+        let (i, d) = (interval_ms as u64, dead_after_ms as u64);
+        t.keepalive_ms
+            .store(i, std::sync::atomic::Ordering::Relaxed);
+        t.dead_after_ms
+            .store(d.max(i), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Link health counters (sent/received frames, connections, retries).
@@ -651,6 +708,7 @@ impl SecureChannel {
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
+        let timings = self.timings.clone();
         let (frames_sent, frames_received) =
             (self.frames_sent.clone(), self.frames_received.clone());
         let (connections_established, reconnect_attempts) = (
@@ -673,14 +731,16 @@ impl SecureChannel {
 
                 rt.block_on(async move {
                     let mut out_rx = out_rx;
-                    let mut backoff = RECONNECT_MIN;
+                    let min = std::time::Duration::from_millis(
+                        timings.reconnect_min_ms.load(std::sync::atomic::Ordering::Relaxed));
+                    let mut backoff = min;
 
                     'outer: loop {
                         let stream = match role.clone() {
                             ChannelRole::Dial(addresses, port, pinned, auto) => {
                                 match connect_secure_raced(addresses, port, &seed, &pinned).await {
                                     Ok(s) => {
-                                        backoff = RECONNECT_MIN;
+                                        backoff = min;
                                         s
                                     }
                                     Err(e) => {
@@ -690,12 +750,15 @@ impl SecureChannel {
                                             return;
                                         }
                                         reconnect_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        tsfn.call((Some("retrying".to_string()), Some(format!("{}; next attempt in {:?}", e, backoff)), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                        let jittered = timings.backoff(backoff);
+                                        tsfn.call((Some("retrying".to_string()), Some(format!("{}; next attempt in {:?}", e, jittered)), None), ThreadsafeFunctionCallMode::NonBlocking);
                                         tokio::select! {
-                                            _ = tokio::time::sleep(backoff) => {}
+                                            _ = tokio::time::sleep(jittered) => {}
                                             _ = &mut shutdown => break 'outer,
                                         }
-                                        backoff = std::cmp::min(backoff * 2, RECONNECT_MAX);
+                                        let cap = std::time::Duration::from_millis(
+                                            timings.reconnect_max_ms.load(std::sync::atomic::Ordering::Relaxed));
+                                        backoff = std::cmp::min(backoff * 2, cap.max(min));
                                         continue 'outer;
                                     }
                                 }
@@ -723,7 +786,8 @@ impl SecureChannel {
                         connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         tsfn.call((Some("connected".to_string()), Some(stream.peer_fingerprint()), None), ThreadsafeFunctionCallMode::NonBlocking);
 
-                        let mut keepalive = tokio::time::interval(KEEPALIVE_IDLE);
+                        let mut keepalive = tokio::time::interval(std::time::Duration::from_millis(
+                            timings.keepalive_ms.load(std::sync::atomic::Ordering::Relaxed)));
                         keepalive.reset();
                         let mut awaiting_pong = false;
                         loop {

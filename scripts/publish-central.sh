@@ -11,6 +11,7 @@ source "$HOME/.luciola/central.env"
 [ -f "$HOME/.luciola/signing-key.asc" ] || { echo "missing ~/.luciola/signing-key.asc" >&2; exit 1; }
 
 echo "==> [1/4] Signed publish to staging dir..."
+rm -rf bindings/luciola-kmp/build/repoLocal   # only the new version may enter the bundle
 ESC_KEY=$(awk '{printf "%s\\n", $0}' "$HOME/.luciola/signing-key.asc")
 (cd examples/android-demo && ./gradlew :luciola:publishAllPublicationsToLocalRepository \
   --no-daemon -q -PsigningKey="$ESC_KEY" -PsigningPassword="")
