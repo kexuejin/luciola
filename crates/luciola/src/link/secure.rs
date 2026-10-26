@@ -208,6 +208,12 @@ pub async fn secure_handshake_client(
     identity_seed: &[u8],
     pinned_peer_public_key: &[u8],
 ) -> Result<SecureStream, LinkError> {
+    // 关掉 Nagle。`send` 是「4 字节长度 + 密文」两次 write_all：第一段是个小包，
+    // 开着 Nagle 会被攒着等 ACK（对端延迟 ACK 时单帧多出几十毫秒）。加密信道上
+    // 我们自己已经按整帧写，没有需要 Nagle 去合的小包。
+    // 注：回环实测（release 引擎、10fps×100KiB）关与不关都是 p95≈6ms —— 这条是
+    // 防御性的正确做法，不是某个具体数字的修复。
+    let _ = socket.set_nodelay(true);
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
@@ -278,6 +284,9 @@ pub async fn secure_handshake_server(
     identity_seed: &[u8],
     expected_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError> {
+    // 与客户端同一条：关掉 Nagle（原因见 `secure_handshake_client`）。
+    // 服务端这条同样重要：画面与文件的回程都从这里出去。
+    let _ = socket.set_nodelay(true);
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
