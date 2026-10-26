@@ -63,6 +63,37 @@ pub struct PeerRegistry {
     peers: HashMap<String, PeerRecord>,
 }
 
+/// How suitable an address is for dialling: lower is better.
+///
+/// IPv4 first, then global IPv6, then link-local (which needs a scope id and
+/// only works on one link). Anything unparsable sorts last.
+fn address_rank(ip: &str) -> u8 {
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(_)) => 0,
+        Ok(std::net::IpAddr::V6(v6)) => {
+            let o = v6.octets();
+            if (u16::from_be_bytes([o[0], o[1]]) & 0xffc0) == 0xfe80 {
+                2
+            } else {
+                1
+            }
+        }
+        Err(_) => 3,
+    }
+}
+
+/// Whether a freshly seen address should replace the one already recorded.
+///
+/// Stable while the peer stays online, but a peer that comes back after a gap
+/// may legitimately have moved networks, and an address of the same rank is
+/// never swapped out — that is what caused mid-session flicker.
+fn should_take_new_address(was_offline: bool, current_ip: &str, candidate: &str) -> bool {
+    if was_offline || current_ip.is_empty() || current_ip == candidate {
+        return true;
+    }
+    address_rank(candidate) < address_rank(current_ip)
+}
+
 impl PeerRegistry {
     pub fn new() -> Self {
         Self {
@@ -85,8 +116,22 @@ impl PeerRegistry {
             let was_offline = !existing.online;
             existing.last_seen = now;
             existing.online = true;
-            existing.ip = ip.to_string();
-            existing.udp_port = udp_port;
+            // Keep the best address we have seen while the peer stays online
+            // instead of the newest one. Both families arrive continuously on a
+            // multi-homed host (IPv4 subnet broadcast plus the ff02::1 group),
+            // and last-write-wins made the record flicker between interfaces
+            // mid-session — measured 1 run in 6 switching between
+            // 10.233.138.167 and fe80::1027:fbf:772:d1f7, while any dial that
+            // lands in that window gets the other family.
+            //
+            // A peer that reappears after a gap is allowed to move (it may have
+            // changed networks), so an offline -> online transition always
+            // takes the new address.
+            let take_new_address = should_take_new_address(was_offline, &existing.ip, ip);
+            if take_new_address {
+                existing.ip = ip.to_string();
+                existing.udp_port = udp_port;
+            }
 
             if let Some(p) = profile {
                 if p.profile_rev >= existing.profile_rev {
@@ -635,6 +680,36 @@ impl DiscoveryEngine {
 
 #[cfg(test)]
 mod tests {
+    use super::{address_rank, should_take_new_address};
+
+    #[test]
+    fn address_rank_orders_v4_before_global_v6_before_link_local() {
+        assert!(address_rank("192.168.2.82") < address_rank("2408:8248:2020::1"));
+        assert!(address_rank("2408:8248:2020::1") < address_rank("fe80::1027:fbf:772:d1f7"));
+        assert!(address_rank("fe80::1") < address_rank("not-an-address"));
+    }
+
+    #[test]
+    fn a_live_peer_keeps_its_address_instead_of_flapping() {
+        // The measured failure: the record switched from an IPv4 address to a
+        // link-local one mid-session and back.
+        assert!(!should_take_new_address(false, "10.233.138.167", "fe80::1027:fbf:772:d1f7"));
+        assert!(!should_take_new_address(false, "192.168.2.82", "10.233.138.167"));
+    }
+
+    #[test]
+    fn a_better_address_still_wins_while_online() {
+        assert!(should_take_new_address(false, "fe80::1", "192.168.2.82"));
+    }
+
+    #[test]
+    fn a_peer_that_returns_after_a_gap_may_have_moved() {
+        assert!(should_take_new_address(true, "192.168.2.82", "10.9.9.9"));
+        assert!(should_take_new_address(false, "", "fe80::1"));
+        // Same address: refresh the ports without touching the address.
+        assert!(should_take_new_address(false, "192.168.2.82", "192.168.2.82"));
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -757,21 +832,37 @@ mod tests {
         // Node B announces to Node A
         engine_b.announce().await;
 
-        // Verify Node A discovered Node B
-        let event_a = tokio::time::timeout(Duration::from_secs(3), sub_a.recv()).await;
-        assert!(event_a.is_ok(), "Node A should discover Node B within 3s");
-        if let Ok(Ok(PeerEvent::Found(p))) = event_a {
-            assert_eq!(p.node_id, "node_B");
-            assert_eq!(p.name, "Beta");
-        }
+        // Tests must not depend on the machine they run on: a real phone on
+        // this LAN also announces, so wait for the peer this test created
+        // instead of asserting whatever arrives first (that used to fail with
+        // node_id "uniffi_79235686" — the phone — when the suite ran while the
+        // product was running).
+        let event_a = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Ok(PeerEvent::Found(p)) = sub_a.recv().await {
+                    if p.node_id == "node_B" {
+                        return p;
+                    }
+                }
+            }
+        })
+        .await;
+        let found_b = event_a.expect("Node A should discover Node B within 3s");
+        assert_eq!(found_b.name, "Beta");
 
         // Verify Node B discovered Node A (via Alive reply)
-        let event_b = tokio::time::timeout(Duration::from_secs(3), sub_b.recv()).await;
-        assert!(event_b.is_ok(), "Node B should discover Node A within 3s");
-        if let Ok(Ok(PeerEvent::Found(p))) = event_b {
-            assert_eq!(p.node_id, "node_A");
-            assert_eq!(p.name, "Alpha");
-        }
+        let event_b = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Ok(PeerEvent::Found(p)) = sub_b.recv().await {
+                    if p.node_id == "node_A" {
+                        return p;
+                    }
+                }
+            }
+        })
+        .await;
+        let found_a = event_b.expect("Node B should discover Node A within 3s");
+        assert_eq!(found_a.name, "Alpha");
 
         // Node B announces exit -> Node A immediately marks offline
         engine_b.announce_exit().await;
