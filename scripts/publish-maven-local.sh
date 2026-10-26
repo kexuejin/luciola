@@ -19,20 +19,32 @@ test -f "$SO_DIR/libluciola_uniffi.so" || { echo ".so missing after build" >&2; 
 
 PUBLISH_TASK=":luciola:publishToMavenLocal"
 EXTRA_ARGS=()
-if [ -n "$CENTRAL_URL" ]; then
+# `set -u` above means an unset CENTRAL_URL aborted the publish before it even
+# started; every optional override has to be defaulted, not merely tested.
+if [ -n "${CENTRAL_URL:-}" ]; then
   PUBLISH_TASK=":luciola:publishAllPublicationsToCentralRepository"
-  EXTRA_ARGS=(-PcentralUrl="$CENTRAL_URL" -PcentralUser="$CENTRAL_USER" -PcentralToken="$CENTRAL_TOKEN")
+  EXTRA_ARGS=(-PcentralUrl="$CENTRAL_URL" -PcentralUser="${CENTRAL_USER:-}" -PcentralToken="${CENTRAL_TOKEN:-}")
 fi
 echo "==> [2/3] Publishing luciola ($PUBLISH_TASK)..."
-(cd examples/android-demo && ./gradlew "$PUBLISH_TASK" --no-daemon -q "${EXTRA_ARGS[@]}")
+# bash 3.2 (the one macOS ships) treats "${EMPTY[@]}" as unbound under set -u;
+# the +form expands to nothing when the array is empty.
+(cd examples/android-demo && ./gradlew "$PUBLISH_TASK" --no-daemon -q ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
 
 echo "==> [3/3] Verifying the published AAR embeds the native lib..."
-AAR=$(ls -t ~/.m2/repository/io/github/kexuejin/luciola-android/*/luciola-kmp-android-*.aar | head -1)
+# The artifact is luciola-android-<version>.aar; the previous glob
+# (luciola-kmp-android-*.aar) never matched anything, so this check silently
+# "failed open" and reported success without verifying.
+VERSION=$(grep -m1 '^version = ' "$KMP/build.gradle.kts" | sed 's/.*"\(.*\)".*/\1/')
+AAR="$HOME/.m2/repository/io/github/kexuejin/luciola-android/$VERSION/luciola-android-$VERSION.aar"
+if [ ! -f "$AAR" ]; then
+  echo "Publish produced no artifact at $AAR" >&2
+  exit 1
+fi
 if ! unzip -l "$AAR" | grep -q "jni/arm64-v8a/libluciola_uniffi.so"; then
   echo "Published AAR does NOT contain the native lib: $AAR" >&2
   exit 1
 fi
 echo "OK: $AAR contains jni/arm64-v8a/libluciola_uniffi.so"
-echo "Done (mavenLocal). Consumers: implementation(\"io.github.kexuejin:luciola:0.3.0\")"
+echo "Done (mavenLocal). Consumers: implementation(\"io.github.kexuejin:luciola-android:$VERSION\")"
 echo "Remote (Central) when ready: set CENTRAL_URL/CENTRAL_USER/CENTRAL_TOKEN env + GPG"
 echo "  signingKey/signingPassword gradle properties, then rerun this script."
