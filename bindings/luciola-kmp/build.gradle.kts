@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.github.kexuejin"
-version = "0.4.3"
+version = "0.4.4"
 
 repositories {
     mavenCentral()
@@ -18,7 +18,9 @@ kotlin {
     androidLibrary {
         namespace = "io.github.kexuejin.luciola"
         compileSdk = 36
-        minSdk = 26
+        // 24 而不是 26:消费方(消费方)minSdk=24;本库的 Android 侧只用到
+        // JNA + 标准 socket,没有 API 26 才有的调用。26 会让整包安装要求升到 8.0。
+        minSdk = 24
     }
 
     // Desktop JVM (tooling / future Compose Desktop demo); the uniffi Kotlin
@@ -78,7 +80,7 @@ publishing {
         // Central requires a javadoc artifact per module; a per-publication
         // stub task (shared files break Gradle's implicit-dependency checks).
         val javadocJar = tasks.register("javadocJar-${name}", Jar::class) {
-            archiveFileName.set("luciola-${name}-0.4.3-javadoc.jar")
+            archiveFileName.set("luciola-${name}-0.4.4-javadoc.jar")
             archiveClassifier.set("javadoc")
             from(resources.text.fromString("luciola KMP — see https://github.com/kexuejin/luciola"))
         }
