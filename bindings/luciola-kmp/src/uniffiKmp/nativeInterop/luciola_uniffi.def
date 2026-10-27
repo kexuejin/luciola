@@ -1,0 +1,11 @@
+# Kotlin/Native cinterop 定义（gobley 生成的绑定通过它调用 C FFI）。
+#
+# package 必须与生成代码里的引用一致：nativeMain 的绑定写的是
+#   luciola_uniffi.cinterop.ffi_luciola_uniffi_rustbuffer_alloc(...)
+# 所以这里是 luciola_uniffi.cinterop（不是 luciola_uniffi）。
+package = luciola_uniffi.cinterop
+headers = luciola_uniffi.h
+headerFilter = luciola_uniffi.h
+# 静态库由 scripts/build-ios-natives.sh 用 cargo 交叉编译产出；
+# 具体路径由 Gradle 按目标（设备 / 模拟器）用 -libraryPath 传进来。
+staticLibraries = libluciola_uniffi.a
