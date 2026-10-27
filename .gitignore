@@ -11,3 +11,7 @@
 bindings/luciola-kmp/src/androidMain/jniLibs/
 # release credentials never live in the repo (they live in ~/.luciola/)
 release.env
+
+# gobley 生成的 KMP 绑定（scripts/generate-kmp-bindings.sh 的默认输出）。
+# 是**生成物**：每次改 Rust 接口都要重新生成，提交它只会造成两份真相。
+/build/
