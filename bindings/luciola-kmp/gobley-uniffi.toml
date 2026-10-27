@@ -1,0 +1,12 @@
+# gobley-uniffi-bindgen 的配置（**扁平**，不要写成 [bindings.kotlin] 段）。
+#
+# 为什么扁平：gobley 的 new_config 直接对根 toml 反序列化成 Config，
+# 而 uniffi 自带 Kotlin 后端才会去找 [bindings.kotlin]。写成带段的形式时，
+# 表现是「只生成 commonMain，其余源集静默缺失」——不报错，最难查。
+#
+# kotlin_targets 决定生成哪些源集；native 那项是 iOS 能用的前提。
+
+package_name = "uniffi.luciola_uniffi"
+cdylib_name = "luciola_uniffi"
+kotlin_multiplatform = true
+kotlin_targets = ["jvm", "android", "native"]
