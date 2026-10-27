@@ -98,6 +98,13 @@ pub struct Profile {
     /// without losing app fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<String>,
+    /// Ed25519 identity public key (32 bytes, see `luciola::trust`).
+    ///
+    /// Optional with serde default + skip on None so v1 frames without the
+    /// field keep decoding losslessly in BOTH directions (an old peer simply
+    /// never sees the key on the wire).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<Vec<u8>>,
 }
 
 /// Message types in the Luciola discovery protocol.
@@ -394,6 +401,7 @@ mod tests {
             }),
             device_id: Some("dev_123".to_string()),
             product: Some("my-app".to_string()),
+            public_key: None,
         };
 
         let env = Codec::make_entry(&profile, Some("probe_1"));
@@ -416,5 +424,77 @@ mod tests {
         assert!(!tracker.should_reply("node1", false));
         // Directed reply is never rejected
         assert!(tracker.should_reply("node1", true));
+    }
+
+    /// Level-1 acceptance: a v1 discovery frame WITHOUT `public_key` (existing
+    /// deployed peers) must keep decoding losslessly.
+    #[test]
+    fn legacy_v1_profile_without_public_key_decodes() {
+        let legacy = serde_json::json!({
+            "node_id": "node_old",
+            "name": "Old Peer",
+            "profile_rev": 1,
+            "addresses": ["192.168.1.10"],
+            "udp_port": 17878,
+            "tcp_port": 17879,
+        });
+        let p: Profile = serde_json::from_value(legacy).expect("legacy profile decodes");
+        assert!(p.public_key.is_none());
+    }
+
+    /// Level-1 acceptance: a profile carrying a 32-byte Ed25519 key must
+    /// round-trip byte-exact through the codec.
+    #[test]
+    fn profile_with_public_key_roundtrips() {
+        let key: Vec<u8> = (0..32).map(|i| (i * 7 + 3) as u8).collect();
+        let mut p = Profile {
+            node_id: "node_k".to_string(),
+            name: "Keyed Peer".to_string(),
+            profile_rev: 2,
+            addresses: vec!["192.168.1.11".to_string()],
+            udp_port: 17878,
+            tcp_port: 17879,
+            device: None,
+            device_id: None,
+            product: None,
+            extra: None,
+            public_key: Some(key.clone()),
+        };
+        let env = Codec::make_entry(&p, None);
+        let back = Codec::decode(&Codec::encode(&env).unwrap())
+            .unwrap()
+            .extract_profile()
+            .expect("extract");
+        assert_eq!(back.public_key, Some(key));
+
+        // Toggling back to None keeps the field off the wire.
+        p.public_key = None;
+        let env2 = Codec::make_alive(&p, None);
+        let back2 = Codec::decode(&Codec::encode(&env2).unwrap())
+            .unwrap()
+            .extract_profile()
+            .unwrap();
+        assert!(back2.public_key.is_none());
+    }
+
+    /// Level-1 acceptance: `public_key: None` must be fully ABSENT from the
+    /// serialized JSON (old peers must never see the key name at all).
+    #[test]
+    fn none_public_key_is_omitted_from_wire() {
+        let p = Profile {
+            node_id: "node_n".to_string(),
+            name: "Bare Peer".to_string(),
+            profile_rev: 1,
+            addresses: vec![],
+            udp_port: 1,
+            tcp_port: 2,
+            device: None,
+            device_id: None,
+            product: None,
+            extra: None,
+            public_key: None,
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(!s.contains("public_key"), "wire JSON leaked key name: {s}");
     }
 }

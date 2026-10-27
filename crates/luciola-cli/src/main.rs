@@ -147,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 device_id: None,
                 product: None,
                 extra: None,
+                public_key: None,
             };
 
             if qr {
@@ -324,6 +325,7 @@ async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::erro
         device_id: None,
         product: Some("luciola-agent".into()),
         extra: None,
+        public_key: None,
     };
     let config = DiscoveryConfig {
         self_profile: profile,

@@ -9,6 +9,8 @@ pub mod pairing;
 pub mod trust;
 pub use luciola_net as net;
 pub use luciola_proto as proto;
+#[cfg(feature = "transfer")]
+pub use luciola_transfer as transfer;
 
 use luciola_net::NetworkDetector;
 use luciola_proto::{AliveDedupTracker, Codec, Envelope, JitterScheduler, MsgType, Profile};
@@ -47,6 +49,8 @@ pub struct PeerRecord {
     pub product: Option<String>,
     /// Opaque application payload carried alongside discovery (mDNS-TXT style).
     pub extra: Option<String>,
+    /// Ed25519 identity public key advertised by the peer (see `trust`).
+    pub public_key: Option<Vec<u8>>,
 }
 
 /// Discovery events emitted by the engine.
@@ -142,6 +146,7 @@ impl PeerRegistry {
                     existing.device_id = p.device_id.clone();
                     existing.product = p.product.clone();
                     existing.extra = p.extra.clone();
+                    existing.public_key = p.public_key.clone();
                 }
             }
 
@@ -161,6 +166,7 @@ impl PeerRegistry {
                 device_id: p.device_id.clone(),
                 product: p.product.clone(),
                 extra: p.extra.clone(),
+                public_key: p.public_key.clone(),
             };
             self.peers.insert(node_id.to_string(), record.clone());
             (Some(record), true)
@@ -233,6 +239,7 @@ impl Default for DiscoveryConfig {
                 device_id,
                 product: None,
                 extra: None,
+                public_key: None,
             },
             listen_port: 17878,
             broadcast_port: 17878,
@@ -693,8 +700,16 @@ mod tests {
     fn a_live_peer_keeps_its_address_instead_of_flapping() {
         // The measured failure: the record switched from an IPv4 address to a
         // link-local one mid-session and back.
-        assert!(!should_take_new_address(false, "10.233.138.167", "fe80::1027:fbf:772:d1f7"));
-        assert!(!should_take_new_address(false, "192.168.2.82", "10.233.138.167"));
+        assert!(!should_take_new_address(
+            false,
+            "10.233.138.167",
+            "fe80::1027:fbf:772:d1f7"
+        ));
+        assert!(!should_take_new_address(
+            false,
+            "192.168.2.82",
+            "10.233.138.167"
+        ));
     }
 
     #[test]
@@ -707,7 +722,11 @@ mod tests {
         assert!(should_take_new_address(true, "192.168.2.82", "10.9.9.9"));
         assert!(should_take_new_address(false, "", "fe80::1"));
         // Same address: refresh the ports without touching the address.
-        assert!(should_take_new_address(false, "192.168.2.82", "192.168.2.82"));
+        assert!(should_take_new_address(
+            false,
+            "192.168.2.82",
+            "192.168.2.82"
+        ));
     }
 
     use super::*;
@@ -726,6 +745,7 @@ mod tests {
             device_id: None,
             product: None,
             extra: None,
+            public_key: None,
         };
         let config_a = DiscoveryConfig {
             self_profile: profile_a,
@@ -747,6 +767,7 @@ mod tests {
             device_id: None,
             product: None,
             extra: None,
+            public_key: None,
         };
         let config_b = DiscoveryConfig {
             self_profile: profile_b,
@@ -793,6 +814,7 @@ mod tests {
             device_id: None,
             product: None,
             extra: None,
+            public_key: None,
         };
         let config_a = DiscoveryConfig {
             self_profile: profile_a,
@@ -813,6 +835,7 @@ mod tests {
             device_id: None,
             product: None,
             extra: None,
+            public_key: None,
         };
         let port_a = engine_a.local_port().await.unwrap();
         let config_b = DiscoveryConfig {
