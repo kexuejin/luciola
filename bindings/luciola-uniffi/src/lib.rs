@@ -897,6 +897,13 @@ impl SecureSession {
 
                 rt.block_on(async move {
                     let mut out_rx = out_rx;
+                    // **写失败的帧绝不静默丢弃**：留在 pending 里，重连后第一件事就是补发。
+                    //
+                    // 原来 stream.send(&m) 失败时直接 break，m 被丢掉，而应用层的
+                    // `send()` 早就因为 try_send 成功返回了 true —— 于是出现
+                    // 「JVM 侧 send() 成功 11776 次，Rust 真正发出只有 941 帧」。
+                    // pending 声明在 'outer 循环**外面**，所以它跨重连存活。
+                    let mut pending: Option<Vec<u8>> = None;
                     let min = std::time::Duration::from_millis(
                         timings.reconnect_min_ms.load(std::sync::atomic::Ordering::Relaxed));
                     let mut backoff = min;
@@ -965,6 +972,19 @@ impl SecureSession {
                             timings.dead_after_ms.load(std::sync::atomic::Ordering::Relaxed));
                         let _ = dead_after;
                         loop {
+                            // 先补发上次写失败的那一帧（await 在这里是安全的，不在 select 里）。
+                            if let Some(p) = pending.take() {
+                                match stream.send(&p).await {
+                                    Ok(()) => {
+                                        stats.frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        continue;
+                                    }
+                                    Err(_) => {
+                                        pending = Some(p);
+                                        break;
+                                    }
+                                }
+                            }
                             let mut buf: Vec<u8> = Vec::new();
                             tokio::select! {
                                 _ = &mut shutdown => {
@@ -988,6 +1008,8 @@ impl SecureSession {
                                         if stream.send(&m).await.is_ok() {
                                             stats.frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         } else {
+                                            // 写失败：留着，重连后补发；不许丢。
+                                            pending = Some(m);
                                             break;
                                         }
                                     }

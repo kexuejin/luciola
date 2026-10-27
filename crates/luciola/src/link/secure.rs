@@ -42,6 +42,9 @@ const SIG_LEN: usize = 64;
 /// Largest plaintext frame accepted (guards against length-field DoS).
 pub const MAX_FRAME_LEN: u32 = 8 * 1024 * 1024;
 
+/// single read chunk (each read is a cancellation point)
+const READ_CHUNK: usize = 64 * 1024;
+
 #[derive(Error, Debug)]
 pub enum LinkError {
     #[error("io error: {0}")]
@@ -104,6 +107,11 @@ pub struct SecureStream {
     recv_cipher: Aes256Gcm,
     send_counter: AtomicU64,
     recv_counter: u64,
+    /// 已从 socket 读出、尚未解出完整帧的字节（半帧状态）。
+    ///
+    /// 必须留在结构体里而不是局部变量：调用方在 `tokio::select!` 里 poll `recv`，
+    /// 别的分支先完成就会 drop 这个 future —— 状态放在局部变量里就丢了。
+    in_buf: Vec<u8>,
     /// Peer's Ed25519 public key, verified during the handshake.
     pub peer_public_key: Vec<u8>,
 }
@@ -132,30 +140,67 @@ impl SecureStream {
         Ok(())
     }
 
-    /// Receive one encrypted frame. Fails on tampering, replay, or EOF.
+    /// Receive one encrypted frame.
+    ///
+    /// # 取消安全（这是本函数存在的关键原因）
+    ///
+    /// 调用方在 `tokio::select!` 里 poll 这个 future，**任何别的分支先完成都会把它
+    /// 直接 drop**。原来的实现用两次 `read_exact`（先 4 字节长度、再密文），而
+    /// `read_exact` 不是取消安全的：它内部循环读，被 drop 时**已经读出来的字节就丢了**。
+    ///
+    /// 后果（2026-10-27 实测，50MB 通道验收）：下一次 `recv` 会把密文的头 4 字节当成
+    /// 长度前缀 → 长度越界 / GCM 认证失败 → 连接 `break` → 重连；
+    /// 应用层看到的是"JVM 侧 send() 成功 11776 次，Rust 真正发出只有 941 帧"。
+    ///
+    /// 现在改成：**只在自己累积的缓冲上解析**，读用单次 `read()`（取消安全：要么
+    /// 完成、要么一个字节都没消费），半帧状态留在 `in_buf` 里，下次接着解析。
     pub async fn recv(&mut self, buf: &mut Vec<u8>) -> Result<(), LinkError> {
-        let mut len_bytes = [0u8; 4];
-        self.socket.read_exact(&mut len_bytes).await?;
-        let ct_len = u32::from_be_bytes(len_bytes) as usize;
-        if ct_len < 16 || ct_len > MAX_FRAME_LEN as usize + 16 {
-            return Err(LinkError::Tamper("frame length out of bounds".into()));
+        loop {
+            // 1) 缓冲里够一帧就解一帧（纯内存，没有 await 点，不会被取消）。
+            if self.in_buf.len() >= 4 {
+                let ct_len = u32::from_be_bytes([
+                    self.in_buf[0],
+                    self.in_buf[1],
+                    self.in_buf[2],
+                    self.in_buf[3],
+                ]) as usize;
+                if ct_len < 16 || ct_len > MAX_FRAME_LEN as usize + 16 {
+                    return Err(LinkError::Tamper("frame length out of bounds".into()));
+                }
+                if self.in_buf.len() >= 4 + ct_len {
+                    if self.recv_counter == u64::MAX {
+                        return Err(LinkError::Tamper("recv counter exhausted".into()));
+                    }
+                    let counter = self.recv_counter;
+                    let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
+                    let pt = self
+                        .recv_cipher
+                        .decrypt(
+                            &nonce,
+                            Payload {
+                                msg: &self.in_buf[4..4 + ct_len],
+                                aad: &[],
+                            },
+                        )
+                        .map_err(|_| LinkError::Tamper("frame failed authentication".into()))?;
+                    self.in_buf.drain(..4 + ct_len);
+                    self.recv_counter += 1;
+                    buf.clear();
+                    buf.extend_from_slice(&pt);
+                    return Ok(());
+                }
+            }
+            // 2) 不够就再读一批。单次 read 是取消安全的。
+            let mut tmp = vec![0u8; READ_CHUNK];
+            let n = self.socket.read(&mut tmp).await?;
+            if n == 0 {
+                return Err(LinkError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "peer closed the connection",
+                )));
+            }
+            self.in_buf.extend_from_slice(&tmp[..n]);
         }
-        let mut ct = vec![0u8; ct_len];
-        self.socket.read_exact(&mut ct).await?;
-        // Strictly increasing counters: duplicates/replays abort.
-        if self.recv_counter == u64::MAX {
-            return Err(LinkError::Tamper("recv counter exhausted".into()));
-        }
-        let counter = self.recv_counter;
-        let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
-        let pt = self
-            .recv_cipher
-            .decrypt(&nonce, Payload { msg: &ct, aad: &[] })
-            .map_err(|_| LinkError::Tamper("frame failed authentication".into()))?;
-        self.recv_counter += 1;
-        buf.clear();
-        buf.extend_from_slice(&pt);
-        Ok(())
     }
 
     pub fn peer_fingerprint(&self) -> String {
@@ -261,6 +306,7 @@ pub async fn secure_handshake_client(
         recv_cipher: Aes256Gcm::new_from_slice(&recv).expect("key length"),
         send_counter: AtomicU64::new(0),
         recv_counter: 0,
+        in_buf: Vec::new(),
         peer_public_key: peer_key.to_vec(),
     })
 }
@@ -347,6 +393,7 @@ pub async fn secure_handshake_server(
         recv_cipher: Aes256Gcm::new_from_slice(&recv).expect("key length"),
         send_counter: AtomicU64::new(0),
         recv_counter: 0,
+        in_buf: Vec::new(),
         peer_public_key: peer_key.to_vec(),
     })
 }
