@@ -701,6 +701,15 @@ pub struct LinkStats {
     pub frames_received: u64,
     pub connections_established: u64,
     pub reconnect_attempts: u64,
+    /// `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
+    ///
+    /// 与 [Self::frames_dequeued]、[Self::frames_sent] 三个数放在一起才能定位
+    /// 「入队成功但没发出去」到底发生在哪一步：
+    /// - enqueued > dequeued ⇒ 帧还在队列里或队列被丢（会话被替换/孤儿化）
+    /// - dequeued > sent      ⇒ 帧在链路循环里被丢（写失败 / select! 分支）
+    pub frames_enqueued: u64,
+    /// 链路循环从出站队列**取走**的帧数。
+    pub frames_dequeued: u64,
 }
 
 /// One authenticated encrypted channel (see `luciola::link::secure`).
@@ -755,6 +764,8 @@ struct LinkStatsCounters {
     frames_received: std::sync::atomic::AtomicU64,
     connections: std::sync::atomic::AtomicU64,
     reconnects: std::sync::atomic::AtomicU64,
+    frames_enqueued: std::sync::atomic::AtomicU64,
+    frames_dequeued: std::sync::atomic::AtomicU64,
 }
 
 #[uniffi::export]
@@ -803,6 +814,8 @@ impl SecureSession {
             frames_received: s.frames_received.load(std::sync::atomic::Ordering::Relaxed),
             connections_established: s.connections.load(std::sync::atomic::Ordering::Relaxed),
             reconnect_attempts: s.reconnects.load(std::sync::atomic::Ordering::Relaxed),
+            frames_enqueued: s.frames_enqueued.load(std::sync::atomic::Ordering::Relaxed),
+            frames_dequeued: s.frames_dequeued.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -844,7 +857,15 @@ impl SecureSession {
             return false;
         }
         match self.outbound_tx.lock().unwrap().as_ref() {
-            Some(tx) => tx.try_send(message).is_ok(),
+            Some(tx) => {
+                let ok = tx.try_send(message).is_ok();
+                if ok {
+                    self.stats
+                        .frames_enqueued
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                ok
+            }
             None => false,
         }
     }
@@ -1003,6 +1024,7 @@ impl SecureSession {
                                 }
                                 msg = out_rx.recv() => match msg {
                                     Some(m) => {
+                                        stats.frames_dequeued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         keepalive.reset();
                                         awaiting_pong = false;
                                         if stream.send(&m).await.is_ok() {

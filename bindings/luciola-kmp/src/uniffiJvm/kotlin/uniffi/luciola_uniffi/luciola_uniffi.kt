@@ -3028,7 +3028,20 @@ data class LinkStats (
     var `framesSent`: kotlin.ULong, 
     var `framesReceived`: kotlin.ULong, 
     var `connectionsEstablished`: kotlin.ULong, 
-    var `reconnectAttempts`: kotlin.ULong
+    var `reconnectAttempts`: kotlin.ULong, 
+    /**
+     * `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
+     *
+     * 与 [Self::frames_dequeued]、[Self::frames_sent] 三个数放在一起才能定位
+     * 「入队成功但没发出去」到底发生在哪一步：
+     * - enqueued > dequeued ⇒ 帧还在队列里或队列被丢（会话被替换/孤儿化）
+     * - dequeued > sent      ⇒ 帧在链路循环里被丢（写失败 / select! 分支）
+     */
+    var `framesEnqueued`: kotlin.ULong, 
+    /**
+     * 链路循环从出站队列**取走**的帧数。
+     */
+    var `framesDequeued`: kotlin.ULong
 ) {
     
     companion object
@@ -3044,6 +3057,8 @@ public object FfiConverterTypeLinkStats: FfiConverterRustBuffer<LinkStats> {
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
         )
     }
 
@@ -3051,7 +3066,9 @@ public object FfiConverterTypeLinkStats: FfiConverterRustBuffer<LinkStats> {
             FfiConverterULong.allocationSize(value.`framesSent`) +
             FfiConverterULong.allocationSize(value.`framesReceived`) +
             FfiConverterULong.allocationSize(value.`connectionsEstablished`) +
-            FfiConverterULong.allocationSize(value.`reconnectAttempts`)
+            FfiConverterULong.allocationSize(value.`reconnectAttempts`) +
+            FfiConverterULong.allocationSize(value.`framesEnqueued`) +
+            FfiConverterULong.allocationSize(value.`framesDequeued`)
     )
 
     override fun write(value: LinkStats, buf: ByteBuffer) {
@@ -3059,6 +3076,8 @@ public object FfiConverterTypeLinkStats: FfiConverterRustBuffer<LinkStats> {
             FfiConverterULong.write(value.`framesReceived`, buf)
             FfiConverterULong.write(value.`connectionsEstablished`, buf)
             FfiConverterULong.write(value.`reconnectAttempts`, buf)
+            FfiConverterULong.write(value.`framesEnqueued`, buf)
+            FfiConverterULong.write(value.`framesDequeued`, buf)
     }
 }
 
