@@ -15,7 +15,9 @@ Luciola is the foundation layer for **local-first apps** — LAN clipboard sync,
 - 🎯 **Interface intelligence** — scores physical NICs and filters Docker/VMware/Tailscale/Radmin/Windows-ICS (`192.168.137.x`) virtual adapters; WSL2 passthrough resolves the Windows host's real IP; QR codes are always dialable.
 - ⚡ **Happy Eyeballs path racing** — staggered concurrent dials across every candidate subnet (IPv4 + IPv6 GUA); first connect wins, and the secure handshake runs on the winning socket (no race-then-dial gap).
 - 🔐 **Trust & pairing primitives** — Ed25519 device identities, `sha256:` fingerprints, 6-digit comparison PINs, and a **leveled trust store** (Full = own devices / silent push, Partial = per-action confirm, unpaired = deny). Built for clipboard-sync-grade privacy: *discovery is open, data planes are not*.
-- 🔒 **Authenticated encrypted channels** — SIGMA-style handshake (X25519 + Ed25519 transcript signatures + HKDF + AES-256-GCM, replay-proof counters), deny-by-default pinning, TOFU capture, auto-reconnect with backoff, keepalive dead-peer detection, bounded queues.
+- 📡 **Keyed beacons (0.6.0)** — discovery profiles can carry the device's Ed25519 public key, so the advertised identity matches the one the secure channel presents; hosts pin `node_id` / `tcp_port` / `public_key` on the beacon (wire-format compatible both ways with pre-key peers).
+- 🔒 **Authenticated encrypted channels** — SIGMA-style handshake (X25519 + Ed25519 transcript signatures + HKDF + AES-256-GCM, replay-proof counters), deny-by-default pinning, TOFU capture, auto-reconnect with backoff, keepalive dead-peer detection, bounded queues. One dual-stack listener serves IPv4+IPv6 inbound; the unified `dial()` injects IPv6 link-local scope ids automatically. `stop()` reliably tears the listener down (accept/bind are shutdown-interruptible).
+- 📦 **File-transfer data plane (`luciola-transfer`)** — sliding-window chunked transfers with absolute-offset writes (out-of-order safe), contiguous-prefix ACKs, timeout retransmit, and a 30-second post-completion answer cache; 50 MiB E2E over a real secure channel with matching SHA-256.
 - 🧭 **Supervision built in** — stable node identity across engine restarts, port-conflict detection (`bind_failed` events for same-device multi-product setups), watchdog + debounced network-change rebuilds, Android `MulticastLock` handling.
 - 🔌 **One core, every platform** — Rust core; **KMP library** (`io.github.kexuejin:luciola-kmp`, ships the arm64 `.so` in the AAR), Swift bindings + xcframework for iOS, Node.js N-API (`@luciola/core`), plus a desktop **agent** (`luciola-cli agent`) that funnels discovery to multiple same-machine products over a unix socket.
 
@@ -48,7 +50,7 @@ cargo run -p luciola-cli -- agent   # per-device discovery daemon (unix-socket e
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("io.github.kexuejin:luciola:0.3.0")
+implementation("io.github.kexuejin:luciola:0.6.0")
 
 val controller = AndroidDiscoveryController(
     context = this,
@@ -103,6 +105,7 @@ luciola/
 │   ├── luciola-proto/    # wire protocol: versioned envelopes, jitter/dedup state machine
 │   ├── luciola/          # tokio engine: dual-stack discovery, link racing,
 │   │                     #   secure channels, trust & pairing primitives
+│   ├── luciola-transfer/ # chunked file transfer: offset writes, ACK prefix, retransmit
 │   └── luciola-cli/      # ip / scan / beacon / agent
 └── bindings/
     ├── luciola-kmp/      # Kotlin Multiplatform library (Android AAR + JVM + iOS klib)

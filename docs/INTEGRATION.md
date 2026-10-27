@@ -42,22 +42,35 @@ deviceId 折叠同一物理设备上的多个产品。
    - 未配对:只出现在发现列表,任何数据面动作拒绝。
 4. 数据通道一律走 `SecureSession/SecureChannel`:拨号方必须持对端 pinned
    公钥;监听方 TOFU 模式上报对端指纹供 pin 核对后入库。
+5. **信标带身份(0.6.0)**:`DiscoverySession::new` 可传 `node_id` /
+   `tcp_port` / `public_key`,把信标钉到宿主自己的零信任体系上——对端从
+   发现层直接拿到「可拨端口 + 可信公钥」,信标身份 = 信道身份。线格式对
+   旧版对端双向兼容(不带 key 的旧信标照常被发现)。
 
 ## 4. 安全信道的使用姿势
 
 - `connect(addresses, port, pinnedKey, autoReconnect, listener)`:多地址竞速
-  (Happy Eyeballs)后直接在胜出 socket 上握手,无竞速-建连间隙。
+  (Happy Eyeballs)后直接在胜出 socket 上握手,无竞速-建连间隙;统一 `dial`
+  对 IPv6 链路本地地址自动补 `sin6_scope_id`(显式 `%iface`、`%索引` 或按
+  本机网卡归属解析)。
 - 断线自动重连(默认 1s→60s 指数退避 + ±20% 抖动,`setRetryPolicy` 可调),状态回调:
   `connecting/connected/retrying/closed/error`。
 - 15s 空闲发 keepalive,~30s 判死(`setKeepalive` 可调;Android Doze 下建议调至 45s/90s)。
 - `send()` 有界队列(64 帧):返回 false = 未连接或对端卡住,退避重试,
   **不要同步自旋**。
-- 监听方 `listen()` 是循环接受:一条连接关闭后自动重新等待。
+- 监听方 `listen()` 是循环接受:一条连接关闭后自动重新等待。0.6.0 起
+  bind/accept 均可被 `disconnect()` 打断——**stop 之后端口立即释放**(老版本
+  存在「阻塞在 accept 时 stop 不生效」的僵尸监听;现已由测试钉死)。
+- 监听器是**双栈**单 socket:IPv4 与 IPv6 入站共用一个端口;不可用平台自动
+  降级 IPv4-only。
 
 ## 5. 事件模型(务必全量实现)
 
 - 发现回调四种事件:`found / updated / lost / error`。
   **`lost` 必须处理**(从 UI 移除节点),否则对端关机后永远"在线"。
+- **加密信道 `on_message` 是三参**(0.6.0):`message` + `peerFingerprint`
+  (引擎在握手里确权过的发送方指纹,逐帧携带)+ `remoteAddr`(帧的真实
+  socket 来源)。宿主用它归属入站帧,**不要再靠会话状态机反查**。
 - KMP:`DiscoveryController` 已内置 peer 表维护与老化,宿主只消费
   `onPeersChanged` 快照;`onEngineError` 需要透传到 UI。
 

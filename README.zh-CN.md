@@ -15,7 +15,9 @@ Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输�
 - 🎯 **网卡智能** — 物理网卡打分优选,过滤 Docker/VMware/Tailscale/Radmin/Windows 移动热点(`192.168.137.x`)虚拟网卡;WSL2 穿透解析 Windows 宿主真实 IP;生成的二维码百分之百可拨。
 - ⚡ **Happy Eyeballs 路径竞速** — 跨全部候选网段(IPv4 + IPv6 GUA)错峰并发拨号,首胜即定,加密握手直接在胜出 socket 上完成(无竞速-建连间隙)。
 - 🔐 **信任与配对原语** — Ed25519 设备身份、`sha256:` 指纹、6 位屏上比对 PIN、**分级信任库**(Full=自己的设备/无感推送,Partial=逐次确认,未配对=默认拒绝)。为剪贴板级隐私而生:*发现开放,数据面不开放*。
-- 🔒 **认证加密信道** — SIGMA 式握手(X25519 + Ed25519 全 transcript 签名 + HKDF + AES-256-GCM,计数器防重放)、默认拒绝的 pin 校验、TOFU 捕获、断线指数退避自动重连、keepalive 判死、有界发送队列。
+- 📡 **带身份的信标(0.6.0)** — 发现档案可携带设备 Ed25519 公钥,让「信标里宣告的身份」与「加密信道出示的身份」完全一致;宿主可把 `node_id` / `tcp_port` / `public_key` 钉在信标上(线格式对旧版对端双向兼容)。
+- 🔒 **认证加密信道** — SIGMA 式握手(X25519 + Ed25519 全 transcript 签名 + HKDF + AES-256-GCM,计数器防重放)、默认拒绝的 pin 校验、TOFU 捕获、断线指数退避自动重连、keepalive 判死、有界发送队列。单个双栈监听器同时收 IPv4+IPv6 入站;统一 `dial()` 自动补 IPv6 链路本地作用域;`stop()` 可靠拆除监听(bind/accept 均可被 shutdown 打断,无僵尸 accept)。
+- 📦 **文件传输数据面(`luciola-transfer`)** — 滑动窗口分块传输:按绝对偏移落盘(乱序安全)、连续前缀 ACK、超时重传、收齐后 30 秒应答缓存防「末帧 ACK 丢失卡 99%」;50 MiB 真实加密信道 E2E,SHA-256 一致。
 - 🧭 **内置监督自愈** — 引擎重启身份稳定、端口冲突显式上报(`bind_failed`,同机多产品场景)、看门狗 + 网络变化防抖重建、Android MulticastLock 处理。
 - 🔌 **一个核心,全平台** — Rust 核心;**KMP 库**(`io.github.kexuejin:luciola-kmp`,AAR 内嵌 arm64 `.so`)、iOS Swift 绑定 + xcframework、Node.js N-API(`@luciola/core`),以及桌面 **agent**(`luciola-cli agent`,unix socket 向同机多产品分发发现事件)。
 
@@ -48,7 +50,7 @@ cargo run -p luciola-cli -- agent   # 设备级发现 daemon(unix socket 事件�
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("io.github.kexuejin:luciola:0.3.0")
+implementation("io.github.kexuejin:luciola:0.6.0")
 
 val controller = AndroidDiscoveryController(
     context = this,
@@ -103,6 +105,7 @@ luciola/
 │   ├── luciola-proto/    # 线协议:版本化信封、抖动/去重状态机
 │   ├── luciola/          # tokio 引擎:双栈发现、路径竞速、
 │   │                     #   安全信道、信任与配对原语
+│   ├── luciola-transfer/ # 分块文件传输:偏移落盘、ACK 前缀、重传
 │   └── luciola-cli/      # ip / scan / beacon / agent
 └── bindings/
     ├── luciola-kmp/      # Kotlin Multiplatform 库(Android AAR + JVM + iOS klib)
