@@ -29,9 +29,11 @@ class UniffiEngineAdapter(
         extra,
     )
 
+    private val lock = SafeLock()
     private var session = rebuildSession()
 
-    override fun nodeId(): String? = synchronized(this) { session }.nodeId()
+    // 跨平台：JVM 的 synchronized 在 Kotlin/Native 不存在，用模块自带的 SafeLock。
+    override fun nodeId(): String? = lock.withLock { session }.nodeId()
 
     override fun start(onEvent: (DiscoveryEventUi) -> Unit) {
         session.start(object : OnPeerDiscovered {
