@@ -903,7 +903,7 @@ internal interface UniffiCallbackInterfaceSecureSessionListenerMethod0: com.sun.
     public fun callback(`uniffiHandle`: Long,`state`: RustBufferByValue,`detail`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
 internal interface UniffiCallbackInterfaceSecureSessionListenerMethod1: com.sun.jna.Callback {
-    public fun callback(`uniffiHandle`: Long,`message`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+    public fun callback(`uniffiHandle`: Long,`message`: RustBufferByValue,`peerFingerprint`: RustBufferByValue,`remoteAddr`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
 @Structure.FieldOrder("onPeerDiscovered", "onPeerUpdated", "onPeerLost", "onError", "uniffiFree")
 internal open class UniffiVTableCallbackInterfaceOnPeerDiscoveredStruct(
@@ -1313,7 +1313,7 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_truststore_trust_device() != 27542.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 12135.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 24675.toShort()) {
@@ -1337,7 +1337,7 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 6008.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 63088.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
     }
@@ -1531,6 +1531,9 @@ internal object UniffiLib : Library {
         `manualPeers`: RustBufferByValue,
         `product`: RustBufferByValue,
         `extra`: RustBufferByValue,
+        `nodeId`: RustBufferByValue,
+        `tcpPort`: RustBufferByValue,
+        `publicKey`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Pointer?
     @JvmStatic
@@ -2349,8 +2352,13 @@ public actual open class DiscoverySession: Disposable, DiscoverySessionInterface
      * `manualPeers` are unicast-only targets (host:port is the UDP discovery
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
+     *
+     * `node_id`, `tcp_port` and `public_key` let the host pin the beacon's
+     * identity to ITS OWN key material (zero-trust pairing wants the
+     * advertised Ed25519 key to match the one the secure channel presents);
+     * pass `None` to let the engine generate them.
      */
-    public actual constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?) : this(
+    public actual constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?, `nodeId`: kotlin.String?, `tcpPort`: kotlin.UShort?, `publicKey`: kotlin.ByteArray?) : this(
         uniffiRustCall { uniffiRustCallStatus ->
             UniffiLib.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
                 FfiConverterString.lower(`name`),
@@ -2358,6 +2366,9 @@ public actual open class DiscoverySession: Disposable, DiscoverySessionInterface
                 FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),
                 FfiConverterOptionalString.lower(`product`),
                 FfiConverterOptionalString.lower(`extra`),
+                FfiConverterOptionalString.lower(`nodeId`),
+                FfiConverterOptionalUShort.lower(`tcpPort`),
+                FfiConverterOptionalByteArray.lower(`publicKey`),
                 uniffiRustCallStatus,
             )
         }!!
@@ -3552,6 +3563,8 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
         override fun callback (
             `uniffiHandle`: Long,
             `message`: RustBufferByValue,
+            `peerFingerprint`: RustBufferByValue,
+            `remoteAddr`: RustBufferByValue,
             `uniffiOutReturn`: Pointer,
             uniffiCallStatus: UniffiRustCallStatus,
         ) {
@@ -3559,6 +3572,8 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
             val makeCall = { ->
                 uniffiObj.`onMessage`(
                     FfiConverterByteArray.lift(`message`),
+                    FfiConverterString.lift(`peerFingerprint`),
+                    FfiConverterOptionalString.lift(`remoteAddr`),
                 )
             }
             val writeReturn = { _: Unit ->
@@ -3587,6 +3602,35 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
 }
 
 public object FfiConverterTypeSecureSessionListener : FfiConverterCallbackInterface<SecureSessionListener>()
+
+
+
+
+public object FfiConverterOptionalUShort: FfiConverterRustBuffer<kotlin.UShort?> {
+    override fun read(buf: ByteBuffer): kotlin.UShort? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUShort.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UShort?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUShort.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UShort?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUShort.write(value, buf)
+        }
+    }
+}
 
 
 

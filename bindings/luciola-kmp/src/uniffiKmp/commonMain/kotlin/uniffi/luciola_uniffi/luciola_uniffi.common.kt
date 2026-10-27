@@ -197,6 +197,11 @@ public expect open class DiscoverySession: Disposable, DiscoverySessionInterface
      * `manualPeers` are unicast-only targets (host:port is the UDP discovery
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
+     *
+     * `node_id`, `tcp_port` and `public_key` let the host pin the beacon's
+     * identity to ITS OWN key material (zero-trust pairing wants the
+     * advertised Ed25519 key to match the one the secure channel presents);
+     * pass `None` to let the engine generate them.
      */
     public constructor(noPointer: NoPointer)
 
@@ -207,8 +212,13 @@ public expect open class DiscoverySession: Disposable, DiscoverySessionInterface
      * `manualPeers` are unicast-only targets (host:port is the UDP discovery
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
+     *
+     * `node_id`, `tcp_port` and `public_key` let the host pin the beacon's
+     * identity to ITS OWN key material (zero-trust pairing wants the
+     * advertised Ed25519 key to match the one the secure channel presents);
+     * pass `None` to let the engine generate them.
      */
-    public constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?)
+    public constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?, `nodeId`: kotlin.String?, `tcpPort`: kotlin.UShort?, `publicKey`: kotlin.ByteArray?)
 
     override fun destroy()
     override fun close()
@@ -787,10 +797,18 @@ public interface SecureSessionListener {
      */
     public fun `onState`(`state`: kotlin.String, `detail`: kotlin.String?)
     
-    public fun `onMessage`(`message`: kotlin.ByteArray)
+    /**
+     * `peer_fingerprint` is the authenticated identity of the sender (the
+     * engine verified it during the handshake); `remote_addr` is the socket
+     * endpoint the frame physically arrived from. Hosts use them to route
+     * the datagram without reverse-engineering session state.
+     */
+    public fun `onMessage`(`message`: kotlin.ByteArray, `peerFingerprint`: kotlin.String, `remoteAddr`: kotlin.String?)
     
     public companion object
 }
+
+
 
 
 

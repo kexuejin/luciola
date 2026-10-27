@@ -17,6 +17,13 @@ class UniffiEngineAdapter(
     manualPeers: List<Pair<String, UShort>> = emptyList(),
     private val product: String? = null,
     private val extra: String? = null,
+    /** Pin the beacon's identity; null lets the engine generate one. */
+    private val nodeId: String? = null,
+    /** Override the advertised TCP channel port (default: discovery + 1). */
+    private val tcpPort: UShort? = null,
+    /** Ed25519 public key advertised in the beacon (must match the secure
+     *  channel identity for zero-trust pairing). */
+    private val publicKey: ByteArray? = null,
 ) : DiscoveryEnginePort {
 
     private val manualPeers = manualPeers.toMutableList()
@@ -27,6 +34,9 @@ class UniffiEngineAdapter(
         manualPeers.map { ManualPeer(host = it.first, port = it.second) },
         product,
         extra,
+        nodeId,
+        tcpPort,
+        publicKey,
     )
 
     private val lock = SafeLock()

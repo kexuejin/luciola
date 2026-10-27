@@ -166,7 +166,7 @@ typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod0)(int64_t, Rus
         UniffiRustCallStatus *_Nonnull uniffiCallStatus
     );
 
-typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(int64_t, RustBuffer, void *, 
+typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(int64_t, RustBuffer, RustBuffer, RustBuffer, void *, 
         UniffiRustCallStatus *_Nonnull uniffiCallStatus
     );
 
@@ -188,7 +188,7 @@ void * uniffi_luciola_uniffi_fn_clone_discoverysession(void * ptr, UniffiRustCal
 );
 void uniffi_luciola_uniffi_fn_free_discoverysession(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
-void * uniffi_luciola_uniffi_fn_constructor_discoverysession_new(RustBuffer name, int16_t port, RustBuffer manualPeers, RustBuffer product, RustBuffer extra, UniffiRustCallStatus *_Nonnull out_status
+void * uniffi_luciola_uniffi_fn_constructor_discoverysession_new(RustBuffer name, int16_t port, RustBuffer manualPeers, RustBuffer product, RustBuffer extra, RustBuffer nodeId, RustBuffer tcpPort, RustBuffer publicKey, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );

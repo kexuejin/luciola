@@ -1480,6 +1480,9 @@ internal object UniffiLib {
         `manualPeers`: RustBufferByValue,
         `product`: RustBufferByValue,
         `extra`: RustBufferByValue,
+        `nodeId`: RustBufferByValue,
+        `tcpPort`: RustBufferByValue,
+        `publicKey`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Pointer? = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
         `name`,
@@ -1487,6 +1490,9 @@ internal object UniffiLib {
         `manualPeers`,
         `product`,
         `extra`,
+        `nodeId`,
+        `tcpPort`,
+        `publicKey`,
         uniffiCallStatus,
     )
     fun uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(
@@ -2678,8 +2684,13 @@ public actual open class DiscoverySession: Disposable, DiscoverySessionInterface
      * `manualPeers` are unicast-only targets (host:port is the UDP discovery
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
+     *
+     * `node_id`, `tcp_port` and `public_key` let the host pin the beacon's
+     * identity to ITS OWN key material (zero-trust pairing wants the
+     * advertised Ed25519 key to match the one the secure channel presents);
+     * pass `None` to let the engine generate them.
      */
-    public actual constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?) : this(
+    public actual constructor(`name`: kotlin.String, `port`: kotlin.UShort, `manualPeers`: List<ManualPeer>?, `product`: kotlin.String?, `extra`: kotlin.String?, `nodeId`: kotlin.String?, `tcpPort`: kotlin.UShort?, `publicKey`: kotlin.ByteArray?) : this(
         uniffiRustCall { uniffiRustCallStatus ->
             UniffiLib.uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
                 FfiConverterString.lower(`name`),
@@ -2687,6 +2698,9 @@ public actual open class DiscoverySession: Disposable, DiscoverySessionInterface
                 FfiConverterOptionalSequenceTypeManualPeer.lower(`manualPeers`),
                 FfiConverterOptionalString.lower(`product`),
                 FfiConverterOptionalString.lower(`extra`),
+                FfiConverterOptionalString.lower(`nodeId`),
+                FfiConverterOptionalUShort.lower(`tcpPort`),
+                FfiConverterOptionalByteArray.lower(`publicKey`),
                 uniffiRustCallStatus,
             )
         }!!
@@ -3929,6 +3943,8 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
     internal fun `onMessage`(
         `uniffiHandle`: Long,
         `message`: RustBufferByValue,
+        `peerFingerprint`: RustBufferByValue,
+        `remoteAddr`: RustBufferByValue,
         `uniffiOutReturn`: Pointer,
         uniffiCallStatus: UniffiRustCallStatus,
     ) {
@@ -3936,6 +3952,8 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
         val makeCall = { ->
             uniffiObj.`onMessage`(
                 FfiConverterByteArray.lift(`message`),
+                FfiConverterString.lift(`peerFingerprint`),
+                FfiConverterOptionalString.lift(`remoteAddr`),
             )
         }
         val writeReturn = { _: Unit ->
@@ -3971,12 +3989,16 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
         this.`onMessage` = staticCFunction {
             `uniffiHandle`: Long,
             `message`: RustBufferByValue,
+            `peerFingerprint`: RustBufferByValue,
+            `remoteAddr`: RustBufferByValue,
             `uniffiOutReturn`: Pointer,
             uniffiCallStatus: UniffiRustCallStatus,
             ->
             uniffiCallbackInterfaceSecureSessionListener.`onMessage`(
                 `uniffiHandle`,
                 `message`,
+                `peerFingerprint`,
+                `remoteAddr`,
                 `uniffiOutReturn`,
                 uniffiCallStatus,
             )
@@ -3992,6 +4014,35 @@ internal object uniffiCallbackInterfaceSecureSessionListener {
 }
 
 public object FfiConverterTypeSecureSessionListener : FfiConverterCallbackInterface<SecureSessionListener>()
+
+
+
+
+public object FfiConverterOptionalUShort: FfiConverterRustBuffer<kotlin.UShort?> {
+    override fun read(buf: ByteBuffer): kotlin.UShort? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUShort.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UShort?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUShort.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UShort?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUShort.write(value, buf)
+        }
+    }
+}
 
 
 
