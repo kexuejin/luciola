@@ -226,7 +226,7 @@ pub async fn connect_secure(
     identity_seed: &[u8],
     pinned_peer_public_key: &[u8],
 ) -> Result<SecureStream, LinkError> {
-    let socket = TcpStream::connect((address, port)).await?;
+    let socket = crate::link::dial(address, port).await?;
     secure_handshake_client(socket, identity_seed, pinned_peer_public_key).await
 }
 

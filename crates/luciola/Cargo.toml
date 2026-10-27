@@ -24,3 +24,7 @@ percent-encoding.workspace = true
 socket2.workspace = true
 rand.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+luciola-net = { path = "../luciola-net", version = "0.3.1" }
+network-interface = "2.0"

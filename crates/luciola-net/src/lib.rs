@@ -9,7 +9,7 @@
 use luciola_ip::{get_ipv6_scope, is_private_or_local, is_proxy_tun_address, Ipv6Scope};
 use luciola_proto::{DeviceMeta, DeviceType};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -578,6 +578,46 @@ impl DeviceDetector {
     }
 }
 
+/// Check if the given IPv6 is a link-local address (fe80::/10).
+pub fn is_link_local_ipv6(addr: &Ipv6Addr) -> bool {
+    let o = addr.octets();
+    (u16::from_be_bytes([o[0], o[1]]) & 0xffc0) == 0xfe80
+}
+
+/// Match the physical NIC index (`sin6_scope_id`) that owns a link-local
+/// IPv6 address. Returns `None` for non-link-local targets (they need no
+/// scope) and for link-local addresses no local interface owns.
+pub fn scope_id_for(target: Ipv6Addr) -> Option<u32> {
+    if !is_link_local_ipv6(&target) {
+        return None;
+    }
+    let list = NetworkInterface::show().ok()?;
+    for iface in list {
+        if is_virtual_interface_name(&iface.name) {
+            continue;
+        }
+        for addr in iface.addr {
+            if let Addr::V6(v6) = addr {
+                if v6.ip == target {
+                    return Some(iface.index);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve an interface name (e.g. `en0`) to its NIC index for
+/// `sin6_scope_id`. Unlike [`scope_id_for`] this does not filter virtual
+/// interfaces: an explicitly named scope is the caller's choice.
+pub fn scope_id_by_name(name: &str) -> Option<u32> {
+    NetworkInterface::show()
+        .ok()?
+        .into_iter()
+        .find(|i| i.name.eq_ignore_ascii_case(name))
+        .map(|i| i.index)
+}
+
 /// Interface indices eligible for IPv6 link-local multicast (ff02::1):
 /// physical NICs only — virtual adapters (TUN/VPN/Docker) are excluded by
 /// the same classifier the candidate scorer uses.
@@ -596,6 +636,53 @@ pub fn multicast_scope_interfaces() -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_link_local_ipv6() {
+        assert!(is_link_local_ipv6(&"fe80::1".parse().unwrap()));
+        assert!(is_link_local_ipv6(&"febf::ffff".parse().unwrap()));
+        assert!(!is_link_local_ipv6(&"::1".parse().unwrap()));
+        assert!(!is_link_local_ipv6(&"2001:db8::1".parse().unwrap()));
+        assert!(!is_link_local_ipv6(&"fc00::1".parse().unwrap()));
+        assert!(!is_link_local_ipv6(&"fec0::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_scope_id_for_rejects_non_link_local() {
+        assert_eq!(scope_id_for("2001:db8::1".parse().unwrap()), None);
+        assert_eq!(scope_id_for("::1".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn test_scope_id_lookup_runs_without_panic() {
+        // Live interface query: on a normal dev machine en0/eth0 exist, but
+        // names vary — only assert the lookup paths return cleanly.
+        let _ = scope_id_by_name("en0");
+        let _ = scope_id_by_name("eth0");
+        let _ = scope_id_by_name("definitely-not-an-interface");
+        let list = NetworkInterface::show().unwrap();
+        // A link-local address can be shared by several NICs (e.g. macOS
+        // awdl0/llw0 pair), and the crate's show() order is not stable —
+        // assert scope_id_for lands on one of the owning interfaces.
+        let mut owners: std::collections::HashMap<Ipv6Addr, Vec<u32>> =
+            std::collections::HashMap::new();
+        for iface in list.iter() {
+            if is_virtual_interface_name(&iface.name) {
+                continue;
+            }
+            for addr in &iface.addr {
+                if let Addr::V6(v6) = addr {
+                    if is_link_local_ipv6(&v6.ip) {
+                        owners.entry(v6.ip).or_default().push(iface.index);
+                    }
+                }
+            }
+        }
+        for (ip, idxs) in owners {
+            let got = scope_id_for(ip).expect("physical link-local must resolve");
+            assert!(idxs.contains(&got), "{ip} -> {got}, owners {idxs:?}");
+        }
+    }
 
     #[test]
     fn test_is_virtual_interface_name() {

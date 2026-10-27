@@ -11,8 +11,9 @@
 //! [`default_candidates`] centralizes the selection policy shared by the
 //! demos: first three IPv4 candidates plus the first IPv6 GUA.
 
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::{Duration, Instant};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 
 /// Per-channel outcome of a [`race_connect`] run.
@@ -72,6 +73,68 @@ pub fn default_candidates(addresses: &[String]) -> Vec<String> {
     out
 }
 
+/// Resolve the `sin6_scope_id` for dialing a link-local target from the raw
+/// address string: an explicit `%scope` (numeric index or interface name)
+/// wins, otherwise fall back to the NIC that owns the address locally.
+fn link_local_scope(raw: &str, v6: Ipv6Addr) -> u32 {
+    if !luciola_net::is_link_local_ipv6(&v6) {
+        return 0;
+    }
+    let bare = luciola_ip::unbracket(raw);
+    if let Some((_, suffix)) = bare.rsplit_once('%') {
+        if let Ok(idx) = suffix.parse::<u32>() {
+            return idx;
+        }
+        if let Some(idx) = luciola_net::scope_id_by_name(suffix) {
+            return idx;
+        }
+    }
+    luciola_net::scope_id_for(v6).unwrap_or(0)
+}
+
+/// Unified TCP dial: one entry point for IPv4, IPv6 and hostnames.
+///
+/// IPv6 link-local targets get their scope id filled in automatically
+/// (`fe80::1%en0`, `[fe80::1%en0]`, or bare `fe80::1` matched against local
+/// interfaces) — a bare `TcpStream::connect(("fe80::1", p))` would fail with
+/// "invalid argument" on most platforms without it.
+pub async fn dial(ip: &str, port: u16) -> std::io::Result<TcpStream> {
+    let clean = luciola_ip::strip_scope_id(ip);
+    match clean.parse::<IpAddr>() {
+        Err(_) => TcpStream::connect((ip, port)).await,
+        Ok(IpAddr::V4(v4)) => TcpStream::connect(SocketAddr::V4(SocketAddrV4::new(v4, port))).await,
+        Ok(IpAddr::V6(v6)) => {
+            let scope = link_local_scope(ip, v6);
+            TcpStream::connect(SocketAddr::V6(SocketAddrV6::new(v6, port, 0, scope))).await
+        }
+    }
+}
+
+/// Cross-platform dual-stack listener: one IPv6 socket serving both IPv4 and
+/// IPv6 inbound connections (IPV6_V6ONLY off). Falls back to an IPv4-only
+/// listener on `0.0.0.0` where the platform has no dual-stack support.
+pub async fn bind_dual_stack_listener(port: u16) -> std::io::Result<TcpListener> {
+    let addr = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0));
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV6,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+
+    // Windows/Unix 通用安全调用（socket2，无 libc unsafe）
+    let _ = socket.set_only_v6(false);
+    let _ = socket.set_reuse_address(true);
+    let _ = socket.set_nonblocking(true);
+
+    if socket.bind(&addr.into()).is_ok() && socket.listen(1024).is_ok() {
+        let std_listener: std::net::TcpListener = socket.into();
+        return TcpListener::from_std(std_listener);
+    }
+
+    // 降级回退至 0.0.0.0 (IPv4-only)
+    TcpListener::bind(("0.0.0.0", port)).await
+}
+
 /// Race TCP dials across `addresses` on `port`; first connect wins.
 ///
 /// The candidate sockets are dropped (closed) immediately — this function
@@ -94,11 +157,10 @@ pub async fn race_connect(addresses: Vec<String>, port: u16, config: RaceConfig)
         set.spawn(async move {
             tokio::time::sleep(stagger * i as u32).await;
             let start = Instant::now();
-            let connected =
-                tokio::time::timeout(timeout, TcpStream::connect((address.as_str(), port)))
-                    .await
-                    .map(|s| s.is_ok())
-                    .unwrap_or(false);
+            let connected = tokio::time::timeout(timeout, dial(address.as_str(), port))
+                .await
+                .map(|s| s.is_ok())
+                .unwrap_or(false);
             (address, connected, start.elapsed().as_secs_f64() * 1000.0)
         });
     }
@@ -180,12 +242,7 @@ pub async fn race_stream(
         set.spawn(async move {
             tokio::time::sleep(stagger * i as u32).await;
             let start = std::time::Instant::now();
-            match tokio::time::timeout(
-                timeout,
-                tokio::net::TcpStream::connect((address.as_str(), port)),
-            )
-            .await
-            {
+            match tokio::time::timeout(timeout, dial(address.as_str(), port)).await {
                 Ok(Ok(s)) => Some((s, address, start.elapsed().as_secs_f64() * 1000.0)),
                 _ => None,
             }
