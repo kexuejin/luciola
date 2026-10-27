@@ -288,7 +288,7 @@ typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod0)(uint64_t, Ru
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_SECURE_SESSION_LISTENER_METHOD1
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_SECURE_SESSION_LISTENER_METHOD1
-typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(uint64_t, RustBuffer, void* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(uint64_t, RustBuffer, RustBuffer, RustBuffer, void* _Nonnull, 
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
@@ -325,7 +325,7 @@ void uniffi_luciola_uniffi_fn_free_discoverysession(void*_Nonnull ptr, RustCallS
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CONSTRUCTOR_DISCOVERYSESSION_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CONSTRUCTOR_DISCOVERYSESSION_NEW
-void*_Nonnull uniffi_luciola_uniffi_fn_constructor_discoverysession_new(RustBuffer name, uint16_t port, RustBuffer manual_peers, RustBuffer product, RustCallStatus *_Nonnull out_status
+void*_Nonnull uniffi_luciola_uniffi_fn_constructor_discoverysession_new(RustBuffer name, uint16_t port, RustBuffer manual_peers, RustBuffer product, RustBuffer extra, RustBuffer node_id, RustBuffer tcp_port, RustBuffer public_key, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_DISCOVERYSESSION_IS_BOUND
@@ -403,6 +403,16 @@ void uniffi_luciola_uniffi_fn_method_securesession_listen(void*_Nonnull ptr, uin
 int8_t uniffi_luciola_uniffi_fn_method_securesession_send(void*_Nonnull ptr, RustBuffer message, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_SET_KEEPALIVE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_SET_KEEPALIVE
+void uniffi_luciola_uniffi_fn_method_securesession_set_keepalive(void*_Nonnull ptr, uint64_t interval_ms, uint64_t dead_after_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_SET_RETRY_POLICY
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_SET_RETRY_POLICY
+void uniffi_luciola_uniffi_fn_method_securesession_set_retry_policy(void*_Nonnull ptr, uint64_t min_ms, uint64_t max_ms, uint64_t jitter_pct, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_STATS
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_STATS
 RustBuffer uniffi_luciola_uniffi_fn_method_securesession_stats(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -450,12 +460,12 @@ void uniffi_luciola_uniffi_fn_method_truststore_trust_device(void*_Nonnull ptr, 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_ONPEERDISCOVERED
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_ONPEERDISCOVERED
-void uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(UniffiVTableCallbackInterfaceOnPeerDiscovered* _Nonnull vtable
+void uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(const UniffiVTableCallbackInterfaceOnPeerDiscovered* _Nonnull vtable
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_SECURESESSIONLISTENER
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_SECURESESSIONLISTENER
-void uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(UniffiVTableCallbackInterfaceSecureSessionListener* _Nonnull vtable
+void uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(const UniffiVTableCallbackInterfaceSecureSessionListener* _Nonnull vtable
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_ADVERTISED_ADDRESSES
@@ -466,7 +476,7 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_BUILD_PAIRING_URI
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_BUILD_PAIRING_URI
-RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri(RustBuffer name, RustBuffer product, uint16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer pin, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri(RustBuffer name, RustBuffer product, uint16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer public_key, RustBuffer pin, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
@@ -1044,6 +1054,18 @@ uint16_t uniffi_luciola_uniffi_checksum_method_securesession_listen(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SEND
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SEND
 uint16_t uniffi_luciola_uniffi_checksum_method_securesession_send(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SET_KEEPALIVE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SET_KEEPALIVE
+uint16_t uniffi_luciola_uniffi_checksum_method_securesession_set_keepalive(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SET_RETRY_POLICY
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_SET_RETRY_POLICY
+uint16_t uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy(void
     
 );
 #endif

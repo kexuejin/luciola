@@ -186,6 +186,8 @@ pub struct DiscoverySession {
     product: Mutex<Option<String>>,
     extra_field: Mutex<Option<String>>,
     node_id: Mutex<String>,
+    tcp_port: Mutex<Option<u16>>,
+    public_key: Mutex<Option<Vec<u8>>>,
     manual_peers: Mutex<Vec<ManualPeer>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     listener: Mutex<Option<std::sync::Arc<dyn OnPeerDiscovered>>>,
@@ -220,6 +222,11 @@ impl DiscoverySession {
     /// `manualPeers` are unicast-only targets (host:port is the UDP discovery
     /// port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
     /// overlays (Tailscale/ZeroTier), or localhost debugging.
+    ///
+    /// `node_id`, `tcp_port` and `public_key` let the host pin the beacon's
+    /// identity to ITS OWN key material (zero-trust pairing wants the
+    /// advertised Ed25519 key to match the one the secure channel presents);
+    /// pass `None` to let the engine generate them.
     #[uniffi::constructor]
     pub fn new(
         name: String,
@@ -227,14 +234,21 @@ impl DiscoverySession {
         manual_peers: Option<Vec<ManualPeer>>,
         product: Option<String>,
         extra: Option<String>,
+        node_id: Option<String>,
+        tcp_port: Option<u16>,
+        public_key: Option<Vec<u8>>,
     ) -> Self {
+        let chosen_node_id =
+            node_id.unwrap_or_else(|| format!("uniffi_{:x}", rand::random::<u32>()));
         Self {
             name: Mutex::new(name),
             port: Mutex::new(port),
             product: Mutex::new(product),
             extra_field: Mutex::new(extra),
             manual_peers: Mutex::new(manual_peers.unwrap_or_default()),
-            node_id: Mutex::new(format!("uniffi_{:x}", rand::random::<u32>())),
+            node_id: Mutex::new(chosen_node_id),
+            tcp_port: Mutex::new(tcp_port),
+            public_key: Mutex::new(public_key),
             shutdown_tx: Mutex::new(None),
             listener: Mutex::new(None),
             last_activity: std::sync::Arc::new(Mutex::new(std::time::SystemTime::now())),
@@ -307,6 +321,8 @@ impl DiscoverySession {
         let node_id = self.node_id.lock().unwrap().clone();
         let product = self.product.lock().unwrap().clone();
         let extra = self.extra_field.lock().unwrap().clone();
+        let tcp_port = *self.tcp_port.lock().unwrap();
+        let public_key = self.public_key.lock().unwrap().clone();
         let manual_peers: Vec<(String, u16)> = self
             .manual_peers
             .lock()
@@ -336,11 +352,12 @@ impl DiscoverySession {
                         profile_rev: 1,
                         addresses: NetworkDetector::local_candidate_addresses(),
                         udp_port: port,
-                        tcp_port: port.wrapping_add(1),
+                        tcp_port: tcp_port.unwrap_or_else(|| port.wrapping_add(1)),
                         device_id: detected.device_id.clone(),
                         product,
                         extra,
                         device: Some(detected),
+                        public_key,
                     };
                     let config = DiscoveryConfig {
                         self_profile: profile,
@@ -685,7 +702,11 @@ pub trait SecureSessionListener: Send + Sync {
     /// `state`: "connected" | "closed" | "error"; `detail` carries the peer
     /// fingerprint on connect and the error message on failure.
     fn on_state(&self, state: String, detail: Option<String>);
-    fn on_message(&self, message: Vec<u8>);
+    /// `peer_fingerprint` is the authenticated identity of the sender (the
+    /// engine verified it during the handshake); `remote_addr` is the socket
+    /// endpoint the frame physically arrived from. Hosts use them to route
+    /// the datagram without reverse-engineering session state.
+    fn on_message(&self, message: Vec<u8>, peer_fingerprint: String, remote_addr: Option<String>);
 }
 
 #[derive(Clone)]
@@ -961,22 +982,33 @@ impl SecureSession {
                                 }
                             }
                             LinkRole::Listen(port, expected) => {
-                                let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
-                                    Ok(l) => l,
-                                    Err(e) => {
-                                        listener.on_state("error".into(), Some(e.to_string()));
-                                        return;
-                                    }
+                                // bind 与 accept 都必须可被 shutdown 打断:disconnect()
+                                // 到达时引擎多半正阻塞在 accept_secure 里,而 shutdown
+                                // 只在 pump 循环的 select! 里被轮询 —— 不在这里接管,
+                                // stop() 之后会留下一个攥着端口的僵尸 accept 循环。
+                                let l = tokio::select! {
+                                    l = luciola::link::bind_dual_stack_listener(port) => match l {
+                                        Ok(l) => l,
+                                        Err(e) => {
+                                            listener.on_state("error".into(), Some(e.to_string()));
+                                            return;
+                                        }
+                                    },
+                                    _ = &mut shutdown => break 'outer,
                                 };
-                                match accept_secure(&l, &seed, expected.as_deref()).await {
-                                    Ok(s) => s,
-                                    Err(e) => {
-                                        // A failed handshake (wrong initiator)
-                                        // must not kill the listener; keep accepting.
-                                        listener.on_state("retrying".into(), Some(e.to_string()));
-                                        continue 'outer;
-                                    }
-                                }
+                                let accepted = tokio::select! {
+                                    r = accept_secure(&l, &seed, expected.as_deref()) => match r {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            // A failed handshake (wrong initiator)
+                                            // must not kill the listener; keep accepting.
+                                            listener.on_state("retrying".into(), Some(e.to_string()));
+                                            continue 'outer;
+                                        }
+                                    },
+                                    _ = &mut shutdown => break 'outer,
+                                };
+                                accepted
                             }
                         };
                         let mut stream = stream;
@@ -1045,7 +1077,13 @@ impl SecureSession {
                                     }
                                     if !buf.is_empty() {
                                         stats.frames_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        listener.on_message(buf.clone());
+                                        let remote_addr = stream
+                                            .socket_mut()
+                                            .peer_addr()
+                                            .ok()
+                                            .map(|a| a.to_string());
+                                        let fp = stream.peer_fingerprint();
+                                        listener.on_message(buf.clone(), fp, remote_addr);
                                     }
                                 }
                             }

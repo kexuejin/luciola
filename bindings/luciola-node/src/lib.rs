@@ -190,6 +190,8 @@ pub struct DiscoverySession {
     product: Option<String>,
     device_id: Option<String>,
     extra: Option<String>,
+    tcp_port: Option<u16>,
+    public_key: Option<Vec<u8>>,
 }
 
 #[napi]
@@ -202,12 +204,15 @@ impl DiscoverySession {
         product: Option<String>,
         device_id: Option<String>,
         extra: Option<String>,
+        node_id: Option<String>,
+        tcp_port: Option<u32>,
+        public_key: Option<Buffer>,
     ) -> Self {
         Self {
             name: name.unwrap_or_else(|| "NodeJS Peer".to_string()),
             port: port.unwrap_or(17878) as u16,
             shutdown_tx: None,
-            node_id: std::sync::Mutex::new(None),
+            node_id: std::sync::Mutex::new(node_id),
             manual_peers: std::sync::Mutex::new(
                 manual_peers
                     .unwrap_or_default()
@@ -218,6 +223,8 @@ impl DiscoverySession {
             product,
             device_id,
             extra,
+            tcp_port: tcp_port.map(|p| p as u16),
+            public_key: public_key.map(|b| b.to_vec()),
         }
     }
 
@@ -271,12 +278,19 @@ impl DiscoverySession {
 
         let name = self.name.clone();
         let port = self.port;
-        let node_id = format!("node_{:x}", rand::random::<u32>());
+        let node_id = self
+            .node_id
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| format!("node_{:x}", rand::random::<u32>()));
         let manual_peers = self.manual_peers.lock().unwrap().clone();
         let detected = luciola_net::DeviceDetector::detect();
         let device_id = self.device_id.clone().or(detected.device_id.clone());
         let product = self.product.clone();
         let extra = self.extra.clone();
+        let tcp_port = self.tcp_port;
+        let public_key = self.public_key.clone();
         *self.node_id.lock().unwrap() = Some(node_id.clone());
 
         std::thread::spawn(move || {
@@ -295,11 +309,12 @@ impl DiscoverySession {
                     profile_rev: 1,
                     addresses: luciola::net::NetworkDetector::local_candidate_addresses(),
                     udp_port: port,
-                    tcp_port: port + 1,
+                    tcp_port: tcp_port.unwrap_or(port + 1),
                     device: Some(detected),
                     device_id,
                     product,
                     extra,
+                    public_key,
                 };
 
                 let config = luciola::DiscoveryConfig {
@@ -774,21 +789,30 @@ impl SecureChannel {
                                 }
                             }
                             ChannelRole::Listen(port, expected) => {
-                                let l = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
-                                    Ok(l) => l,
-                                    Err(e) => {
-                                        tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
-                                        return;
-                                    }
+                                // bind 与 accept 都必须可被 shutdown 打断(理由同
+                                // luciola-uniffi 同名循环:僵尸 accept 会攥住端口)。
+                                let l = tokio::select! {
+                                    l = luciola::link::bind_dual_stack_listener(port) => match l {
+                                        Ok(l) => l,
+                                        Err(e) => {
+                                            tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            return;
+                                        }
+                                    },
+                                    _ = &mut shutdown => break 'outer,
                                 };
-                                match accept_secure(&l, &seed, expected.as_deref()).await {
-                                    Ok(s) => s,
-                                    Err(e) => {
-                                        // Handshake failures (wrong initiator) keep the listener alive.
-                                        tsfn.call((Some("retrying".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
-                                        continue 'outer;
-                                    }
-                                }
+                                let accepted = tokio::select! {
+                                    r = accept_secure(&l, &seed, expected.as_deref()) => match r {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            // Handshake failures (wrong initiator) keep the listener alive.
+                                            tsfn.call((Some("retrying".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            continue 'outer;
+                                        }
+                                    },
+                                    _ = &mut shutdown => break 'outer,
+                                };
+                                accepted
                             }
                         };
                         let mut stream = stream;

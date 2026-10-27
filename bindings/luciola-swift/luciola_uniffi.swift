@@ -281,7 +281,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureInitialized()
+    uniffiEnsureLuciolaUniffiInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -352,9 +352,10 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-fileprivate class UniffiHandleMap<T> {
-    private var map: [UInt64: T] = [:]
+fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
+    // All mutation happens with this lock held, which is why we implement @unchecked Sendable.
     private let lock = NSLock()
+    private var map: [UInt64: T] = [:]
     private var currentHandle: UInt64 = 1
 
     func insert(obj: T) -> UInt64 {
@@ -394,7 +395,13 @@ fileprivate class UniffiHandleMap<T> {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -545,7 +552,7 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
  * - `restart()` rebuilds the engine with the same listener (hosts call this on
  * network changes); `seconds_since_idle()` feeds host-side watchdogs.
  */
-public protocol DiscoverySessionProtocol : AnyObject {
+public protocol DiscoverySessionProtocol: AnyObject, Sendable {
     
     /**
      * Whether the last engine start actually bound the requested discovery
@@ -590,7 +597,6 @@ public protocol DiscoverySessionProtocol : AnyObject {
     func stop() 
     
 }
-
 /**
  * Active P2P discovery session backed by the Luciola UDP broadcast engine.
  *
@@ -606,8 +612,7 @@ public protocol DiscoverySessionProtocol : AnyObject {
  * - `restart()` rebuilds the engine with the same listener (hosts call this on
  * network changes); `seconds_since_idle()` feeds host-side watchdogs.
  */
-open class DiscoverySession:
-    DiscoverySessionProtocol {
+open class DiscoverySession: DiscoverySessionProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
 
     /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
@@ -621,6 +626,9 @@ open class DiscoverySession:
     // TODO: We'd like this to be `private` but for Swifty reasons,
     // we can't implement `FfiConverter` without making this `required` and we can't
     // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
     required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
         self.pointer = pointer
     }
@@ -649,15 +657,24 @@ open class DiscoverySession:
      * `manualPeers` are unicast-only targets (host:port is the UDP discovery
      * port) for peers that broadcasts cannot reach: cross-subnet hosts, VPN
      * overlays (Tailscale/ZeroTier), or localhost debugging.
+     *
+     * `node_id`, `tcp_port` and `public_key` let the host pin the beacon's
+     * identity to ITS OWN key material (zero-trust pairing wants the
+     * advertised Ed25519 key to match the one the secure channel presents);
+     * pass `None` to let the engine generate them.
      */
-public convenience init(name: String, port: UInt16, manualPeers: [ManualPeer]?, product: String?) {
+public convenience init(name: String, port: UInt16, manualPeers: [ManualPeer]?, product: String?, extra: String?, nodeId: String?, tcpPort: UInt16?, publicKey: Data?) {
     let pointer =
         try! rustCall() {
     uniffi_luciola_uniffi_fn_constructor_discoverysession_new(
         FfiConverterString.lower(name),
         FfiConverterUInt16.lower(port),
         FfiConverterOptionSequenceTypeManualPeer.lower(manualPeers),
-        FfiConverterOptionString.lower(product),$0
+        FfiConverterOptionString.lower(product),
+        FfiConverterOptionString.lower(extra),
+        FfiConverterOptionString.lower(nodeId),
+        FfiConverterOptionUInt16.lower(tcpPort),
+        FfiConverterOptionData.lower(publicKey),$0
     )
 }
     self.init(unsafeFromRawPointer: pointer)
@@ -679,7 +696,7 @@ public convenience init(name: String, port: UInt16, manualPeers: [ManualPeer]?, 
      * port. False means the port was occupied and never freed within the
      * retry window — the UI should not claim "online".
      */
-open func isBound() -> Bool {
+open func isBound() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_is_bound(self.uniffiClonePointer(),$0
     )
@@ -691,7 +708,7 @@ open func isBound() -> Bool {
      * reconciliation on the host side) should present the SAME identity so
      * remote devices see ONE node, not a duplicate peer.
      */
-open func nodeId() -> String {
+open func nodeId() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_node_id(self.uniffiClonePointer(),$0
     )
@@ -703,7 +720,7 @@ open func nodeId() -> String {
      * same listener and identity. Hosts call this when the network set changes;
      * the internal bind-retry tolerates the old socket still releasing.
      */
-open func restart() {try! rustCall() {
+open func restart()  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_restart(self.uniffiClonePointer(),$0
     )
 }
@@ -713,7 +730,7 @@ open func restart() {try! rustCall() {
      * Seconds since the last peer discovery (or session start). Host watchdogs
      * treat a long idle on a networked device as "engine stalled".
      */
-open func secondsSinceIdle() -> Double {
+open func secondsSinceIdle() -> Double  {
     return try!  FfiConverterDouble.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(self.uniffiClonePointer(),$0
     )
@@ -723,7 +740,7 @@ open func secondsSinceIdle() -> Double {
     /**
      * Replace the manual peer list; takes effect on the next `restart()`.
      */
-open func setManualPeers(peers: [ManualPeer]) {try! rustCall() {
+open func setManualPeers(peers: [ManualPeer])  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(self.uniffiClonePointer(),
         FfiConverterSequenceTypeManualPeer.lower(peers),$0
     )
@@ -733,9 +750,9 @@ open func setManualPeers(peers: [ManualPeer]) {try! rustCall() {
     /**
      * Start the engine on a dedicated background thread.
      */
-open func start(listener: OnPeerDiscovered) {try! rustCall() {
+open func start(listener: OnPeerDiscovered)  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_start(self.uniffiClonePointer(),
-        FfiConverterCallbackInterfaceOnPeerDiscovered.lower(listener),$0
+        FfiConverterCallbackInterfaceOnPeerDiscovered_lower(listener),$0
     )
 }
 }
@@ -743,7 +760,7 @@ open func start(listener: OnPeerDiscovered) {try! rustCall() {
     /**
      * Stop the session and broadcast `exit` to neighbors.
      */
-open func stop() {try! rustCall() {
+open func stop()  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_stop(self.uniffiClonePointer(),$0
     )
 }
@@ -751,6 +768,7 @@ open func stop() {try! rustCall() {
     
 
 }
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -787,8 +805,6 @@ public struct FfiConverterTypeDiscoverySession: FfiConverter {
 }
 
 
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -806,12 +822,14 @@ public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) ->
 
 
 
+
+
 /**
  * One authenticated encrypted channel (see `luciola::link::secure`).
  * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
  * received frames are decrypted and delivered through the listener.
  */
-public protocol SecureSessionProtocol : AnyObject {
+public protocol SecureSessionProtocol: AnyObject, Sendable {
     
     /**
      * Race-dial every candidate address (Happy Eyeballs) and run the
@@ -845,19 +863,29 @@ public protocol SecureSessionProtocol : AnyObject {
     func send(message: Data)  -> Bool
     
     /**
+     * Keepalive cadence: ping after `interval_ms` idle, peer considered dead
+     * after `dead_after_ms` of silence. Hosts raise both under Android Doze.
+     */
+    func setKeepalive(intervalMs: UInt64, deadAfterMs: UInt64) 
+    
+    /**
+     * Retry policy for auto-reconnect: exponential 2x from `min_ms` to
+     * `max_ms`, each delay jittered by +-`jitter_pct` percent (anti-thundering-herd).
+     */
+    func setRetryPolicy(minMs: UInt64, maxMs: UInt64, jitterPct: UInt64) 
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
     func stats()  -> LinkStats
     
 }
-
 /**
  * One authenticated encrypted channel (see `luciola::link::secure`).
  * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
  * received frames are decrypted and delivered through the listener.
  */
-open class SecureSession:
-    SecureSessionProtocol {
+open class SecureSession: SecureSessionProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
 
     /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
@@ -871,6 +899,9 @@ open class SecureSession:
     // TODO: We'd like this to be `private` but for Swifty reasons,
     // we can't implement `FfiConverter` without making this `required` and we can't
     // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
     required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
         self.pointer = pointer
     }
@@ -921,13 +952,13 @@ public convenience init(identitySeed: Data) {
      * With `auto_reconnect` the session re-dials with exponential backoff
      * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener) {try! rustCall() {
+open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener)  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_connect(self.uniffiClonePointer(),
         FfiConverterSequenceString.lower(addresses),
         FfiConverterUInt16.lower(port),
         FfiConverterData.lower(pinnedPeerPublicKey),
         FfiConverterBool.lower(autoReconnect),
-        FfiConverterCallbackInterfaceSecureSessionListener.lower(listener),$0
+        FfiConverterCallbackInterfaceSecureSessionListener_lower(listener),$0
     )
 }
 }
@@ -937,13 +968,13 @@ open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, 
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
      */
-open func disconnect() {try! rustCall() {
+open func disconnect()  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_disconnect(self.uniffiClonePointer(),$0
     )
 }
 }
     
-open func isConnected() -> Bool {
+open func isConnected() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_is_connected(self.uniffiClonePointer(),$0
     )
@@ -955,11 +986,11 @@ open func isConnected() -> Bool {
      * peer key, or None to accept any identity (TOFU — check the reported
      * fingerprint). The listener re-arms after each channel closes.
      */
-open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener) {try! rustCall() {
+open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener)  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_listen(self.uniffiClonePointer(),
         FfiConverterUInt16.lower(port),
         FfiConverterOptionData.lower(expectedPeer),
-        FfiConverterCallbackInterfaceSecureSessionListener.lower(listener),$0
+        FfiConverterCallbackInterfaceSecureSessionListener_lower(listener),$0
     )
 }
 }
@@ -968,7 +999,7 @@ open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListe
      * Queue an encrypted frame. False when not connected OR the outbound
      * queue is full (peer stalled) — back off and retry.
      */
-open func send(message: Data) -> Bool {
+open func send(message: Data) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_send(self.uniffiClonePointer(),
         FfiConverterData.lower(message),$0
@@ -977,10 +1008,35 @@ open func send(message: Data) -> Bool {
 }
     
     /**
+     * Keepalive cadence: ping after `interval_ms` idle, peer considered dead
+     * after `dead_after_ms` of silence. Hosts raise both under Android Doze.
+     */
+open func setKeepalive(intervalMs: UInt64, deadAfterMs: UInt64)  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_set_keepalive(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(intervalMs),
+        FfiConverterUInt64.lower(deadAfterMs),$0
+    )
+}
+}
+    
+    /**
+     * Retry policy for auto-reconnect: exponential 2x from `min_ms` to
+     * `max_ms`, each delay jittered by +-`jitter_pct` percent (anti-thundering-herd).
+     */
+open func setRetryPolicy(minMs: UInt64, maxMs: UInt64, jitterPct: UInt64)  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_set_retry_policy(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(minMs),
+        FfiConverterUInt64.lower(maxMs),
+        FfiConverterUInt64.lower(jitterPct),$0
+    )
+}
+}
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
-open func stats() -> LinkStats {
-    return try!  FfiConverterTypeLinkStats.lift(try! rustCall() {
+open func stats() -> LinkStats  {
+    return try!  FfiConverterTypeLinkStats_lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_stats(self.uniffiClonePointer(),$0
     )
 })
@@ -988,6 +1044,7 @@ open func stats() -> LinkStats {
     
 
 }
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1024,8 +1081,6 @@ public struct FfiConverterTypeSecureSession: FfiConverter {
 }
 
 
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1043,12 +1098,14 @@ public func FfiConverterTypeSecureSession_lower(_ value: SecureSession) -> Unsaf
 
 
 
+
+
 /**
  * Persisted trust list. Serialize with [TrustStore::to_json] and store the
  * bytes in the product's secret storage; unpaired peers are simply absent
  * (default posture: deny).
  */
-public protocol TrustStoreProtocol : AnyObject {
+public protocol TrustStoreProtocol: AnyObject, Sendable {
     
     func entries()  -> [TrustedDeviceInfo]
     
@@ -1073,14 +1130,12 @@ public protocol TrustStoreProtocol : AnyObject {
     func trustDevice(device: TrustedDeviceInfo) 
     
 }
-
 /**
  * Persisted trust list. Serialize with [TrustStore::to_json] and store the
  * bytes in the product's secret storage; unpaired peers are simply absent
  * (default posture: deny).
  */
-open class TrustStore:
-    TrustStoreProtocol {
+open class TrustStore: TrustStoreProtocol, @unchecked Sendable {
     fileprivate let pointer: UnsafeMutableRawPointer!
 
     /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
@@ -1094,6 +1149,9 @@ open class TrustStore:
     // TODO: We'd like this to be `private` but for Swifty reasons,
     // we can't implement `FfiConverter` without making this `required` and we can't
     // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
     required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
         self.pointer = pointer
     }
@@ -1137,7 +1195,7 @@ public convenience init(fromJson: String?) {
     
 
     
-open func entries() -> [TrustedDeviceInfo] {
+open func entries() -> [TrustedDeviceInfo]  {
     return try!  FfiConverterSequenceTypeTrustedDeviceInfo.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_truststore_entries(self.uniffiClonePointer(),$0
     )
@@ -1147,7 +1205,7 @@ open func entries() -> [TrustedDeviceInfo] {
     /**
      * Trust level for a public key; absent = unpaired.
      */
-open func levelOf(publicKey: Data) -> TrustLevel? {
+open func levelOf(publicKey: Data) -> TrustLevel?  {
     return try!  FfiConverterOptionTypeTrustLevel.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_truststore_level_of(self.uniffiClonePointer(),
         FfiConverterData.lower(publicKey),$0
@@ -1158,7 +1216,7 @@ open func levelOf(publicKey: Data) -> TrustLevel? {
     /**
      * Remove a paired device by fingerprint.
      */
-open func remove(fingerprint: String) -> Bool {
+open func remove(fingerprint: String) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_truststore_remove(self.uniffiClonePointer(),
         FfiConverterString.lower(fingerprint),$0
@@ -1169,7 +1227,7 @@ open func remove(fingerprint: String) -> Bool {
     /**
      * JSON serialization for persistence.
      */
-open func toJson() -> String {
+open func toJson() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_truststore_to_json(self.uniffiClonePointer(),$0
     )
@@ -1179,15 +1237,16 @@ open func toJson() -> String {
     /**
      * Pair or re-pair a device (replaces the entry with the same public key).
      */
-open func trustDevice(device: TrustedDeviceInfo) {try! rustCall() {
+open func trustDevice(device: TrustedDeviceInfo)  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_truststore_trust_device(self.uniffiClonePointer(),
-        FfiConverterTypeTrustedDeviceInfo.lower(device),$0
+        FfiConverterTypeTrustedDeviceInfo_lower(device),$0
     )
 }
 }
     
 
 }
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1224,8 +1283,6 @@ public struct FfiConverterTypeTrustStore: FfiConverter {
 }
 
 
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1239,6 +1296,8 @@ public func FfiConverterTypeTrustStore_lift(_ pointer: UnsafeMutableRawPointer) 
 public func FfiConverterTypeTrustStore_lower(_ value: TrustStore) -> UnsafeMutableRawPointer {
     return FfiConverterTypeTrustStore.lower(value)
 }
+
+
 
 
 /**
@@ -1260,6 +1319,9 @@ public struct DeviceIdentityInfo {
     }
 }
 
+#if compiler(>=6)
+extension DeviceIdentityInfo: Sendable {}
+#endif
 
 
 extension DeviceIdentityInfo: Equatable, Hashable {
@@ -1286,6 +1348,7 @@ extension DeviceIdentityInfo: Equatable, Hashable {
         hasher.combine(shortPin)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1349,6 +1412,9 @@ public struct DeviceMeta {
     }
 }
 
+#if compiler(>=6)
+extension DeviceMeta: Sendable {}
+#endif
 
 
 extension DeviceMeta: Equatable, Hashable {
@@ -1383,6 +1449,7 @@ extension DeviceMeta: Equatable, Hashable {
         hasher.combine(deviceId)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1444,6 +1511,9 @@ public struct DialChannel {
     }
 }
 
+#if compiler(>=6)
+extension DialChannel: Sendable {}
+#endif
 
 
 extension DialChannel: Equatable, Hashable {
@@ -1466,6 +1536,7 @@ extension DialChannel: Equatable, Hashable {
         hasher.combine(rttMs)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1522,6 +1593,11 @@ public struct DiscoveredPeer {
      * Product label running on the peer.
      */
     public var product: String?
+    /**
+     * Opaque application payload (mDNS-TXT style) — the host's richer
+     * profile rides here; the engine never parses it.
+     */
+    public var extra: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -1531,7 +1607,11 @@ public struct DiscoveredPeer {
          */deviceId: String?, 
         /**
          * Product label running on the peer.
-         */product: String?) {
+         */product: String?, 
+        /**
+         * Opaque application payload (mDNS-TXT style) — the host's richer
+         * profile rides here; the engine never parses it.
+         */extra: String?) {
         self.nodeId = nodeId
         self.name = name
         self.ip = ip
@@ -1540,9 +1620,13 @@ public struct DiscoveredPeer {
         self.device = device
         self.deviceId = deviceId
         self.product = product
+        self.extra = extra
     }
 }
 
+#if compiler(>=6)
+extension DiscoveredPeer: Sendable {}
+#endif
 
 
 extension DiscoveredPeer: Equatable, Hashable {
@@ -1571,6 +1655,9 @@ extension DiscoveredPeer: Equatable, Hashable {
         if lhs.product != rhs.product {
             return false
         }
+        if lhs.extra != rhs.extra {
+            return false
+        }
         return true
     }
 
@@ -1583,8 +1670,10 @@ extension DiscoveredPeer: Equatable, Hashable {
         hasher.combine(device)
         hasher.combine(deviceId)
         hasher.combine(product)
+        hasher.combine(extra)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1601,7 +1690,8 @@ public struct FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer {
                 tcpPort: FfiConverterUInt16.read(from: &buf), 
                 device: FfiConverterOptionTypeDeviceMeta.read(from: &buf), 
                 deviceId: FfiConverterOptionString.read(from: &buf), 
-                product: FfiConverterOptionString.read(from: &buf)
+                product: FfiConverterOptionString.read(from: &buf), 
+                extra: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1614,6 +1704,7 @@ public struct FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer {
         FfiConverterOptionTypeDeviceMeta.write(value.device, into: &buf)
         FfiConverterOptionString.write(value.deviceId, into: &buf)
         FfiConverterOptionString.write(value.product, into: &buf)
+        FfiConverterOptionString.write(value.extra, into: &buf)
     }
 }
 
@@ -1641,17 +1732,46 @@ public struct LinkStats {
     public var framesReceived: UInt64
     public var connectionsEstablished: UInt64
     public var reconnectAttempts: UInt64
+    /**
+     * `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
+     *
+     * 与 [Self::frames_dequeued]、[Self::frames_sent] 三个数放在一起才能定位
+     * 「入队成功但没发出去」到底发生在哪一步：
+     * - enqueued > dequeued ⇒ 帧还在队列里或队列被丢（会话被替换/孤儿化）
+     * - dequeued > sent      ⇒ 帧在链路循环里被丢（写失败 / select! 分支）
+     */
+    public var framesEnqueued: UInt64
+    /**
+     * 链路循环从出站队列**取走**的帧数。
+     */
+    public var framesDequeued: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(framesSent: UInt64, framesReceived: UInt64, connectionsEstablished: UInt64, reconnectAttempts: UInt64) {
+    public init(framesSent: UInt64, framesReceived: UInt64, connectionsEstablished: UInt64, reconnectAttempts: UInt64, 
+        /**
+         * `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
+         *
+         * 与 [Self::frames_dequeued]、[Self::frames_sent] 三个数放在一起才能定位
+         * 「入队成功但没发出去」到底发生在哪一步：
+         * - enqueued > dequeued ⇒ 帧还在队列里或队列被丢（会话被替换/孤儿化）
+         * - dequeued > sent      ⇒ 帧在链路循环里被丢（写失败 / select! 分支）
+         */framesEnqueued: UInt64, 
+        /**
+         * 链路循环从出站队列**取走**的帧数。
+         */framesDequeued: UInt64) {
         self.framesSent = framesSent
         self.framesReceived = framesReceived
         self.connectionsEstablished = connectionsEstablished
         self.reconnectAttempts = reconnectAttempts
+        self.framesEnqueued = framesEnqueued
+        self.framesDequeued = framesDequeued
     }
 }
 
+#if compiler(>=6)
+extension LinkStats: Sendable {}
+#endif
 
 
 extension LinkStats: Equatable, Hashable {
@@ -1668,6 +1788,12 @@ extension LinkStats: Equatable, Hashable {
         if lhs.reconnectAttempts != rhs.reconnectAttempts {
             return false
         }
+        if lhs.framesEnqueued != rhs.framesEnqueued {
+            return false
+        }
+        if lhs.framesDequeued != rhs.framesDequeued {
+            return false
+        }
         return true
     }
 
@@ -1676,8 +1802,11 @@ extension LinkStats: Equatable, Hashable {
         hasher.combine(framesReceived)
         hasher.combine(connectionsEstablished)
         hasher.combine(reconnectAttempts)
+        hasher.combine(framesEnqueued)
+        hasher.combine(framesDequeued)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1690,7 +1819,9 @@ public struct FfiConverterTypeLinkStats: FfiConverterRustBuffer {
                 framesSent: FfiConverterUInt64.read(from: &buf), 
                 framesReceived: FfiConverterUInt64.read(from: &buf), 
                 connectionsEstablished: FfiConverterUInt64.read(from: &buf), 
-                reconnectAttempts: FfiConverterUInt64.read(from: &buf)
+                reconnectAttempts: FfiConverterUInt64.read(from: &buf), 
+                framesEnqueued: FfiConverterUInt64.read(from: &buf), 
+                framesDequeued: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -1699,6 +1830,8 @@ public struct FfiConverterTypeLinkStats: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.framesReceived, into: &buf)
         FfiConverterUInt64.write(value.connectionsEstablished, into: &buf)
         FfiConverterUInt64.write(value.reconnectAttempts, into: &buf)
+        FfiConverterUInt64.write(value.framesEnqueued, into: &buf)
+        FfiConverterUInt64.write(value.framesDequeued, into: &buf)
     }
 }
 
@@ -1733,6 +1866,9 @@ public struct ManualPeer {
     }
 }
 
+#if compiler(>=6)
+extension ManualPeer: Sendable {}
+#endif
 
 
 extension ManualPeer: Equatable, Hashable {
@@ -1751,6 +1887,7 @@ extension ManualPeer: Equatable, Hashable {
         hasher.combine(port)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1797,20 +1934,25 @@ public struct PairingInfo {
     public var port: UInt16
     public var addrs: [String]
     public var fingerprint: String?
+    public var publicKey: String?
     public var pin: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, pin: String?) {
+    public init(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, publicKey: String?, pin: String?) {
         self.name = name
         self.product = product
         self.port = port
         self.addrs = addrs
         self.fingerprint = fingerprint
+        self.publicKey = publicKey
         self.pin = pin
     }
 }
 
+#if compiler(>=6)
+extension PairingInfo: Sendable {}
+#endif
 
 
 extension PairingInfo: Equatable, Hashable {
@@ -1830,6 +1972,9 @@ extension PairingInfo: Equatable, Hashable {
         if lhs.fingerprint != rhs.fingerprint {
             return false
         }
+        if lhs.publicKey != rhs.publicKey {
+            return false
+        }
         if lhs.pin != rhs.pin {
             return false
         }
@@ -1842,9 +1987,11 @@ extension PairingInfo: Equatable, Hashable {
         hasher.combine(port)
         hasher.combine(addrs)
         hasher.combine(fingerprint)
+        hasher.combine(publicKey)
         hasher.combine(pin)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1859,6 +2006,7 @@ public struct FfiConverterTypePairingInfo: FfiConverterRustBuffer {
                 port: FfiConverterUInt16.read(from: &buf), 
                 addrs: FfiConverterSequenceString.read(from: &buf), 
                 fingerprint: FfiConverterOptionString.read(from: &buf), 
+                publicKey: FfiConverterOptionString.read(from: &buf), 
                 pin: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -1869,6 +2017,7 @@ public struct FfiConverterTypePairingInfo: FfiConverterRustBuffer {
         FfiConverterUInt16.write(value.port, into: &buf)
         FfiConverterSequenceString.write(value.addrs, into: &buf)
         FfiConverterOptionString.write(value.fingerprint, into: &buf)
+        FfiConverterOptionString.write(value.publicKey, into: &buf)
         FfiConverterOptionString.write(value.pin, into: &buf)
     }
 }
@@ -1906,6 +2055,9 @@ public struct RaceOutcome {
     }
 }
 
+#if compiler(>=6)
+extension RaceOutcome: Sendable {}
+#endif
 
 
 extension RaceOutcome: Equatable, Hashable {
@@ -1928,6 +2080,7 @@ extension RaceOutcome: Equatable, Hashable {
         hasher.combine(channels)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -1989,6 +2142,9 @@ public struct TrustedDeviceInfo {
     }
 }
 
+#if compiler(>=6)
+extension TrustedDeviceInfo: Sendable {}
+#endif
 
 
 extension TrustedDeviceInfo: Equatable, Hashable {
@@ -2023,6 +2179,7 @@ extension TrustedDeviceInfo: Equatable, Hashable {
         hasher.combine(pinnedAtMs)
     }
 }
+
 
 
 #if swift(>=5.8)
@@ -2083,6 +2240,10 @@ public enum DeviceType {
     case unknown
 }
 
+
+#if compiler(>=6)
+extension DeviceType: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2163,8 +2324,10 @@ public func FfiConverterTypeDeviceType_lower(_ value: DeviceType) -> RustBuffer 
 }
 
 
-
 extension DeviceType: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2178,6 +2341,10 @@ public enum DialStatus {
     case timeout
 }
 
+
+#if compiler(>=6)
+extension DialStatus: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2234,8 +2401,10 @@ public func FfiConverterTypeDialStatus_lower(_ value: DialStatus) -> RustBuffer 
 }
 
 
-
 extension DialStatus: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2257,6 +2426,10 @@ public enum TrustLevel {
     case partial
 }
 
+
+#if compiler(>=6)
+extension TrustLevel: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -2307,8 +2480,10 @@ public func FfiConverterTypeTrustLevel_lower(_ value: TrustLevel) -> RustBuffer 
 }
 
 
-
 extension TrustLevel: Equatable, Hashable {}
+
+
+
 
 
 
@@ -2321,7 +2496,7 @@ extension TrustLevel: Equatable, Hashable {}
  * peer exits or ages out (update your peer table), `on_error` reports
  * fatal setup problems (e.g. discovery port occupied by another product).
  */
-public protocol OnPeerDiscovered : AnyObject {
+public protocol OnPeerDiscovered: AnyObject, Sendable {
     
     func onPeerDiscovered(peer: DiscoveredPeer) 
     
@@ -2333,20 +2508,16 @@ public protocol OnPeerDiscovered : AnyObject {
     
 }
 
-// Magic number for the Rust proxy to call using the same mechanism as every other method,
-// to free the callback once it's dropped by Rust.
-private let IDX_CALLBACK_FREE: Int32 = 0
-// Callback return codes
-private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
-private let UNIFFI_CALLBACK_ERROR: Int32 = 1
-private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 // Put the implementation in a struct so we don't pollute the top-level namespace
 fileprivate struct UniffiCallbackInterfaceOnPeerDiscovered {
 
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
-    static var vtable: UniffiVTableCallbackInterfaceOnPeerDiscovered = UniffiVTableCallbackInterfaceOnPeerDiscovered(
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceOnPeerDiscovered] = [UniffiVTableCallbackInterfaceOnPeerDiscovered(
         onPeerDiscovered: { (
             uniffiHandle: UInt64,
             peer: RustBuffer,
@@ -2359,7 +2530,7 @@ fileprivate struct UniffiCallbackInterfaceOnPeerDiscovered {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
                 return uniffiObj.onPeerDiscovered(
-                     peer: try FfiConverterTypeDiscoveredPeer.lift(peer)
+                     peer: try FfiConverterTypeDiscoveredPeer_lift(peer)
                 )
             }
 
@@ -2383,7 +2554,7 @@ fileprivate struct UniffiCallbackInterfaceOnPeerDiscovered {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
                 return uniffiObj.onPeerUpdated(
-                     peer: try FfiConverterTypeDiscoveredPeer.lift(peer)
+                     peer: try FfiConverterTypeDiscoveredPeer_lift(peer)
                 )
             }
 
@@ -2451,11 +2622,11 @@ fileprivate struct UniffiCallbackInterfaceOnPeerDiscovered {
                 print("Uniffi callback interface OnPeerDiscovered: handle missing in uniffiFree")
             }
         }
-    )
+    )]
 }
 
 private func uniffiCallbackInitOnPeerDiscovered() {
-    uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(&UniffiCallbackInterfaceOnPeerDiscovered.vtable)
+    uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(UniffiCallbackInterfaceOnPeerDiscovered.vtable)
 }
 
 // FfiConverter protocol for callback interfaces
@@ -2463,7 +2634,7 @@ private func uniffiCallbackInitOnPeerDiscovered() {
 @_documentation(visibility: private)
 #endif
 fileprivate struct FfiConverterCallbackInterfaceOnPeerDiscovered {
-    fileprivate static var handleMap = UniffiHandleMap<OnPeerDiscovered>()
+    fileprivate static let handleMap = UniffiHandleMap<OnPeerDiscovered>()
 }
 
 #if swift(>=5.8)
@@ -2504,12 +2675,27 @@ extension FfiConverterCallbackInterfaceOnPeerDiscovered : FfiConverter {
 }
 
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceOnPeerDiscovered_lift(_ handle: UInt64) throws -> OnPeerDiscovered {
+    return try FfiConverterCallbackInterfaceOnPeerDiscovered.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceOnPeerDiscovered_lower(_ v: OnPeerDiscovered) -> UInt64 {
+    return FfiConverterCallbackInterfaceOnPeerDiscovered.lower(v)
+}
+
+
 
 
 /**
  * Events from a [SecureSession]: state transitions and decrypted messages.
  */
-public protocol SecureSessionListener : AnyObject {
+public protocol SecureSessionListener: AnyObject, Sendable {
     
     /**
      * `state`: "connected" | "closed" | "error"; `detail` carries the peer
@@ -2517,10 +2703,15 @@ public protocol SecureSessionListener : AnyObject {
      */
     func onState(state: String, detail: String?) 
     
-    func onMessage(message: Data) 
+    /**
+     * `peer_fingerprint` is the authenticated identity of the sender (the
+     * engine verified it during the handshake); `remote_addr` is the socket
+     * endpoint the frame physically arrived from. Hosts use them to route
+     * the datagram without reverse-engineering session state.
+     */
+    func onMessage(message: Data, peerFingerprint: String, remoteAddr: String?) 
     
 }
-
 
 
 // Put the implementation in a struct so we don't pollute the top-level namespace
@@ -2528,7 +2719,10 @@ fileprivate struct UniffiCallbackInterfaceSecureSessionListener {
 
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
-    static var vtable: UniffiVTableCallbackInterfaceSecureSessionListener = UniffiVTableCallbackInterfaceSecureSessionListener(
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceSecureSessionListener] = [UniffiVTableCallbackInterfaceSecureSessionListener(
         onState: { (
             uniffiHandle: UInt64,
             state: RustBuffer,
@@ -2558,6 +2752,8 @@ fileprivate struct UniffiCallbackInterfaceSecureSessionListener {
         onMessage: { (
             uniffiHandle: UInt64,
             message: RustBuffer,
+            peerFingerprint: RustBuffer,
+            remoteAddr: RustBuffer,
             uniffiOutReturn: UnsafeMutableRawPointer,
             uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
         ) in
@@ -2567,7 +2763,9 @@ fileprivate struct UniffiCallbackInterfaceSecureSessionListener {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
                 return uniffiObj.onMessage(
-                     message: try FfiConverterData.lift(message)
+                     message: try FfiConverterData.lift(message),
+                     peerFingerprint: try FfiConverterString.lift(peerFingerprint),
+                     remoteAddr: try FfiConverterOptionString.lift(remoteAddr)
                 )
             }
 
@@ -2585,11 +2783,11 @@ fileprivate struct UniffiCallbackInterfaceSecureSessionListener {
                 print("Uniffi callback interface SecureSessionListener: handle missing in uniffiFree")
             }
         }
-    )
+    )]
 }
 
 private func uniffiCallbackInitSecureSessionListener() {
-    uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(&UniffiCallbackInterfaceSecureSessionListener.vtable)
+    uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(UniffiCallbackInterfaceSecureSessionListener.vtable)
 }
 
 // FfiConverter protocol for callback interfaces
@@ -2597,7 +2795,7 @@ private func uniffiCallbackInitSecureSessionListener() {
 @_documentation(visibility: private)
 #endif
 fileprivate struct FfiConverterCallbackInterfaceSecureSessionListener {
-    fileprivate static var handleMap = UniffiHandleMap<SecureSessionListener>()
+    fileprivate static let handleMap = UniffiHandleMap<SecureSessionListener>()
 }
 
 #if swift(>=5.8)
@@ -2634,6 +2832,45 @@ extension FfiConverterCallbackInterfaceSecureSessionListener : FfiConverter {
 #endif
     public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
         writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceSecureSessionListener_lift(_ handle: UInt64) throws -> SecureSessionListener {
+    return try FfiConverterCallbackInterfaceSecureSessionListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceSecureSessionListener_lower(_ v: SecureSessionListener) -> UInt64 {
+    return FfiConverterCallbackInterfaceSecureSessionListener.lower(v)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
+    typealias SwiftType = UInt16?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
     }
 }
 
@@ -2931,13 +3168,13 @@ fileprivate struct FfiConverterSequenceTypeTrustedDeviceInfo: FfiConverterRustBu
 /**
  * Retrieve all local addresses including VPN/tunnels (for unicast overlay sync).
  */
-public func advertisedAddresses() -> [String] {
+public func advertisedAddresses() -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_advertised_addresses($0
     )
 })
 }
-public func buildPairingUri(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, pin: String?) -> String {
+public func buildPairingUri(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, publicKey: String?, pin: String?) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_build_pairing_uri(
         FfiConverterString.lower(name),
@@ -2945,6 +3182,7 @@ public func buildPairingUri(name: String, product: String?, port: UInt16, addrs:
         FfiConverterUInt16.lower(port),
         FfiConverterSequenceString.lower(addrs),
         FfiConverterOptionString.lower(fingerprint),
+        FfiConverterOptionString.lower(publicKey),
         FfiConverterOptionString.lower(pin),$0
     )
 })
@@ -2952,7 +3190,7 @@ public func buildPairingUri(name: String, product: String?, port: UInt16, addrs:
 /**
  * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
  */
-public func comparisonPin(localPk: Data, remotePk: Data) -> String {
+public func comparisonPin(localPk: Data, remotePk: Data) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_comparison_pin(
         FfiConverterData.lower(localPk),
@@ -2964,7 +3202,7 @@ public func comparisonPin(localPk: Data, remotePk: Data) -> String {
  * Selection policy shared with the demos: first 3 IPv4 candidates plus the
  * first IPv6 GUA. Feed the result into [race_connect].
  */
-public func defaultRaceCandidates(addresses: [String]) -> [String] {
+public func defaultRaceCandidates(addresses: [String]) -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_default_race_candidates(
         FfiConverterSequenceString.lower(addresses),$0
@@ -2974,8 +3212,8 @@ public func defaultRaceCandidates(addresses: [String]) -> [String] {
 /**
  * Generate a fresh device identity (Ed25519). Keep the seed secret.
  */
-public func generateDeviceIdentity() -> DeviceIdentityInfo {
-    return try!  FfiConverterTypeDeviceIdentityInfo.lift(try! rustCall() {
+public func generateDeviceIdentity() -> DeviceIdentityInfo  {
+    return try!  FfiConverterTypeDeviceIdentityInfo_lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_generate_device_identity($0
     )
 })
@@ -2983,8 +3221,8 @@ public func generateDeviceIdentity() -> DeviceIdentityInfo {
 /**
  * Detect the current machine's hardware profile, OS, architecture, and form factor.
  */
-public func getDeviceMeta() -> DeviceMeta {
-    return try!  FfiConverterTypeDeviceMeta.lift(try! rustCall() {
+public func getDeviceMeta() -> DeviceMeta  {
+    return try!  FfiConverterTypeDeviceMeta_lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_get_device_meta($0
     )
 })
@@ -2992,7 +3230,7 @@ public func getDeviceMeta() -> DeviceMeta {
 /**
  * `sha256:<hex>` fingerprint of an Ed25519 public key.
  */
-public func identityFingerprint(publicKey: Data) -> String {
+public func identityFingerprint(publicKey: Data) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_identity_fingerprint(
         FfiConverterData.lower(publicKey),$0
@@ -3002,8 +3240,8 @@ public func identityFingerprint(publicKey: Data) -> String {
 /**
  * Restore an identity from a persisted 32-byte seed.
  */
-public func identityFromSeed(seed: Data) -> DeviceIdentityInfo {
-    return try!  FfiConverterTypeDeviceIdentityInfo.lift(try! rustCall() {
+public func identityFromSeed(seed: Data) -> DeviceIdentityInfo  {
+    return try!  FfiConverterTypeDeviceIdentityInfo_lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_identity_from_seed(
         FfiConverterData.lower(seed),$0
     )
@@ -3012,7 +3250,7 @@ public func identityFromSeed(seed: Data) -> DeviceIdentityInfo {
 /**
  * 6-digit on-screen comparison pin for pairing.
  */
-public func identityShortPin(publicKey: Data) -> String {
+public func identityShortPin(publicKey: Data) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_identity_short_pin(
         FfiConverterData.lower(publicKey),$0
@@ -3023,7 +3261,7 @@ public func identityShortPin(publicKey: Data) -> String {
  * Check if a peer address is in the same local network:
  * Returns true if either RFC private IPv4/IPv6 OR domestic broadband /64 GUA matching.
  */
-public func isLanPeer(peerAddress: String, localAddresses: [String]) -> Bool {
+public func isLanPeer(peerAddress: String, localAddresses: [String]) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_is_lan_peer(
         FfiConverterString.lower(peerAddress),
@@ -3034,7 +3272,7 @@ public func isLanPeer(peerAddress: String, localAddresses: [String]) -> Bool {
 /**
  * Check if an interface name looks like a real physical network interface (Wi-Fi, Ethernet).
  */
-public func isPhysicalNic(name: String) -> Bool {
+public func isPhysicalNic(name: String) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_is_physical_nic(
         FfiConverterString.lower(name),$0
@@ -3044,7 +3282,7 @@ public func isPhysicalNic(name: String) -> Bool {
 /**
  * Check if an IP address belongs to a proxy software TUN virtual network (198.18.0.0/15).
  */
-public func isTunVirtualIp(address: String) -> Bool {
+public func isTunVirtualIp(address: String) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_is_tun_virtual_ip(
         FfiConverterString.lower(address),$0
@@ -3054,7 +3292,7 @@ public func isTunVirtualIp(address: String) -> Bool {
 /**
  * Check if an interface name corresponds to a virtual adapter (utun, feth, tailscale, docker, etc.).
  */
-public func isVirtualNic(name: String) -> Bool {
+public func isVirtualNic(name: String) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_is_virtual_nic(
         FfiConverterString.lower(name),$0
@@ -3064,13 +3302,13 @@ public func isVirtualNic(name: String) -> Bool {
 /**
  * Retrieve clean local candidate IP addresses (high-scoring IPv4 and domestic IPv6 GUA/ULA).
  */
-public func localCandidateAddresses() -> [String] {
+public func localCandidateAddresses() -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_local_candidate_addresses($0
     )
 })
 }
-public func parsePairingUri(uri: String) -> PairingInfo? {
+public func parsePairingUri(uri: String) -> PairingInfo?  {
     return try!  FfiConverterOptionTypePairingInfo.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_parse_pairing_uri(
         FfiConverterString.lower(uri),$0
@@ -3081,8 +3319,8 @@ public func parsePairingUri(uri: String) -> PairingInfo? {
  * Race TCP dials across `addresses` on `port` (Happy Eyeballs): the first
  * connect wins, the rest are cancelled. Blocking; call off the UI thread.
  */
-public func raceConnect(addresses: [String], port: UInt16, attemptTimeoutMs: UInt64?, staggerMs: UInt64?) -> RaceOutcome {
-    return try!  FfiConverterTypeRaceOutcome.lift(try! rustCall() {
+public func raceConnect(addresses: [String], port: UInt16, attemptTimeoutMs: UInt64?, staggerMs: UInt64?) -> RaceOutcome  {
+    return try!  FfiConverterTypeRaceOutcome_lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_race_connect(
         FfiConverterSequenceString.lower(addresses),
         FfiConverterUInt16.lower(port),
@@ -3097,7 +3335,7 @@ public func raceConnect(addresses: [String], port: UInt16, attemptTimeoutMs: UIn
  * In dark terminals, swaps dark and light colors so that white background border
  * and black QR modules are rendered correctly for optical scanning.
  */
-public func renderQrAscii(content: String) -> String? {
+public func renderQrAscii(content: String) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_render_qr_ascii(
         FfiConverterString.lower(content),$0
@@ -3107,7 +3345,7 @@ public func renderQrAscii(content: String) -> String? {
 /**
  * Select the best local IPv4 address for QR code / LAN access.
  */
-public func selectLanIp() -> String? {
+public func selectLanIp() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_select_lan_ip($0
     )
@@ -3116,7 +3354,7 @@ public func selectLanIp() -> String? {
 /**
  * Sign a message with a persisted seed.
  */
-public func signMessage(seed: Data, message: Data) -> Data {
+public func signMessage(seed: Data, message: Data) -> Data  {
     return try!  FfiConverterData.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_sign_message(
         FfiConverterData.lower(seed),
@@ -3129,7 +3367,7 @@ public func signMessage(seed: Data, message: Data) -> Data {
  *
  * These addresses bypass Clash / Sing-box TUN mode (0.0.0.0/1) route capture.
  */
-public func subnetBroadcastAddresses() -> [String] {
+public func subnetBroadcastAddresses() -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses($0
     )
@@ -3138,7 +3376,7 @@ public func subnetBroadcastAddresses() -> [String] {
 /**
  * Verify a signature against an Ed25519 public key.
  */
-public func verifyMessage(publicKey: Data, message: Data, signature: Data) -> Bool {
+public func verifyMessage(publicKey: Data, message: Data, signature: Data) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_verify_message(
         FfiConverterData.lower(publicKey),
@@ -3155,9 +3393,9 @@ private enum InitializationResult {
 }
 // Use a global variable to perform the versioning checks. Swift ensures that
 // the code inside is only computed once.
-private var initializationResult: InitializationResult = {
+private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
-    let bindings_contract_version = 26
+    let bindings_contract_version = 29
     // Get the scaffolding contract version by calling the into the dylib
     let scaffolding_contract_version = ffi_luciola_uniffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
@@ -3166,7 +3404,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 6080) {
+    if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 28829) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657) {
@@ -3262,6 +3500,12 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_set_keepalive() != 2432) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy() != 49064) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3280,7 +3524,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_truststore_trust_device() != 27542) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 60635) {
+    if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 24675) {
@@ -3304,7 +3548,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 6008) {
+    if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 63088) {
         return InitializationResult.apiChecksumMismatch
     }
 
@@ -3313,7 +3557,9 @@ private var initializationResult: InitializationResult = {
     return InitializationResult.ok
 }()
 
-private func uniffiEnsureInitialized() {
+// Make the ensure init function public so that other modules which have external type references to
+// our types can call it.
+public func uniffiEnsureLuciolaUniffiInitialized() {
     switch initializationResult {
     case .ok:
         break
