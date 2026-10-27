@@ -1,0 +1,18 @@
+[package]
+name = "luciola-transfer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Chunked file transfer data plane (offset-addressed writes, ACK prefix, SHA-256 receipt)"
+
+[dependencies]
+tokio = { workspace = true, features = ["fs", "io-util", "sync", "time"] }
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Circular on purpose (luciola re-exports this crate under the `transfer`
+# feature): the E2E tests drive the data plane over a real SecureStream.
+luciola = { path = "../luciola" }

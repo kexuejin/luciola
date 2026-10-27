@@ -657,6 +657,8 @@ dependencies = [
  "luciola-ip",
  "luciola-net",
  "luciola-proto",
+ "luciola-transfer",
+ "network-interface",
  "percent-encoding",
  "rand",
  "serde",
@@ -725,6 +727,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "luciola-transfer"
+version = "0.3.1"
+dependencies = [
+ "luciola",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ description = "Lightweight, resilient LAN peer discovery and interface intellige
 luciola-ip = { path = "../luciola-ip", version = "0.3.1" }
 luciola-net = { path = "../luciola-net", version = "0.3.1" }
 luciola-proto = { path = "../luciola-proto", version = "0.3.1" }
+luciola-transfer = { path = "../luciola-transfer", version = "0.3.1", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -24,6 +25,10 @@ percent-encoding.workspace = true
 socket2.workspace = true
 rand.workspace = true
 zeroize.workspace = true
+
+[features]
+default = ["transfer"]
+transfer = ["dep:luciola-transfer"]
 
 [dev-dependencies]
 luciola-net = { path = "../luciola-net", version = "0.3.1" }

@@ -5,6 +5,7 @@ members = [
     "crates/luciola-net",
     "crates/luciola-proto",
     "crates/luciola",
+    "crates/luciola-transfer",
     "crates/luciola-cli",
     "bindings/luciola-node",
     "bindings/luciola-uniffi",
