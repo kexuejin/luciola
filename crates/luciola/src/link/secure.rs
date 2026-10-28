@@ -120,24 +120,7 @@ impl SecureStream {
     /// Send one encrypted frame.
     pub async fn send(&mut self, plaintext: &[u8]) -> Result<(), LinkError> {
         let counter = self.send_counter.fetch_add(1, Ordering::SeqCst);
-        if counter == u64::MAX {
-            return Err(LinkError::Tamper("send counter exhausted".into()));
-        }
-        let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
-        let ct = self
-            .send_cipher
-            .encrypt(
-                &nonce,
-                Payload {
-                    msg: plaintext,
-                    aad: &[],
-                },
-            )
-            .map_err(|_| LinkError::Tamper("encrypt failed".into()))?;
-        let len = (ct.len() as u32).to_be_bytes();
-        self.socket.write_all(&len).await?;
-        self.socket.write_all(&ct).await?;
-        Ok(())
+        write_frame(&mut self.socket, &self.send_cipher, counter, plaintext).await
     }
 
     /// Receive one encrypted frame.
@@ -155,52 +138,15 @@ impl SecureStream {
     /// 现在改成：**只在自己累积的缓冲上解析**，读用单次 `read()`（取消安全：要么
     /// 完成、要么一个字节都没消费），半帧状态留在 `in_buf` 里，下次接着解析。
     pub async fn recv(&mut self, buf: &mut Vec<u8>) -> Result<(), LinkError> {
-        loop {
-            // 1) 缓冲里够一帧就解一帧（纯内存，没有 await 点，不会被取消）。
-            if self.in_buf.len() >= 4 {
-                let ct_len = u32::from_be_bytes([
-                    self.in_buf[0],
-                    self.in_buf[1],
-                    self.in_buf[2],
-                    self.in_buf[3],
-                ]) as usize;
-                if ct_len < 16 || ct_len > MAX_FRAME_LEN as usize + 16 {
-                    return Err(LinkError::Tamper("frame length out of bounds".into()));
-                }
-                if self.in_buf.len() >= 4 + ct_len {
-                    if self.recv_counter == u64::MAX {
-                        return Err(LinkError::Tamper("recv counter exhausted".into()));
-                    }
-                    let counter = self.recv_counter;
-                    let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
-                    let pt = self
-                        .recv_cipher
-                        .decrypt(
-                            &nonce,
-                            Payload {
-                                msg: &self.in_buf[4..4 + ct_len],
-                                aad: &[],
-                            },
-                        )
-                        .map_err(|_| LinkError::Tamper("frame failed authentication".into()))?;
-                    self.in_buf.drain(..4 + ct_len);
-                    self.recv_counter += 1;
-                    buf.clear();
-                    buf.extend_from_slice(&pt);
-                    return Ok(());
-                }
-            }
-            // 2) 不够就再读一批。单次 read 是取消安全的。
-            let mut tmp = vec![0u8; READ_CHUNK];
-            let n = self.socket.read(&mut tmp).await?;
-            if n == 0 {
-                return Err(LinkError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "peer closed the connection",
-                )));
-            }
-            self.in_buf.extend_from_slice(&tmp[..n]);
-        }
+        self.recv_counter = read_frame(
+            &mut self.socket,
+            &self.recv_cipher,
+            self.recv_counter,
+            &mut self.in_buf,
+            buf,
+        )
+        .await?;
+        Ok(())
     }
 
     pub fn peer_fingerprint(&self) -> String {
@@ -210,6 +156,172 @@ impl SecureStream {
     /// Direct socket access (used by supervisors for graceful shutdown).
     pub fn socket_mut(&mut self) -> &mut TcpStream {
         &mut self.socket
+    }
+
+    /// 拆成独立的读/写半句柄，供全双工任务各自持有（如 mux 的 reader/writer 任务）。
+    ///
+    /// 读半句柄保留取消安全的 `in_buf` 半帧状态；写半句柄的计数器从原子量转成
+    /// 独享所有权——拆分后每个方向只有一个任务触碰，不再需要原子。
+    pub fn into_split(self) -> (SecureRecvHalf, SecureSendHalf) {
+        let (read_half, write_half) = self.socket.into_split();
+        (
+            SecureRecvHalf {
+                read_half,
+                recv_cipher: self.recv_cipher,
+                recv_counter: self.recv_counter,
+                in_buf: self.in_buf,
+                peer_public_key: self.peer_public_key.clone(),
+            },
+            SecureSendHalf {
+                write_half,
+                send_cipher: self.send_cipher,
+                send_counter: self.send_counter.load(Ordering::SeqCst),
+                peer_public_key: self.peer_public_key,
+            },
+        )
+    }
+}
+
+/// The receive half of a split [`SecureStream`].
+pub struct SecureRecvHalf {
+    read_half: tokio::net::tcp::OwnedReadHalf,
+    recv_cipher: Aes256Gcm,
+    recv_counter: u64,
+    in_buf: Vec<u8>,
+    peer_public_key: Vec<u8>,
+}
+
+impl SecureRecvHalf {
+    /// Receive one encrypted frame — same cancellation-safety contract as
+    /// [`SecureStream::recv`]（半帧状态留在 `in_buf`，见其文档）。
+    pub async fn recv(&mut self, buf: &mut Vec<u8>) -> Result<(), LinkError> {
+        self.recv_counter = read_frame(
+            &mut self.read_half,
+            &self.recv_cipher,
+            self.recv_counter,
+            &mut self.in_buf,
+            buf,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub fn peer_fingerprint(&self) -> String {
+        trust::fingerprint(&self.peer_public_key)
+    }
+}
+
+/// The send half of a split [`SecureStream`].
+pub struct SecureSendHalf {
+    write_half: tokio::net::tcp::OwnedWriteHalf,
+    send_cipher: Aes256Gcm,
+    send_counter: u64,
+    peer_public_key: Vec<u8>,
+}
+
+impl SecureSendHalf {
+    /// Send one encrypted frame.
+    pub async fn send(&mut self, plaintext: &[u8]) -> Result<(), LinkError> {
+        let counter = self.send_counter;
+        self.send_counter = self.send_counter.wrapping_add(1);
+        if counter == u64::MAX {
+            return Err(LinkError::Tamper("send counter exhausted".into()));
+        }
+        write_frame(&mut self.write_half, &self.send_cipher, counter, plaintext).await
+    }
+
+    /// Graceful FIN on the write direction (read half keeps receiving).
+    pub async fn shutdown(&mut self) -> std::io::Result<()> {
+        self.write_half.shutdown().await
+    }
+
+    pub fn peer_fingerprint(&self) -> String {
+        trust::fingerprint(&self.peer_public_key)
+    }
+}
+
+/// Encrypt one frame and write it as `[u32 ct_len][ct]`.
+///
+/// Shared by [`SecureStream`] and the `into_split` halves — the two `write_all`
+/// calls stay together so the wire format is identical everywhere.
+async fn write_frame<W>(sink: &mut W, cipher: &Aes256Gcm, counter: u64, plaintext: &[u8]) -> Result<(), LinkError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if counter == u64::MAX {
+        return Err(LinkError::Tamper("send counter exhausted".into()));
+    }
+    let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
+    let ct = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad: &[],
+            },
+        )
+        .map_err(|_| LinkError::Tamper("encrypt failed".into()))?;
+    let len = (ct.len() as u32).to_be_bytes();
+    use tokio::io::AsyncWriteExt;
+    sink.write_all(&len).await?;
+    sink.write_all(&ct).await?;
+    Ok(())
+}
+
+/// Cancellation-safe receive of one frame; returns the updated receive counter.
+///
+/// 解析只在本函数累积的 `in_buf` 上进行（见 [`SecureStream::recv`] 文档）：
+/// 被取消时半帧状态不丢，下次调用接着解析。
+async fn read_frame<R>(
+    source: &mut R,
+    cipher: &Aes256Gcm,
+    recv_counter: u64,
+    in_buf: &mut Vec<u8>,
+    out: &mut Vec<u8>,
+) -> Result<u64, LinkError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut counter = recv_counter;
+    loop {
+        // 1) 缓冲里够一帧就解一帧（纯内存，没有 await 点，不会被取消）。
+        if in_buf.len() >= 4 {
+            let ct_len = u32::from_be_bytes([in_buf[0], in_buf[1], in_buf[2], in_buf[3]]) as usize;
+            if ct_len < 16 || ct_len > MAX_FRAME_LEN as usize + 16 {
+                return Err(LinkError::Tamper("frame length out of bounds".into()));
+            }
+            if in_buf.len() >= 4 + ct_len {
+                if counter == u64::MAX {
+                    return Err(LinkError::Tamper("recv counter exhausted".into()));
+                }
+                let nonce = aes_gcm::Nonce::from(counter_nonce(counter));
+                let pt = cipher
+                    .decrypt(
+                        &nonce,
+                        Payload {
+                            msg: &in_buf[4..4 + ct_len],
+                            aad: &[],
+                        },
+                    )
+                    .map_err(|_| LinkError::Tamper("frame failed authentication".into()))?;
+                in_buf.drain(..4 + ct_len);
+                counter += 1;
+                out.clear();
+                out.extend_from_slice(&pt);
+                return Ok(counter);
+            }
+        }
+        // 2) 不够就再读一批。单次 read 是取消安全的。
+        let mut tmp = vec![0u8; READ_CHUNK];
+        let n = source.read(&mut tmp).await?;
+        if n == 0 {
+            return Err(LinkError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "peer closed the connection",
+            )));
+        }
+        in_buf.extend_from_slice(&tmp[..n]);
     }
 }
 
@@ -527,5 +639,75 @@ mod tests {
             "TOFU captures peer key"
         );
         client.send(b"hi").await.unwrap();
+    }
+
+    /// Phase T0 验收：拆分后的两半在并发收发 10MB 数据下无死锁且解密正常。
+    #[tokio::test]
+    async fn split_halves_concurrent_10mb_both_directions() {
+        const TOTAL: usize = 10 * 1024 * 1024;
+        const CHUNK: usize = 64 * 1024;
+
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let seed_b = b.seed.clone();
+        let key_a = a.public_key.clone();
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
+            .await
+            .unwrap();
+        let server = server.await.unwrap().expect("server handshake");
+
+        let (mut a_recv, mut a_send) = client.into_split();
+        let (mut b_recv, mut b_send) = server.into_split();
+
+        // 双向并发：a→b 与 b→a 同时推 10MB（chunk 内容 = 序号低字节，接收端校验）。
+        let send_a = tokio::spawn(async move {
+            for seq in 0..(TOTAL / CHUNK) {
+                let chunk = vec![seq as u8; CHUNK];
+                a_send.send(&chunk).await.expect("a→b send");
+            }
+            a_send.shutdown().await.ok();
+        });
+        let send_b = tokio::spawn(async move {
+            for seq in 0..(TOTAL / CHUNK) {
+                let chunk = vec![seq.wrapping_add(0x80) as u8; CHUNK];
+                b_send.send(&chunk).await.expect("b→a send");
+            }
+            b_send.shutdown().await.ok();
+        });
+
+        // 校验逻辑：每个 chunk 的字节都等于其序号（低 8 位）。
+        let recv_a = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let mut got = 0usize;
+            while got < TOTAL {
+                b_recv.recv(&mut buf).await.expect("a→b recv");
+                let expect = (got / CHUNK) as u8;
+                assert!(buf.iter().all(|&x| x == expect), "a→b chunk byte mismatch");
+                got += buf.len();
+            }
+            assert_eq!(got, TOTAL, "a→b total");
+        });
+        let recv_b = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            let mut got = 0usize;
+            while got < TOTAL {
+                a_recv.recv(&mut buf).await.expect("b→a recv");
+                let expect = ((got / CHUNK) + 0x80) as u8;
+                assert!(buf.iter().all(|&x| x == expect), "b→a chunk byte mismatch");
+                got += buf.len();
+            }
+            assert_eq!(got, TOTAL, "b→a total");
+        });
+
+        let (r1, r2, s1, s2) = tokio::join!(recv_a, recv_b, send_a, send_b);
+        r1.unwrap();
+        r2.unwrap();
+        s1.unwrap();
+        s2.unwrap();
     }
 }
