@@ -228,6 +228,8 @@ impl DiscoverySession {
     /// advertised Ed25519 key to match the one the secure channel presents);
     /// pass `None` to let the engine generate them.
     #[uniffi::constructor]
+    // 构造参数即对外 FFI API，参数表由调用方约定（clippy 8/7）。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         port: u16,
@@ -694,6 +696,8 @@ pub fn verify_message(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>)
 // ---------------------------------------------------------------------------
 
 use luciola::link::secure::{accept_secure, connect_secure_raced};
+use luciola_tunnel::tunnel_link::{TunnelBase, TunnelLink, TunnelReporter};
+use luciola_tunnel::{ForwardRule, TunnelError};
 use tokio::sync::mpsc;
 
 /// Events from a [SecureSession]: state transitions and decrypted messages.
@@ -733,6 +737,25 @@ pub struct LinkStats {
     pub frames_dequeued: u64,
 }
 
+/// 转发规则（T3 `enable_forward_endpoint`）：单 IP 上的端口区间，含端点。
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ForwardRuleDto {
+    pub host: String,
+    pub port_from: u16,
+    pub port_to: u16,
+}
+
+/// 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口。
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ForwardStatusDto {
+    pub active: bool,
+    pub listen_port: u16,
+    pub channels_open: u64,
+    pub channels_total: u64,
+    pub dial_denied: u64,
+    pub dial_failed: u64,
+}
+
 /// One authenticated encrypted channel (see `luciola::link::secure`).
 /// Message-oriented for FFI friendliness: `send` queues an encrypted frame;
 /// received frames are decrypted and delivered through the listener.
@@ -744,6 +767,10 @@ pub struct SecureSession {
     connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
     stats: std::sync::Arc<LinkStatsCounters>,
     timings: std::sync::Arc<LinkTimings>,
+    /// T3 隧道链路控制面（独立 cmd + supervisor 线程对；一条链路复用）。
+    tunnel: std::sync::Arc<TunnelLink>,
+    /// 最近一次 spawn 的 listener —— 隧道事件（error/retrying）转发到它。
+    tunnel_listener: Mutex<Option<std::sync::Arc<dyn SecureSessionListener>>>,
 }
 
 /// Retry/keepalive timings, adjustable before/after connect.
@@ -793,6 +820,7 @@ struct LinkStatsCounters {
 impl SecureSession {
     #[uniffi::constructor]
     pub fn new(identity_seed: Vec<u8>) -> Self {
+        let tunnel = TunnelLink::new(identity_seed.clone());
         Self {
             identity_seed,
             outbound_tx: Mutex::new(None),
@@ -800,6 +828,8 @@ impl SecureSession {
             connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stats: std::sync::Arc::new(LinkStatsCounters::default()),
             timings: std::sync::Arc::new(LinkTimings::default()),
+            tunnel,
+            tunnel_listener: Mutex::new(None),
         }
     }
 
@@ -895,6 +925,79 @@ impl SecureSession {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    // ---------------- T3：隧道链路转发（数据面不跨 FFI，D7） ----------------
+
+    /// 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+    /// `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
+    /// 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
+    /// "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
+    pub fn start_local_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
+        let r = host
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| {
+                TunnelError::InvalidTarget(format!(
+                    "非法转发目标 {host}:{port}（host 需为 IP 字面量，如 192.168.1.10）",
+                ))
+            })
+            .and_then(|ip| self.tunnel.start_local_forward(listen_port, ip, port));
+        self.tunnel_result(r)
+    }
+
+    /// 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
+    pub fn stop_local_forward(&self, listen_port: u16) -> bool {
+        self.tunnel_result(self.tunnel.stop_local_forward(listen_port))
+    }
+
+    /// 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
+    /// `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+    pub fn enable_forward_endpoint(&self, rules: Vec<ForwardRuleDto>) -> bool {
+        let mut parsed = Vec::with_capacity(rules.len());
+        for r in rules {
+            let host: std::net::IpAddr = match r.host.parse() {
+                Ok(h) => h,
+                Err(_) => {
+                    return self.tunnel_result(Err(TunnelError::InvalidRule(format!(
+                        "规则主机不是合法 IP：{}:{}-{}",
+                        r.host, r.port_from, r.port_to
+                    ))))
+                }
+            };
+            parsed.push(ForwardRule {
+                host,
+                port_from: r.port_from,
+                port_to: r.port_to,
+            });
+        }
+        self.tunnel_result(self.tunnel.enable_forward_endpoint(parsed))
+    }
+
+    /// 关闭转发端点（幂等）。
+    pub fn disable_forward_endpoint(&self) -> bool {
+        self.tunnel_result(self.tunnel.disable_forward_endpoint())
+    }
+
+    /// 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
+    pub fn set_tunnel_port(&self, port: u16) -> bool {
+        self.tunnel_result(self.tunnel.set_tunnel_port(port))
+    }
+
+    /// 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
+    /// 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+    pub fn forward_stats(&self) -> Vec<ForwardStatusDto> {
+        self.tunnel
+            .stats()
+            .into_iter()
+            .map(|s| ForwardStatusDto {
+                active: s.active,
+                listen_port: s.listen_port,
+                channels_open: s.status.channels_open,
+                channels_total: s.status.channels_total,
+                dial_denied: s.status.dial_denied,
+                dial_failed: s.status.dial_failed,
+            })
+            .collect()
+    }
+
     /// Close the channel; the peer sees the socket close. (Named
     /// `disconnect` because the generated Disposable interface already owns
     /// `close`.)
@@ -905,16 +1008,59 @@ impl SecureSession {
         *self.outbound_tx.lock().unwrap() = None;
         self.connected
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        // T3：消息链路断开 → 暂停隧道（拆除活跃转发；注册表/基址保留待恢复）。
+        self.tunnel.pause();
+    }
+}
+
+/// 隧道事件 → 消息链路 listener（kind 与 on_state 同构：error / retrying）。
+struct TunnelToListener(std::sync::Arc<dyn SecureSessionListener>);
+
+impl TunnelReporter for TunnelToListener {
+    fn report(&self, kind: &str, detail: String) {
+        self.0.on_state(kind.to_string(), Some(detail));
     }
 }
 
 impl SecureSession {
+    /// T3 统一同步结果：Ok → true；Err → on_state(kind, to_state()) → false。
+    fn tunnel_result(&self, r: Result<(), TunnelError>) -> bool {
+        match r {
+            Ok(()) => true,
+            Err(e) => {
+                let l = self.tunnel_listener.lock().unwrap().clone();
+                if let Some(l) = l {
+                    let (kind, detail) = e.to_state();
+                    l.on_state(kind.into(), Some(detail));
+                }
+                false
+            }
+        }
+    }
+
     fn spawn_link(&self, role: LinkRole, listener: Box<dyn SecureSessionListener>) {
         use luciola::link::secure::SecureStream;
         use tokio::io::AsyncWriteExt as _;
 
         self.disconnect();
         let listener: std::sync::Arc<dyn SecureSessionListener> = listener.into();
+        // T3：把隧道事件流接给本 listener，并注入隧道基址（角色镜像本链路）。
+        // 顺序保证：上一行 disconnect() 已先发 pause，set_base 后到 → 解除暂停。
+        *self.tunnel_listener.lock().unwrap() = Some(listener.clone());
+        let tunnel_base = match &role {
+            LinkRole::Dial(addresses, port, pinned, _) => TunnelBase::Dial {
+                addresses: addresses.clone(),
+                secure_port: *port,
+                pinned_peer_public_key: pinned.clone(),
+            },
+            LinkRole::Listen(port, expected) => TunnelBase::Listen {
+                secure_port: *port,
+                expected_peer: expected.clone(),
+            },
+        };
+        let reporter: std::sync::Arc<dyn TunnelReporter> =
+            std::sync::Arc::new(TunnelToListener(listener.clone()));
+        self.tunnel.set_base(tunnel_base, reporter);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
         // Bounded outbound queue: a stalled peer must not grow our memory.

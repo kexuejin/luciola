@@ -35,7 +35,7 @@ async fn write_pseudo_random(path: &std::path::Path, len: usize) -> [u8; 32] {
     let mut file = tokio::fs::File::create(path).await.unwrap();
     let mut hasher = Sha256::new();
     let mut state: u64 = 0x243F_6A88_85A3_08D3;
-    let block_size = 1 * MIB;
+    let block_size = MIB;
     let mut written = 0usize;
     while written < len {
         let n = (len - written).min(block_size);

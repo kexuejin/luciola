@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "cargo build && cp $(cargo metadata --format-version 1 | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/debug/libluciola_node.dylib ./luciola.node 2>/dev/null || cp target/debug/libluciola_node.dylib ./luciola.node",
-    "test": "node test.js"
+    "test": "node test.js && node test/forward.test.mjs"
   },
   "files": [
     "index.js",

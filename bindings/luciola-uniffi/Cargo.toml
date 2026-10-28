@@ -21,6 +21,7 @@ luciola-ip = { path = "../../crates/luciola-ip" }
 luciola-net = { path = "../../crates/luciola-net" }
 luciola-proto = { path = "../../crates/luciola-proto" }
 luciola = { path = "../../crates/luciola" }
+luciola-tunnel = { path = "../../crates/luciola-tunnel" }
 qrcode = "0.14"
 rand = { workspace = true }
 tokio = { workspace = true }

@@ -50,7 +50,7 @@ cargo run -p luciola-cli -- agent   # 设备级发现 daemon(unix socket 事件�
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("io.github.kexuejin:luciola:0.6.0")
+implementation("io.github.kexuejin:luciola:0.7.0")
 
 val controller = AndroidDiscoveryController(
     context = this,

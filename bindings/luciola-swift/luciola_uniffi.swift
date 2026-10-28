@@ -841,11 +841,28 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
     func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener) 
     
     /**
+     * 关闭转发端点（幂等）。
+     */
+    func disableForwardEndpoint()  -> Bool
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
      */
     func disconnect() 
+    
+    /**
+     * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     */
+    func enableForwardEndpoint(rules: [ForwardRuleDto])  -> Bool
+    
+    /**
+     * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
+     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     */
+    func forwardStats()  -> [ForwardStatusDto]
     
     func isConnected()  -> Bool
     
@@ -875,9 +892,27 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
     func setRetryPolicy(minMs: UInt64, maxMs: UInt64, jitterPct: UInt64) 
     
     /**
+     * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
+     */
+    func setTunnelPort(port: UInt16)  -> Bool
+    
+    /**
+     * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
+     * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
+     * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
+     */
+    func startLocalForward(listenPort: UInt16, host: String, port: UInt16)  -> Bool
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
     func stats()  -> LinkStats
+    
+    /**
+     * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
+     */
+    func stopLocalForward(listenPort: UInt16)  -> Bool
     
 }
 /**
@@ -964,6 +999,16 @@ open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, 
 }
     
     /**
+     * 关闭转发端点（幂等）。
+     */
+open func disableForwardEndpoint() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_disable_forward_endpoint(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
@@ -972,6 +1017,29 @@ open func disconnect()  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_disconnect(self.uniffiClonePointer(),$0
     )
 }
+}
+    
+    /**
+     * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     */
+open func enableForwardEndpoint(rules: [ForwardRuleDto]) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_enable_forward_endpoint(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeForwardRuleDto.lower(rules),$0
+    )
+})
+}
+    
+    /**
+     * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
+     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     */
+open func forwardStats() -> [ForwardStatusDto]  {
+    return try!  FfiConverterSequenceTypeForwardStatusDto.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_forward_stats(self.uniffiClonePointer(),$0
+    )
+})
 }
     
 open func isConnected() -> Bool  {
@@ -1033,11 +1101,49 @@ open func setRetryPolicy(minMs: UInt64, maxMs: UInt64, jitterPct: UInt64)  {try!
 }
     
     /**
+     * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
+     */
+open func setTunnelPort(port: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_port(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(port),$0
+    )
+})
+}
+    
+    /**
+     * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
+     * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
+     * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
+     */
+open func startLocalForward(listenPort: UInt16, host: String, port: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_start_local_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),
+        FfiConverterString.lower(host),
+        FfiConverterUInt16.lower(port),$0
+    )
+})
+}
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
 open func stats() -> LinkStats  {
     return try!  FfiConverterTypeLinkStats_lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_stats(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
+     */
+open func stopLocalForward(listenPort: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_stop_local_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),$0
     )
 })
 }
@@ -1721,6 +1827,192 @@ public func FfiConverterTypeDiscoveredPeer_lift(_ buf: RustBuffer) throws -> Dis
 #endif
 public func FfiConverterTypeDiscoveredPeer_lower(_ value: DiscoveredPeer) -> RustBuffer {
     return FfiConverterTypeDiscoveredPeer.lower(value)
+}
+
+
+/**
+ * 转发规则（T3 `enable_forward_endpoint`）：单 IP 上的端口区间，含端点。
+ */
+public struct ForwardRuleDto {
+    public var host: String
+    public var portFrom: UInt16
+    public var portTo: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(host: String, portFrom: UInt16, portTo: UInt16) {
+        self.host = host
+        self.portFrom = portFrom
+        self.portTo = portTo
+    }
+}
+
+#if compiler(>=6)
+extension ForwardRuleDto: Sendable {}
+#endif
+
+
+extension ForwardRuleDto: Equatable, Hashable {
+    public static func ==(lhs: ForwardRuleDto, rhs: ForwardRuleDto) -> Bool {
+        if lhs.host != rhs.host {
+            return false
+        }
+        if lhs.portFrom != rhs.portFrom {
+            return false
+        }
+        if lhs.portTo != rhs.portTo {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(host)
+        hasher.combine(portFrom)
+        hasher.combine(portTo)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForwardRuleDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForwardRuleDto {
+        return
+            try ForwardRuleDto(
+                host: FfiConverterString.read(from: &buf), 
+                portFrom: FfiConverterUInt16.read(from: &buf), 
+                portTo: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForwardRuleDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterUInt16.write(value.portFrom, into: &buf)
+        FfiConverterUInt16.write(value.portTo, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForwardRuleDto_lift(_ buf: RustBuffer) throws -> ForwardRuleDto {
+    return try FfiConverterTypeForwardRuleDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForwardRuleDto_lower(_ value: ForwardRuleDto) -> RustBuffer {
+    return FfiConverterTypeForwardRuleDto.lower(value)
+}
+
+
+/**
+ * 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口。
+ */
+public struct ForwardStatusDto {
+    public var active: Bool
+    public var listenPort: UInt16
+    public var channelsOpen: UInt64
+    public var channelsTotal: UInt64
+    public var dialDenied: UInt64
+    public var dialFailed: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(active: Bool, listenPort: UInt16, channelsOpen: UInt64, channelsTotal: UInt64, dialDenied: UInt64, dialFailed: UInt64) {
+        self.active = active
+        self.listenPort = listenPort
+        self.channelsOpen = channelsOpen
+        self.channelsTotal = channelsTotal
+        self.dialDenied = dialDenied
+        self.dialFailed = dialFailed
+    }
+}
+
+#if compiler(>=6)
+extension ForwardStatusDto: Sendable {}
+#endif
+
+
+extension ForwardStatusDto: Equatable, Hashable {
+    public static func ==(lhs: ForwardStatusDto, rhs: ForwardStatusDto) -> Bool {
+        if lhs.active != rhs.active {
+            return false
+        }
+        if lhs.listenPort != rhs.listenPort {
+            return false
+        }
+        if lhs.channelsOpen != rhs.channelsOpen {
+            return false
+        }
+        if lhs.channelsTotal != rhs.channelsTotal {
+            return false
+        }
+        if lhs.dialDenied != rhs.dialDenied {
+            return false
+        }
+        if lhs.dialFailed != rhs.dialFailed {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(active)
+        hasher.combine(listenPort)
+        hasher.combine(channelsOpen)
+        hasher.combine(channelsTotal)
+        hasher.combine(dialDenied)
+        hasher.combine(dialFailed)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ForwardStatusDto {
+        return
+            try ForwardStatusDto(
+                active: FfiConverterBool.read(from: &buf), 
+                listenPort: FfiConverterUInt16.read(from: &buf), 
+                channelsOpen: FfiConverterUInt64.read(from: &buf), 
+                channelsTotal: FfiConverterUInt64.read(from: &buf), 
+                dialDenied: FfiConverterUInt64.read(from: &buf), 
+                dialFailed: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ForwardStatusDto, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.active, into: &buf)
+        FfiConverterUInt16.write(value.listenPort, into: &buf)
+        FfiConverterUInt64.write(value.channelsOpen, into: &buf)
+        FfiConverterUInt64.write(value.channelsTotal, into: &buf)
+        FfiConverterUInt64.write(value.dialDenied, into: &buf)
+        FfiConverterUInt64.write(value.dialFailed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForwardStatusDto_lift(_ buf: RustBuffer) throws -> ForwardStatusDto {
+    return try FfiConverterTypeForwardStatusDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeForwardStatusDto_lower(_ value: ForwardStatusDto) -> RustBuffer {
+    return FfiConverterTypeForwardStatusDto.lower(value)
 }
 
 
@@ -3119,6 +3411,56 @@ fileprivate struct FfiConverterSequenceTypeDialChannel: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeForwardRuleDto: FfiConverterRustBuffer {
+    typealias SwiftType = [ForwardRuleDto]
+
+    public static func write(_ value: [ForwardRuleDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeForwardRuleDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ForwardRuleDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ForwardRuleDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeForwardRuleDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeForwardStatusDto: FfiConverterRustBuffer {
+    typealias SwiftType = [ForwardStatusDto]
+
+    public static func write(_ value: [ForwardStatusDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeForwardStatusDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ForwardStatusDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ForwardStatusDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeForwardStatusDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeManualPeer: FfiConverterRustBuffer {
     typealias SwiftType = [ManualPeer]
 
@@ -3488,7 +3830,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 20557) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint() != 35699) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_securesession_disconnect() != 52412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint() != 20016) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 6653) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467) {
@@ -3506,7 +3857,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy() != 49064) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_port() != 4575) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward() != 29058) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_stop_local_forward() != 21454) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {

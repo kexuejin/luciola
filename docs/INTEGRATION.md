@@ -13,6 +13,15 @@ UDP **17878 保留给"单引擎设备"**。同机运行第二个 luciola 产品�
 Profile 携带 `deviceId`(设备分组)与 `product`(产品标签),对端 UI 应按
 deviceId 折叠同一物理设备上的多个产品。
 
+T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用):
+
+| 端口 | 协议/地址 | 归属与公式 |
+| :-- | :-- | :-- |
+| 17878 | UDP 双栈 | 设备发现(多播);保留给「单引擎设备」,同机第二个产品自选其他端口 |
+| `secure_port` | TCP | 消息链路:`listen(p)` / `connect(addrs, p, ...)` 每次调用传参 |
+| `tunnel_port` | TCP 双栈,仅 Responder | 转发端点 accept;默认 = `secure_port + 1`,`set_tunnel_port(port)` 覆盖(`0` = 恢复推导);**惰性绑定**——`enable_forward_endpoint` 首次启用才占端口,绑定失败经事件报 `forward_bind_failed: ` |
+| `listen_port` | TCP,绑 `127.0.0.1` | 发起端本地转发监听:`0` = 系统分配(stats 行给实际端口,`stop_local_forward` 接受该值);冲突同步返回 `false` 并报 `forward_bind_failed: ` |
+
 ## 2. 生命周期(移动端)
 
 - **Android**:引擎依赖 MulticastLock(库已处理)与前台存活。App 进后台后,

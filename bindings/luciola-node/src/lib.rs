@@ -3,6 +3,8 @@ extern crate napi_derive;
 
 use luciola_ip::{is_lan_address as ip_is_lan, is_proxy_tun_address};
 use luciola_net::{is_physical_interface_name, is_virtual_interface_name, NetworkDetector};
+use luciola_tunnel::tunnel_link::{TunnelBase, TunnelLink, TunnelReporter};
+use luciola_tunnel::{ForwardRule, TunnelError};
 
 /// Select the best local IPv4 address for QR code / LAN access.
 ///
@@ -197,6 +199,8 @@ pub struct DiscoverySession {
 #[napi]
 impl DiscoverySession {
     #[napi(constructor)]
+    // napi 构造器的可选参数即公共 JS API，参数表由调用方约定（clippy 9/7）。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: Option<String>,
         port: Option<u32>,
@@ -505,6 +509,20 @@ pub fn verify_message(public_key: Buffer, message: Buffer, signature: Buffer) ->
     luciola::trust::verify(&public_key, &message, &signature)
 }
 
+/// T3：隧道事件 → 已注册 onEvent 回调（NonBlocking：不阻塞隧道命令/监督线程）。
+struct NodeReporter {
+    tsfn: ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>,
+}
+
+impl TunnelReporter for NodeReporter {
+    fn report(&self, kind: &str, detail: String) {
+        self.tsfn.call(
+            (Some(kind.to_string()), Some(detail), None),
+            ThreadsafeFunctionCallMode::NonBlocking,
+        );
+    }
+}
+
 /// One authenticated encrypted channel (luciola::link::secure).
 /// Message-oriented: `send` queues an encrypted frame; decrypted inbound
 /// frames are delivered through the callback as `{ state, detail, message }`.
@@ -519,6 +537,10 @@ pub struct SecureChannel {
     connections_established: std::sync::Arc<std::sync::atomic::AtomicU64>,
     reconnect_attempts: std::sync::Arc<std::sync::atomic::AtomicU64>,
     timings: std::sync::Arc<LinkTimings>,
+    /// T3：独立隧道监督实例（数据面不经过 JS，与消息链路并行）。
+    tunnel: std::sync::Arc<TunnelLink>,
+    /// T3：已注册 onEvent；隧道 error/retrying 经它同步上报。
+    tunnel_event: std::sync::Mutex<Option<ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>>>,
 }
 
 /// Link health counters.
@@ -530,11 +552,33 @@ pub struct JsLinkStats {
     pub reconnect_attempts: i64,
 }
 
+/// T3 转发 ACL 规则（主机必须是 IP 字面量，与 uniffi ForwardRuleDto 同构）。
+#[napi(object)]
+pub struct JsForwardRule {
+    pub host: String,
+    pub port_from: u16,
+    pub port_to: u16,
+}
+
+/// T3 转发状态行（计数沿用 JS 侧 i64 惯例，与 uniffi ForwardStatusDto 同义）。
+#[napi(object)]
+pub struct JsForwardStatus {
+    pub active: bool,
+    pub listen_port: u16,
+    pub channels_open: i64,
+    pub channels_total: i64,
+    pub dial_denied: i64,
+    pub dial_failed: i64,
+}
+
 #[derive(Clone)]
 enum ChannelRole {
     Dial(Vec<String>, u16, Vec<u8>, bool),
     Listen(u16, Option<Vec<u8>>),
 }
+
+/// JS 事件载荷 (state, detail, message)——spawn_link 的 tsfn 与 T3 隧道上报共用。
+type ChannelEvent = (Option<String>, Option<String>, Option<Vec<u8>>);
 
 /// Retry/keepalive timings, adjustable before/after connect.
 struct LinkTimings {
@@ -583,6 +627,8 @@ impl SecureChannel {
             connections_established: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             reconnect_attempts: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             timings: std::sync::Arc::new(LinkTimings::default()),
+            tunnel: TunnelLink::new(identity_seed.to_vec()),
+            tunnel_event: std::sync::Mutex::new(None),
         }
     }
 
@@ -696,17 +742,112 @@ impl SecureChannel {
         *self.outbound_tx.lock().unwrap() = None;
         self.connected
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        // T3：消息链路关闭 → 暂停隧道（注册表保留，重连后自动恢复）。
+        self.tunnel.pause();
+    }
+
+    /// T3 本地转发（发起端）：本机 127.0.0.1:listenPort → 经隧道 → target。
+    /// 端口冲突等同步失败：返回 false 并经 onEvent 报 "error"
+    ///（detail 前缀 forward_bind_failed: ）。
+    #[napi]
+    pub fn start_local_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
+        let ip: std::net::IpAddr = match host.parse() {
+            Ok(ip) => ip,
+            Err(_) => {
+                return self.tunnel_result(Err(TunnelError::InvalidTarget(format!(
+                    "非法转发目标 {host}:{port}，必须是 IP 字面量"
+                ))));
+            }
+        };
+        self.tunnel_result(self.tunnel.start_local_forward(listen_port, ip, port))
+    }
+
+    /// T3 停止一个本地转发并释放端口；再次停止同一端口返回 false。
+    #[napi]
+    pub fn stop_local_forward(&self, listen_port: u16) -> bool {
+        self.tunnel_result(self.tunnel.stop_local_forward(listen_port))
+    }
+
+    /// T3 端点（响应端）：在 tunnel_port 上 accept，按 rules 做拨入 ACL。
+    /// 空 rules = 全拒绝；返回 false 并经 onEvent 报 "error"（前缀
+    /// invalid forward rule: / forward_bind_failed: ）。
+    #[napi]
+    pub fn enable_forward_endpoint(&self, rules: Vec<JsForwardRule>) -> bool {
+        let mut parsed = Vec::with_capacity(rules.len());
+        for r in &rules {
+            match r.host.parse::<std::net::IpAddr>() {
+                Ok(host) => parsed.push(ForwardRule {
+                    host,
+                    port_from: r.port_from,
+                    port_to: r.port_to,
+                }),
+                Err(_) => {
+                    return self.tunnel_result(Err(TunnelError::InvalidRule(format!(
+                        "规则主机不是合法 IP：{}:{}-{}",
+                        r.host, r.port_from, r.port_to
+                    ))));
+                }
+            }
+        }
+        self.tunnel_result(self.tunnel.enable_forward_endpoint(parsed))
+    }
+
+    /// T3 撤下端点（隧道保持，仅停 accept 与转发）。
+    #[napi]
+    pub fn disable_forward_endpoint(&self) -> bool {
+        self.tunnel_result(self.tunnel.disable_forward_endpoint())
+    }
+
+    /// T3 隧道端口覆盖（0 = 默认 securePort+1）。停机状态同步生效，
+    /// 运行中随下一次隧道重建生效。
+    #[napi]
+    pub fn set_tunnel_port(&self, port: u16) -> bool {
+        self.tunnel_result(self.tunnel.set_tunnel_port(port))
+    }
+
+    /// T3 状态表：每个本地转发/端点一行（active = 已绑定）。
+    #[napi]
+    pub fn forward_stats(&self) -> Vec<JsForwardStatus> {
+        self.tunnel
+            .stats()
+            .into_iter()
+            .map(|s| JsForwardStatus {
+                active: s.active,
+                listen_port: s.listen_port,
+                channels_open: s.status.channels_open as i64,
+                channels_total: s.status.channels_total as i64,
+                dial_denied: s.status.dial_denied as i64,
+                dial_failed: s.status.dial_failed as i64,
+            })
+            .collect()
     }
 }
 
 impl SecureChannel {
+    /// T3 同步控制面结果：Ok → true；Err → 转 (state, detail) 经 onEvent 上报
+    /// "error" 后返回 false（不静默失败；onEvent 未注册时仅返回 false）。
+    fn tunnel_result(&self, r: std::result::Result<(), TunnelError>) -> bool {
+        match r {
+            Ok(()) => true,
+            Err(e) => {
+                let (kind, detail) = e.to_state();
+                if let Some(tsfn) = self.tunnel_event.lock().unwrap().as_ref() {
+                    tsfn.call(
+                        (Some(kind.to_string()), Some(detail), None),
+                        ThreadsafeFunctionCallMode::NonBlocking,
+                    );
+                }
+                false
+            }
+        }
+    }
+
     fn spawn_link(&self, role: ChannelRole, on_event: JsFunction) -> Result<()> {
         use napi::threadsafe_function::{
             ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode,
         };
         use tokio::io::AsyncWriteExt as _;
 
-        type ChannelEvent = (Option<String>, Option<String>, Option<Vec<u8>>);
         let tsfn: ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal> = on_event
             .create_threadsafe_function(0, |ctx| {
                 let mut obj = ctx.env.create_object()?;
@@ -731,6 +872,25 @@ impl SecureChannel {
         // Bounded outbound queue: a stalled peer must not grow our memory.
         let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
         *self.outbound_tx.lock().unwrap() = Some(out_tx);
+        // T3：把消息链路的角色翻成隧道基址。close() 已先发 Pause，随后 SetBase 在
+        // 同一条命令队列里 FIFO 生效；onEvent 的 tsfn 同时作为隧道 error/retrying
+        // 的上报通道（数据面仍走独立线程，不经 JS）。
+        let tunnel_base = match &role {
+            ChannelRole::Dial(addresses, port, pinned, _auto) => TunnelBase::Dial {
+                addresses: addresses.clone(),
+                secure_port: *port,
+                pinned_peer_public_key: pinned.clone(),
+            },
+            ChannelRole::Listen(port, expected) => TunnelBase::Listen {
+                secure_port: *port,
+                expected_peer: expected.clone(),
+            },
+        };
+        *self.tunnel_event.lock().unwrap() = Some(tsfn.clone());
+        self.tunnel.set_base(
+            tunnel_base,
+            std::sync::Arc::new(NodeReporter { tsfn: tsfn.clone() }),
+        );
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
         let timings = self.timings.clone();

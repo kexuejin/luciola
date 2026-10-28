@@ -129,12 +129,9 @@ async fn real_nic_keyed_beacon_and_link_local_channel() {
         .ip
         .split(',')
         .find(|a| a.contains("fe80:"))
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            // 记录里只留了单地址时，从本机网卡找 A 侧不现实 —— 退而用发现回包里的
-            // 地址族里任一 IPv6；都没有就用 v4。此处 v4 也走真实 NIC。
-            None
-        });
+        .map(|s| s.trim().to_string());
+    // 记录里只留了单地址（无 fe80）时，从本机网卡反查 A 侧不现实 —— 退用发现回包
+    // 里的地址；没有 IPv6 就是 v4，v4 同样走真实 NIC。
     let dial_target = link_local.unwrap_or_else(|| found.ip.clone());
 
     let mut client = tokio::time::timeout(

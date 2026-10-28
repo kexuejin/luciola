@@ -291,11 +291,28 @@ public interface SecureSessionInterface {
     public fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
     
     /**
+     * 关闭转发端点（幂等）。
+     */
+    public fun `disableForwardEndpoint`(): kotlin.Boolean
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
      */
     public fun `disconnect`()
+    
+    /**
+     * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     */
+    public fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean
+    
+    /**
+     * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
+     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     */
+    public fun `forwardStats`(): List<ForwardStatusDto>
     
     public fun `isConnected`(): kotlin.Boolean
     
@@ -325,9 +342,27 @@ public interface SecureSessionInterface {
     public fun `setRetryPolicy`(`minMs`: kotlin.ULong, `maxMs`: kotlin.ULong, `jitterPct`: kotlin.ULong)
     
     /**
+     * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
+     */
+    public fun `setTunnelPort`(`port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
+     * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
+     * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
+     */
+    public fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
     public fun `stats`(): LinkStats
+    
+    /**
+     * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
+     */
+    public fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
     
     public companion object
 }
@@ -363,11 +398,28 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
     public override fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
     
     /**
+     * 关闭转发端点（幂等）。
+     */
+    public override fun `disableForwardEndpoint`(): kotlin.Boolean
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
      */
     public override fun `disconnect`()
+    
+    /**
+     * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     */
+    public override fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean
+    
+    /**
+     * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
+     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     */
+    public override fun `forwardStats`(): List<ForwardStatusDto>
     
     public override fun `isConnected`(): kotlin.Boolean
     
@@ -397,9 +449,27 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
     public override fun `setRetryPolicy`(`minMs`: kotlin.ULong, `maxMs`: kotlin.ULong, `jitterPct`: kotlin.ULong)
     
     /**
+     * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
+     */
+    public override fun `setTunnelPort`(`port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
+     * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
+     * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
+     */
+    public override fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
      * Link health counters (sent/received frames, connections, retries).
      */
     public override fun `stats`(): LinkStats
+    
+    /**
+     * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
+     */
+    public override fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
     
 
     
@@ -581,6 +651,37 @@ public data class DiscoveredPeer (
      * profile rides here; the engine never parses it.
      */
     var `extra`: kotlin.String?
+) {
+    public companion object
+}
+
+
+
+/**
+ * 转发规则（T3 `enable_forward_endpoint`）：单 IP 上的端口区间，含端点。
+ */
+
+public data class ForwardRuleDto (
+    var `host`: kotlin.String, 
+    var `portFrom`: kotlin.UShort, 
+    var `portTo`: kotlin.UShort
+) {
+    public companion object
+}
+
+
+
+/**
+ * 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口。
+ */
+
+public data class ForwardStatusDto (
+    var `active`: kotlin.Boolean, 
+    var `listenPort`: kotlin.UShort, 
+    var `channelsOpen`: kotlin.ULong, 
+    var `channelsTotal`: kotlin.ULong, 
+    var `dialDenied`: kotlin.ULong, 
+    var `dialFailed`: kotlin.ULong
 ) {
     public companion object
 }
@@ -807,6 +908,10 @@ public interface SecureSessionListener {
     
     public companion object
 }
+
+
+
+
 
 
 

@@ -254,6 +254,42 @@ export class SecureChannel {
     reconnectAttempts: number;
   };
   close(): void;
+  /**
+   * T3 本地转发（发起端）：本机监听 → 经隧道 → target。同步失败（未连接 /
+   * 角色不符 / 端口冲突 / 非法目标）返回 false 并经 onEvent 报 "error"
+   *（端口冲突 detail 前缀 "forward_bind_failed: "）。
+   */
+  startLocalForward(listenPort: number, host: string, port: number): boolean;
+  /** T3 停止一个本地转发并释放端口；重复停止返回 false。 */
+  stopLocalForward(listenPort: number): boolean;
+  /**
+   * T3 端点（响应端）：在 tunnelPort 上 accept 并按 rules 做拨入 ACL。
+   * 空 rules = 全拒绝。失败返回 false 并经 onEvent 报 "error"。
+   */
+  enableForwardEndpoint(rules: JsForwardRule[]): boolean;
+  /** T3 撤下端点（隧道保持，仅停 accept 与转发）。 */
+  disableForwardEndpoint(): boolean;
+  /** T3 覆盖隧道端口（0 = 默认 securePort+1）；运行中随下一次隧道重建生效。 */
+  setTunnelPort(port: number): boolean;
+  /** T3 状态表：每个本地转发/端点一行（active = 已绑定）。 */
+  forwardStats(): JsForwardStatus[];
+}
+
+/** T3 转发 ACL 规则（主机必须是 IP 字面量）。 */
+export interface JsForwardRule {
+  host: string;
+  portFrom: number;
+  portTo: number;
+}
+
+/** T3 转发状态行。 */
+export interface JsForwardStatus {
+  active: boolean;
+  listenPort: number;
+  channelsOpen: number;
+  channelsTotal: number;
+  dialDenied: number;
+  dialFailed: number;
 }
 
 /** Canonical pairing payload (`luciola://pair` v2). */
