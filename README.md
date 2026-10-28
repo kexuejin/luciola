@@ -18,6 +18,7 @@ Luciola is the foundation layer for **local-first apps** — LAN clipboard sync,
 - 📡 **Keyed beacons (0.6.0)** — discovery profiles can carry the device's Ed25519 public key, so the advertised identity matches the one the secure channel presents; hosts pin `node_id` / `tcp_port` / `public_key` on the beacon (wire-format compatible both ways with pre-key peers).
 - 🔒 **Authenticated encrypted channels** — SIGMA-style handshake (X25519 + Ed25519 transcript signatures + HKDF + AES-256-GCM, replay-proof counters), deny-by-default pinning, TOFU capture, auto-reconnect with backoff, keepalive dead-peer detection, bounded queues. One dual-stack listener serves IPv4+IPv6 inbound; the unified `dial()` injects IPv6 link-local scope ids automatically. `stop()` reliably tears the listener down (accept/bind are shutdown-interruptible).
 - 📦 **File-transfer data plane (`luciola-transfer`)** — sliding-window chunked transfers with absolute-offset writes (out-of-order safe), contiguous-prefix ACKs, timeout retransmit, and a 30-second post-completion answer cache; 50 MiB E2E over a real secure channel with matching SHA-256.
+- 🚇 **Encrypted port forwarding & multiplexing (`luciola-tunnel`, 0.7.0)** — TCP multiplexing (mux v1) and local port forwarding (ssh `-L` equivalent) over an authenticated `SecureStream`. Mobile browsers connect to local loopback `127.0.0.1` secure context to access remote desktop/NAS/AI web services transparently; E2E encrypted, deny-by-default ACL, independent supervisor link, and cascading stall protection.
 - 🧭 **Supervision built in** — stable node identity across engine restarts, port-conflict detection (`bind_failed` events for same-device multi-product setups), watchdog + debounced network-change rebuilds, Android `MulticastLock` handling.
 - 🔌 **One core, every platform** — Rust core; **KMP library** (`io.github.kexuejin:luciola-kmp`, ships the arm64 `.so` in the AAR), Swift bindings + xcframework for iOS, Node.js N-API (`@luciola/core`), plus a desktop **agent** (`luciola-cli agent`) that funnels discovery to multiple same-machine products over a unix socket.
 
@@ -42,6 +43,11 @@ cargo run -p luciola-cli -- ip      # NIC diagnostics, TUN detection, candidate 
 cargo run -p luciola-cli -- scan    # live peer radar
 cargo run -p luciola-cli -- beacon --name "My Laptop" --qr
 cargo run -p luciola-cli -- agent   # per-device discovery daemon (unix-socket event stream)
+
+# Port forwarding (tunnel)
+cargo run -p luciola-cli -- forward serve --tunnel-port 3001 --seed <hex> --pin-peer <pin> --allow 127.0.0.1:3080
+cargo run -p luciola-cli -- forward dial --listen 3080 --connect <peer-ip>:3001 --target 127.0.0.1:3080 --seed <hex> --pin-peer <pin>
+cargo run -p luciola-cli -- forward pin --seed <hex>  # derive public key & PIN
 ```
 
 ### Android / KMP products
@@ -81,6 +87,10 @@ const channel = new luciola.SecureChannel(id.seed);
 channel.connect(['192.168.2.82'], 3000, pinnedPeerKey, true, (ev) => {
   if (ev.message) console.log('decrypted:', ev.message);
 });
+
+// Port forwarding (tunnel)
+channel.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 3080, portTo: 3080 }]); // responder ACL
+channel.startLocalForward(3080, '127.0.0.1', 3080); // initiator local bind & transparent tunnel
 ```
 
 ### Demos
@@ -106,7 +116,8 @@ luciola/
 │   ├── luciola/          # tokio engine: dual-stack discovery, link racing,
 │   │                     #   secure channels, trust & pairing primitives
 │   ├── luciola-transfer/ # chunked file transfer: offset writes, ACK prefix, retransmit
-│   └── luciola-cli/      # ip / scan / beacon / agent
+│   ├── luciola-tunnel/   # TCP multiplexing (mux v1) & local port forwarding (ssh -L equivalent)
+│   └── luciola-cli/      # ip / scan / beacon / agent / forward
 └── bindings/
     ├── luciola-kmp/      # Kotlin Multiplatform library (Android AAR + JVM + iOS klib)
     ├── luciola-swift/    # Swift bindings + xcframework

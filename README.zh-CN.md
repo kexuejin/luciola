@@ -18,6 +18,7 @@ Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输�
 - 📡 **带身份的信标(0.6.0)** — 发现档案可携带设备 Ed25519 公钥,让「信标里宣告的身份」与「加密信道出示的身份」完全一致;宿主可把 `node_id` / `tcp_port` / `public_key` 钉在信标上(线格式对旧版对端双向兼容)。
 - 🔒 **认证加密信道** — SIGMA 式握手(X25519 + Ed25519 全 transcript 签名 + HKDF + AES-256-GCM,计数器防重放)、默认拒绝的 pin 校验、TOFU 捕获、断线指数退避自动重连、keepalive 判死、有界发送队列。单个双栈监听器同时收 IPv4+IPv6 入站;统一 `dial()` 自动补 IPv6 链路本地作用域;`stop()` 可靠拆除监听(bind/accept 均可被 shutdown 打断,无僵尸 accept)。
 - 📦 **文件传输数据面(`luciola-transfer`)** — 滑动窗口分块传输:按绝对偏移落盘(乱序安全)、连续前缀 ACK、超时重传、收齐后 30 秒应答缓存防「末帧 ACK 丢失卡 99%」;50 MiB 真实加密信道 E2E,SHA-256 一致。
+- 🚇 **加密端口转发与多路复用(`luciola-tunnel`, 0.7.0)** — 在一条认证加密信道上实现 TCP 多路复用 (mux v1) 与本地端口转发 (ssh `-L` 等价物)。手机浏览器直连本机 `127.0.0.1` 环回安全上下文，透明穿透访问电脑端本地 Web/NAS/AI 服务；端到端加密、默认拒绝 ACL 白名单、独立监督链路与级联断流保护。
 - 🧭 **内置监督自愈** — 引擎重启身份稳定、端口冲突显式上报(`bind_failed`,同机多产品场景)、看门狗 + 网络变化防抖重建、Android MulticastLock 处理。
 - 🔌 **一个核心,全平台** — Rust 核心;**KMP 库**(`io.github.kexuejin:luciola-kmp`,AAR 内嵌 arm64 `.so`)、iOS Swift 绑定 + xcframework、Node.js N-API(`@luciola/core`),以及桌面 **agent**(`luciola-cli agent`,unix socket 向同机多产品分发发现事件)。
 
@@ -42,6 +43,11 @@ cargo run -p luciola-cli -- ip      # 网卡诊断、TUN 检测、候选 IP、�
 cargo run -p luciola-cli -- scan    # 实时对等雷达
 cargo run -p luciola-cli -- beacon --name "My Laptop" --qr
 cargo run -p luciola-cli -- agent   # 设备级发现 daemon(unix socket 事件流)
+
+# 端口转发 (隧道)
+cargo run -p luciola-cli -- forward serve --tunnel-port 3001 --seed <hex> --pin-peer <pin> --allow 127.0.0.1:3080
+cargo run -p luciola-cli -- forward dial --listen 3080 --connect <peer-ip>:3001 --target 127.0.0.1:3080 --seed <hex> --pin-peer <pin>
+cargo run -p luciola-cli -- forward pin --seed <hex>  # 查看公钥指纹与 PIN
 ```
 
 ### Android / KMP 产品接入
@@ -81,6 +87,10 @@ const channel = new luciola.SecureChannel(id.seed);
 channel.connect(['192.168.2.82'], 3000, pinnedPeerKey, true, (ev) => {
   if (ev.message) console.log('decrypted:', ev.message);
 });
+
+// 端口转发 (隧道)
+channel.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 3080, portTo: 3080 }]); // 服务端白名单
+channel.startLocalForward(3080, '127.0.0.1', 3080); // 发起端本地监听并透明转发
 ```
 
 ### 演示
@@ -106,7 +116,8 @@ luciola/
 │   ├── luciola/          # tokio 引擎:双栈发现、路径竞速、
 │   │                     #   安全信道、信任与配对原语
 │   ├── luciola-transfer/ # 分块文件传输:偏移落盘、ACK 前缀、重传
-│   └── luciola-cli/      # ip / scan / beacon / agent
+│   ├── luciola-tunnel/   # TCP 多路复用 (mux v1) 与本地端口转发 (ssh -L 等价物)
+│   └── luciola-cli/      # ip / scan / beacon / agent / forward
 └── bindings/
     ├── luciola-kmp/      # Kotlin Multiplatform 库(Android AAR + JVM + iOS klib)
     ├── luciola-swift/    # Swift 绑定 + xcframework
