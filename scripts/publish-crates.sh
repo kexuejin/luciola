@@ -4,7 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for crate in luciola-ip luciola-proto luciola-net luciola luciola-cli; do
+# Dependency order. A new workspace crate must be added HERE as well, or it
+# silently never reaches crates.io (luciola-transfer and luciola-tunnel were missing
+# from this list and shipped unpublished).
+for crate in luciola-ip luciola-proto luciola-net luciola luciola-transfer luciola-tunnel luciola-cli; do
   echo "==> publishing $crate"
   cargo publish -p "$crate" --allow-dirty
   # let the registry index propagate between dependent publishes
