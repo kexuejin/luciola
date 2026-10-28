@@ -12,14 +12,39 @@ repositories {
     google()
 }
 
+// ---------------------------------------------------------------------------
+// Root directory holding the cross-compiled Rust artifacts per target triple.
+// Never a machine-specific default. Resolution order:
+//   Gradle property -> LUCIOLA_TARGET_DIR -> CARGO_TARGET_DIR
+//   -> `cargo metadata` (honours [build] target-dir in ~/.cargo/config.toml)
+//   -> the in-repo ./target fallback.
+// ---------------------------------------------------------------------------
+fun nativeRoot(propertyName: String): String {
+    (findProperty(propertyName) as String?)?.let { return it }
+    System.getenv("LUCIOLA_TARGET_DIR")?.let { return it }
+    System.getenv("CARGO_TARGET_DIR")?.let { return it }
+    val repoRoot = projectDir.parentFile.parentFile
+    val fromCargo = runCatching {
+        val proc = ProcessBuilder("cargo", "metadata", "--format-version", "1", "--no-deps")
+            .directory(repoRoot)
+            .redirectErrorStream(false)
+            .start()
+        val out = proc.inputStream.bufferedReader().readText()
+        if (proc.waitFor() != 0) null
+        else Regex("\"target_directory\":\"([^\"]+)\"").find(out)?.groupValues?.get(1)
+    }.getOrNull()
+    return fromCargo ?: File(repoRoot, "target").canonicalFile.absolutePath
+}
+
 kotlin {
     // Android via the AGP KMP plugin (built-in Kotlin on AGP 9; KGP androidTarget
     // is intentionally not used with AGP 9).
     androidLibrary {
         namespace = "io.github.kexuejin.luciola"
         compileSdk = 36
-        // 24 而不是 26:消费方(消费方)minSdk=24;本库的 Android 侧只用到
-        // JNA + 标准 socket,没有 API 26 才有的调用。26 会让整包安装要求升到 8.0。
+        // 24 rather than 26: consumer apps ship minSdk 24, and this library's
+        // Android side only uses JNA + plain sockets — nothing API-26-only.
+        // Declaring 26 would raise the whole app's install floor to Android 8.0.
         minSdk = 24
     }
 
@@ -30,10 +55,11 @@ kotlin {
     // iOS: commonMain logic (supervision core, watchdog policy, models)
     // compiles to Kotlin/Native. Engine calls on iOS go through the Swift
     // bindings in bindings/luciola-swift, implementing DiscoveryEnginePort.
-    // iOS 现在带 uniffi 的 Kotlin/Native 绑定（gobley 生成，cinterop 调 C FFI）。
-    // 静态库由 scripts/build-ios-natives.sh 交叉编译；路径可用 -PiosNativeRoot 覆盖。
-    val iosNativeRoot = (findProperty("iosNativeRoot") as String?)
-        ?: "target"
+    // iOS now carries uniffi Kotlin/Native bindings too (gobley-generated,
+    // cinterop against the C FFI). Static libs are cross-compiled by cargo for
+    // each iOS triple; the root is resolved by nativeRoot() below and can be
+    // overridden with -PiosNativeRoot.
+    val iosNativeRoot = nativeRoot("iosNativeRoot")
     listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
         val triple = if (target.name.contains("Simulator", ignoreCase = true)) {
             "aarch64-apple-ios-sim"
@@ -102,14 +128,13 @@ kotlin {
 // 之前这份配置不存在，jvmTest 里的绑定冒烟用例只能在"恰好能找到库"的机器上过；
 // 换成 gobley 绑定后暴露成 UnsatisfiedLinkError（找不到 libluciola_uniffi.dylib）。
 tasks.withType<Test>().configureEach {
-    val hostLibDir = File(iosNativeRootForHost(), "release")
+    val hostLibDir = File(nativeRoot("hostNativeRoot"), "release")
     if (hostLibDir.isDirectory) {
         systemProperty("jna.library.path", hostLibDir.absolutePath)
     }
 }
 
-fun iosNativeRootForHost(): String =
-    (findProperty("hostNativeRoot") as String?) ?: "target"
+// nativeRoot() is declared with the other build helpers above the kotlin block.
 
 // The AAR must embed the Rust core; publishing without it produces a broken
 // artifact. scripts/publish-maven-local.sh builds the .so before publishing.
@@ -130,7 +155,7 @@ publishing {
         // Central requires a javadoc artifact per module; a per-publication
         // stub task (shared files break Gradle's implicit-dependency checks).
         val javadocJar = tasks.register("javadocJar-${name}", Jar::class) {
-            archiveFileName.set("luciola-${name}-0.4.4-javadoc.jar")
+            archiveFileName.set("luciola-${name}-${version}-javadoc.jar")
             archiveClassifier.set("javadoc")
             from(resources.text.fromString("luciola KMP — see https://github.com/kexuejin/luciola"))
         }

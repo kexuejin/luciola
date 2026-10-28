@@ -27,7 +27,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT="${1:-build/kmp-bindings}"
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+# 目标目录不一定是 ./target：共享的 [build] target-dir 会把它重定向到别处，
+# 所以问 cargo 本人；CARGO_TARGET_DIR / LUCIOLA_TARGET_DIR 可覆盖。
+if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+  CARGO_TARGET_DIR="${LUCIOLA_TARGET_DIR:-}"
+fi
+if [ -z "$CARGO_TARGET_DIR" ]; then
+  CARGO_TARGET_DIR=$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
+    | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+fi
+if [ -z "$CARGO_TARGET_DIR" ]; then
+  CARGO_TARGET_DIR="$(pwd)/target"
+fi
+export CARGO_TARGET_DIR
 CDYLIB="$CARGO_TARGET_DIR/release/libluciola_uniffi.dylib"
 CONFIG="bindings/luciola-kmp/gobley-uniffi.toml"
 

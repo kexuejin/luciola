@@ -37,17 +37,17 @@ Prereqs: Xcode, `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`,
 cargo build --release -p luciola-uniffi --target aarch64-apple-ios
 cargo build --release -p luciola-uniffi --target aarch64-apple-ios-sim
 
-# 2. Regenerate Swift bindings after changing the Rust API
+# 2. Regenerate Swift bindings after changing the Rust API.
+#    Ask cargo for the target directory — it is not always ./target.
+TD=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
 cargo run -p luciola-uniffi --bin uniffi-bindgen -- generate \
-  --library target/debug/libluciola_uniffi.dylib \
+  --library "$TD/debug/libluciola_uniffi.dylib" \
   --language swift --out-dir /tmp/uo-sw
 cp /tmp/uo-sw/luciola_uniffi.swift /tmp/uo-sw/luciola_uniffiFFI.h \
    /tmp/uo-sw/luciola_uniffiFFI.modulemap ../../bindings/luciola-swift/
 
 # 3. Rebuild the xcframework (both slices + shared FFI headers)
-xcodebuild -create-xcframework \
-  -library target/aarch64-apple-ios/release/libluciola_uniffi.a \
-  -headers bindings/luciola-swift/luciola_uniffiFFI.h ...   # see scripts in git history
+./bindings/luciola-swift/build-xcframework.sh
 
 # 4. Generate the Xcode project and build for the simulator
 cd examples/ios-demo

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build LuciolaUniFFI.xcframework from the current crates/ HEAD.
 #
-# The xcframework is a build artifact (gitignored), so every consumer — the iOS
-# app in my-app, and any demo — needs one command that reproduces it.
+# The xcframework is a build artifact (gitignored), so every consumer — an iOS
+# product or a demo — needs one command that reproduces it.
 # Without this, "the desktop is fixed but iOS still runs the old engine" is
 # invisible: the binary simply is not in the repository to diff.
 #
