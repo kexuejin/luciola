@@ -1,9 +1,10 @@
-//! T3 —— 隧道链路控制面（the tunnel plan §Phase T3）。
+//! 隧道链路控制面。
 //!
 //! `TunnelLink` 是**独立于消息链路**的第二套监督实例：两条专用 OS 线程
 //! （命令线程 + supervisor 运行时线程）持有自己的 TCP 连接与 `MuxSession`，
-//! 数据面（转发字节流）永不跨 FFI（D7）。uniffi / node 两个绑定层复用本
-//! 模块，各自的事件回调只需实现 `TunnelReporter` 做一层适配。
+//! 数据面（转发字节流）永不跨 FFI —— 逐帧回调在高吞吐下不可用，FFI 只暴露
+//! 控制面。uniffi / node 两个绑定层复用本模块，各自的事件回调只需实现
+//! `TunnelReporter` 做一层适配。
 //!
 //! ## 线程模型（回调重入防死锁）
 //!
@@ -44,8 +45,8 @@ use tokio::sync::Notify;
 use tracing::debug;
 
 use crate::forward::{
-    start_forward_endpoint, start_local_forward, ForwardAcl, ForwardEndpointGuard,
-    ForwardRule, ForwardStatus, LocalForwardConfig, LocalForwardGuard,
+    start_forward_endpoint, start_local_forward, ForwardAcl, ForwardEndpointGuard, ForwardRule,
+    ForwardStatus, LocalForwardConfig, LocalForwardGuard,
 };
 use crate::mux::{DialTarget, MuxConfig, MuxSession, Role};
 use crate::TunnelError;
@@ -126,12 +127,31 @@ pub struct ForwardStat {
 type Reply = std_mpsc::Sender<Result<(), TunnelError>>;
 
 enum Cmd {
-    StartLocal { listen_port: u16, host: IpAddr, port: u16, reply: Reply },
-    StopLocal { listen_port: u16, reply: Reply },
-    EnableEndpoint { rules: Vec<ForwardRule>, reply: Reply },
-    DisableEndpoint { reply: Reply },
-    SetTunnelPort { port: u16, reply: Reply },
-    SetBase { base: TunnelBase, reporter: Arc<dyn TunnelReporter> },
+    StartLocal {
+        listen_port: u16,
+        host: IpAddr,
+        port: u16,
+        reply: Reply,
+    },
+    StopLocal {
+        listen_port: u16,
+        reply: Reply,
+    },
+    EnableEndpoint {
+        rules: Vec<ForwardRule>,
+        reply: Reply,
+    },
+    DisableEndpoint {
+        reply: Reply,
+    },
+    SetTunnelPort {
+        port: u16,
+        reply: Reply,
+    },
+    SetBase {
+        base: TunnelBase,
+        reporter: Arc<dyn TunnelReporter>,
+    },
     Pause,
     Shutdown,
 }
@@ -268,7 +288,10 @@ impl Shared {
                 None => {
                     reg.locals.insert(
                         listen_port,
-                        LocalReg { target, base: ForwardStatus::default() },
+                        LocalReg {
+                            target,
+                            base: ForwardStatus::default(),
+                        },
                     );
                 }
             }
@@ -444,10 +467,17 @@ impl Shared {
         for (port, target) in starts {
             match start_local_forward(
                 session.clone(),
-                LocalForwardConfig { listen_port: port, target },
+                LocalForwardConfig {
+                    listen_port: port,
+                    target,
+                },
             ) {
                 Ok(guard) => {
-                    self.live.lock().unwrap().locals.insert(port, (target, guard));
+                    self.live
+                        .lock()
+                        .unwrap()
+                        .locals
+                        .insert(port, (target, guard));
                 }
                 Err(e) => self.report_err(&e),
             }
@@ -541,7 +571,12 @@ impl Shared {
                             .and_then(|b| b.tunnel_port(ov).ok())
                             .unwrap_or(0)
                     };
-                    Some((entry.base, live.endpoint.as_ref().map(|(_, g)| g.status()), live.active, listen))
+                    Some((
+                        entry.base,
+                        live.endpoint.as_ref().map(|(_, g)| g.status()),
+                        live.active,
+                        listen,
+                    ))
                 }
             }
         };
@@ -552,7 +587,11 @@ impl Shared {
             for (port, entry) in &reg.locals {
                 match live.locals.get(port) {
                     Some((_, guard)) => {
-                        let listen = if *port == 0 { guard.local_addr().port() } else { *port };
+                        let listen = if *port == 0 {
+                            guard.local_addr().port()
+                        } else {
+                            *port
+                        };
                         rows.push(ForwardStat {
                             active: live.active,
                             listen_port: listen,
@@ -625,51 +664,51 @@ async fn establish(
     backoff: &mut Duration,
 ) -> EstablishOutcome {
     match base {
-        TunnelBase::Dial { addresses, pinned_peer_public_key, .. } => {
-            loop {
-                let attempt = tokio::select! {
-                    r = tokio::time::timeout(
-                        Duration::from_secs(10),
-                        luciola::link::secure::connect_secure_raced(
-                            addresses.clone(),
-                            tunnel_port,
-                            &shared.identity_seed,
-                            pinned_peer_public_key,
+        TunnelBase::Dial {
+            addresses,
+            pinned_peer_public_key,
+            ..
+        } => loop {
+            let attempt = tokio::select! {
+                r = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    luciola::link::secure::connect_secure_raced(
+                        addresses.clone(),
+                        tunnel_port,
+                        &shared.identity_seed,
+                        pinned_peer_public_key,
+                    ),
+                ) => r,
+                _ = stop.recv() => return EstablishOutcome::Shutdown,
+                _ = shared.wake.notified() => return EstablishOutcome::Restart,
+            };
+            match attempt {
+                Ok(Ok(s)) => {
+                    *backoff = BACKOFF_INIT;
+                    return EstablishOutcome::Stream(Box::new(s));
+                }
+                Ok(Err(e)) => {
+                    shared.report(
+                        "retrying",
+                        format!("tunnel_link_failed: {e}; next attempt in {backoff:?}",),
+                    );
+                }
+                Err(_) => {
+                    shared.report(
+                        "retrying",
+                        format!(
+                            "tunnel_link_failed: dial timed out (10s); next attempt in {backoff:?}",
                         ),
-                    ) => r,
-                    _ = stop.recv() => return EstablishOutcome::Shutdown,
-                    _ = shared.wake.notified() => return EstablishOutcome::Restart,
-                };
-                match attempt {
-                    Ok(Ok(s)) => {
-                        *backoff = BACKOFF_INIT;
-                        return EstablishOutcome::Stream(Box::new(s));
-                    }
-                    Ok(Err(e)) => {
-                        shared.report(
-                            "retrying",
-                            format!(
-                                "tunnel_link_failed: {e}; next attempt in {backoff:?}",
-                            ),
-                        );
-                    }
-                    Err(_) => {
-                        shared.report(
-                            "retrying",
-                            format!(
-                                "tunnel_link_failed: dial timed out (10s); next attempt in {backoff:?}",
-                            ),
-                        );
-                    }
+                    );
                 }
-                tokio::select! {
-                    _ = tokio::time::sleep(*backoff) => {}
-                    _ = stop.recv() => return EstablishOutcome::Shutdown,
-                    _ = shared.wake.notified() => return EstablishOutcome::Restart,
-                }
-                *backoff = (*backoff * 2).min(BACKOFF_MAX);
             }
-        }
+            tokio::select! {
+                _ = tokio::time::sleep(*backoff) => {}
+                _ = stop.recv() => return EstablishOutcome::Shutdown,
+                _ = shared.wake.notified() => return EstablishOutcome::Restart,
+            }
+            *backoff = (*backoff * 2).min(BACKOFF_MAX);
+        },
         TunnelBase::Listen { expected_peer, .. } => {
             let listener = tokio::select! {
                 r = luciola::link::bind_dual_stack_listener(tunnel_port) => match r {
@@ -713,9 +752,7 @@ async fn establish(
                         // 握手失败不杀监听器（镜像消息链路）；短退避防畸形对端忙循环。
                         shared.report(
                             "retrying",
-                            format!(
-                                "tunnel_handshake_failed: {e}; next accept in {backoff:?}",
-                            ),
+                            format!("tunnel_handshake_failed: {e}; next accept in {backoff:?}",),
                         );
                         tokio::select! {
                             _ = tokio::time::sleep(*backoff) => {}
@@ -770,7 +807,11 @@ async fn supervisor(shared: Arc<Shared>, mut stop: tokio_mpsc::UnboundedReceiver
             EstablishOutcome::Restart => continue,
             EstablishOutcome::Shutdown => return,
         };
-        let role = if base.is_dial() { Role::Initiator } else { Role::Responder };
+        let role = if base.is_dial() {
+            Role::Initiator
+        } else {
+            Role::Responder
+        };
         let session = Arc::new(MuxSession::start(stream, role, MuxConfig::default()));
         debug!(port = tunnel_port, "tunnel link established");
         shared.install(session.clone(), tunnel_port).await;
@@ -817,7 +858,12 @@ async fn supervisor(shared: Arc<Shared>, mut stop: tokio_mpsc::UnboundedReceiver
 /// 执行一条命令并应答；返回 false = 停机。
 fn handle_cmd(cmd: Cmd, shared: &Shared) -> bool {
     match cmd {
-        Cmd::StartLocal { listen_port, host, port, reply } => {
+        Cmd::StartLocal {
+            listen_port,
+            host,
+            port,
+            reply,
+        } => {
             let _ = reply.send(shared.cmd_start_local(listen_port, host, port));
             true
         }
@@ -935,7 +981,12 @@ impl TunnelLink {
         host: IpAddr,
         port: u16,
     ) -> Result<(), TunnelError> {
-        self.call(|reply| Cmd::StartLocal { listen_port, host, port, reply })
+        self.call(|reply| Cmd::StartLocal {
+            listen_port,
+            host,
+            port,
+            reply,
+        })
     }
 
     /// 注销本地转发（停止 Guard + 折叠计数；未注册返回 Err）。
@@ -993,6 +1044,3 @@ impl Drop for TunnelLink {
         }
     }
 }
-
-
-

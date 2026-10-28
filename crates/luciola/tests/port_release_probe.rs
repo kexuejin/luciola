@@ -1,6 +1,6 @@
-//! 消费方仓库 jvmAcceptanceTest 的「stop() 之后端口必须释放」断言在 Rust 层
-//! 的最小复现:accepted 连接关闭后,监听端口必须能被一个**不带 SO_REUSEADDR** 的
-//! 裸 bind 重新占用(测试探针就是 `ServerSocket(port)`)。
+//! Consumer-side acceptance assertion, reproduced at the Rust layer: after
+//! `stop()`, the listening port must be reclaimable by a plain bind **without
+//! SO_REUSEADDR** (the consumer probe is a JVM `ServerSocket(port)`).
 //!
 //! 对照组:旧实现(裸 `TcpListener::bind(("0.0.0.0", p))`)与新实现
 //! ([`bind_dual_stack_listener`],带 SO_REUSEADDR 的双栈)各跑一遍。

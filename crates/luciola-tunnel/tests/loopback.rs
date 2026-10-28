@@ -1,4 +1,4 @@
-//! the tunnel plan §3 T1 验收：mux v1 在真实 SecureStream（127.0.0.1 回环）上的行为。
+//! mux v1 在真实 SecureStream（127.0.0.1 回环）上的行为。
 //!
 //! 约定：initiator = connect_secure 一侧，responder = accept_secure 一侧；
 //! "raw" 指测试自己收发帧、不跑 mux 的一侧，用于观测线协议与注入违规帧。
@@ -32,8 +32,9 @@ async fn multi_channel_interleaved_transfer() {
             handles.push(tokio::spawn(async move {
                 let st = i.open(target(9000 + k as u16)).await.expect("open");
                 let ch = st.ch_id();
-                let payload: Vec<u8> =
-                    (0..200_000u32).map(|j| ((j >> 3) as u8) ^ (k as u8)).collect();
+                let payload: Vec<u8> = (0..200_000u32)
+                    .map(|j| ((j >> 3) as u8) ^ (k as u8))
+                    .collect();
                 let (mut rh, mut wh) = tokio::io::split(st);
                 let writer = tokio::spawn({
                     let payload = payload.clone();
@@ -56,7 +57,11 @@ async fn multi_channel_interleaved_transfer() {
             chs.push(h.await.expect("channel task"));
         }
         chs.sort_unstable();
-        assert_eq!(chs, vec![1, 3, 5, 7], "initiator must allocate odd, monotonous ch ids");
+        assert_eq!(
+            chs,
+            vec![1, 3, 5, 7],
+            "initiator must allocate odd, monotonous ch ids"
+        );
         assert_eq!(i.stats().channels_total, 4);
         assert!(i.is_alive());
     })
@@ -71,11 +76,19 @@ async fn half_close_is_bidirectional_independent() {
         let (i, r) = mux_pair().await;
         let r2 = r.clone();
         let responder = tokio::spawn(async move {
-            let st = r2.accept_open().await.expect("accept").grant().await.expect("grant");
+            let st = r2
+                .accept_open()
+                .await
+                .expect("accept")
+                .grant()
+                .await
+                .expect("grant");
             let (mut rh, mut wh) = tokio::io::split(st);
             let mut got = Vec::new();
             rh.read_to_end(&mut got).await.expect("read until peer EOF");
-            wh.write_all(b"B-hello").await.expect("write after peer EOF");
+            wh.write_all(b"B-hello")
+                .await
+                .expect("write after peer EOF");
             wh.shutdown().await.expect("half close");
             got
         });
@@ -84,7 +97,9 @@ async fn half_close_is_bidirectional_independent() {
         st.write_all(b"A-hello").await.expect("write");
         st.shutdown().await.expect("half close");
         let mut back = Vec::new();
-        st.read_to_end(&mut back).await.expect("still readable after half close");
+        st.read_to_end(&mut back)
+            .await
+            .expect("still readable after half close");
         assert_eq!(&back, b"B-hello");
         assert_eq!(responder.await.expect("responder task"), &b"A-hello"[..]);
         assert!(i.is_alive() && r.is_alive());
@@ -151,7 +166,9 @@ async fn terminal_ack_no_close_then_shutdown_emits_session_close() {
             other => panic!("expected Rejected, got {:?}", other.map(|s| s.ch_id())),
         }
         assert!(
-            raw_recv_within(&mut raw, Duration::from_millis(400)).await.is_none(),
+            raw_recv_within(&mut raw, Duration::from_millis(400))
+                .await
+                .is_none(),
             "a terminal ACK must never be followed by a CLOSE"
         );
 
@@ -185,7 +202,10 @@ async fn terminal_ack_no_close_then_shutdown_emits_session_close() {
             f => panic!("expected session CLOSE, got {f:?}"),
         }
         assert!(!i.is_alive());
-        assert!(matches!(i.open(target(9)).await, Err(MuxError::SessionClosed)));
+        assert!(matches!(
+            i.open(target(9)).await,
+            Err(MuxError::SessionClosed)
+        ));
     })
     .await
     .expect("test timed out");
@@ -214,7 +234,11 @@ async fn responder_deny_detail_then_grant_follows() {
 
         raw_send(&mut raw, T_OPEN, 1, &open_payload("127.0.0.1", 3080)).await;
         match raw_recv(&mut raw).await {
-            Frame::Ack { ch_id, status, detail } => {
+            Frame::Ack {
+                ch_id,
+                status,
+                detail,
+            } => {
                 assert_eq!(ch_id, 1);
                 assert_eq!(status, AckStatus::DIAL_FAILED);
                 assert_eq!(detail.as_deref(), Some("connection refused"));
@@ -222,7 +246,9 @@ async fn responder_deny_detail_then_grant_follows() {
             f => panic!("expected ACK, got {f:?}"),
         }
         assert!(
-            raw_recv_within(&mut raw, Duration::from_millis(400)).await.is_none(),
+            raw_recv_within(&mut raw, Duration::from_millis(400))
+                .await
+                .is_none(),
             "deny is terminal at channel level: no CLOSE"
         );
 
@@ -248,7 +274,10 @@ async fn responder_deny_detail_then_grant_follows() {
 async fn open_timeout_sends_close_upstream_reset() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let (c, s) = secure_pair().await;
-        let cfg = MuxConfig { open_timeout: Duration::from_millis(400), ..Default::default() };
+        let cfg = MuxConfig {
+            open_timeout: Duration::from_millis(400),
+            ..Default::default()
+        };
         let i = MuxSession::start(c, Role::Initiator, cfg);
         let mut raw = s;
 
@@ -300,16 +329,23 @@ async fn responder_channel_limit_acks_3() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let (c, s) = secure_pair().await;
         let mut raw = c;
-        let cfg = MuxConfig { max_channels: 2, ..fast_cfg() };
+        let cfg = MuxConfig {
+            max_channels: 2,
+            ..fast_cfg()
+        };
         let r = MuxSession::start(s, Role::Responder, cfg);
 
         raw_send(&mut raw, T_OPEN, 1, &open_payload("127.0.0.1", 3080)).await;
         assert!(
-            raw_recv_within(&mut raw, Duration::from_millis(150)).await.is_none(),
+            raw_recv_within(&mut raw, Duration::from_millis(150))
+                .await
+                .is_none(),
             "pending OPEN must not be ACKed before grant/deny"
         );
         raw_send(&mut raw, T_OPEN, 3, &open_payload("127.0.0.1", 3081)).await;
-        assert!(raw_recv_within(&mut raw, Duration::from_millis(150)).await.is_none());
+        assert!(raw_recv_within(&mut raw, Duration::from_millis(150))
+            .await
+            .is_none());
 
         raw_send(&mut raw, T_OPEN, 5, &open_payload("127.0.0.1", 3082)).await;
         match raw_recv(&mut raw).await {
@@ -330,7 +366,10 @@ async fn responder_channel_limit_acks_3() {
 async fn initiator_local_channel_limit_rejected_3() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let (c, s) = secure_pair().await;
-        let cfg = MuxConfig { max_channels: 1, ..fast_cfg() };
+        let cfg = MuxConfig {
+            max_channels: 1,
+            ..fast_cfg()
+        };
         let i = MuxSession::start(c, Role::Initiator, cfg);
         let mut raw = s;
 
@@ -350,10 +389,15 @@ async fn initiator_local_channel_limit_rejected_3() {
                 assert_eq!(status, AckStatus::CHANNEL_LIMIT);
                 assert!(detail.unwrap_or_default().contains("limit"));
             }
-            other => panic!("expected local Rejected(3), got {:?}", other.map(|s| s.ch_id())),
+            other => panic!(
+                "expected local Rejected(3), got {:?}",
+                other.map(|s| s.ch_id())
+            ),
         }
         assert!(
-            raw_recv_within(&mut raw, Duration::from_millis(200)).await.is_none(),
+            raw_recv_within(&mut raw, Duration::from_millis(200))
+                .await
+                .is_none(),
             "local limit rejection must not put any frame on the wire"
         );
     })
@@ -423,7 +467,10 @@ async fn unknown_channel_data_gets_close_and_session_survives() {
             f => panic!("expected OPEN, got {f:?}"),
         }
         raw_send(&mut raw, T_ACK, 1, &[AckStatus::OK]).await;
-        let mut st = opener.await.expect("opener task").expect("open after unknown DATA");
+        let mut st = opener
+            .await
+            .expect("opener task")
+            .expect("open after unknown DATA");
         st.write_all(b"hi").await.expect("write");
         match raw_recv(&mut raw).await {
             Frame::Data { ch_id, bytes } => {
@@ -454,7 +501,10 @@ async fn even_channel_id_open_is_violation() {
             f => panic!("expected session CLOSE(1), got {f:?}"),
         }
         assert!(!i.is_alive());
-        assert!(matches!(i.open(target(1)).await, Err(MuxError::SessionClosed)));
+        assert!(matches!(
+            i.open(target(1)).await,
+            Err(MuxError::SessionClosed)
+        ));
     })
     .await
     .expect("test timed out");
@@ -489,7 +539,13 @@ async fn shutdown_terminates_both_sides() {
         let (i, r) = mux_pair().await;
         let r2 = r.clone();
         let responder = tokio::spawn(async move {
-            let mut st = r2.accept_open().await.expect("accept").grant().await.expect("grant");
+            let mut st = r2
+                .accept_open()
+                .await
+                .expect("accept")
+                .grant()
+                .await
+                .expect("grant");
             let mut buf = [0u8; 8];
             match st.read(&mut buf).await {
                 Err(_) => {}
@@ -501,7 +557,10 @@ async fn shutdown_terminates_both_sides() {
         let mut st = i.open(target(1)).await.expect("open");
         i.shutdown();
         assert!(!i.is_alive());
-        assert!(matches!(i.open(target(1)).await, Err(MuxError::SessionClosed)));
+        assert!(matches!(
+            i.open(target(1)).await,
+            Err(MuxError::SessionClosed)
+        ));
 
         // 对端在途 CLOSE 到达前 accept_open 挂起，终止后立即返回 SessionClosed
         match tokio::time::timeout(Duration::from_secs(3), r.accept_open()).await {
@@ -514,9 +573,13 @@ async fn shutdown_terminates_both_sides() {
         ));
 
         let mut buf = [0u8; 4];
-        let read_res =
-            tokio::time::timeout(Duration::from_secs(3), st.read(&mut buf)).await.expect("read deadline");
-        assert!(read_res.is_err(), "initiator stream must error after shutdown");
+        let read_res = tokio::time::timeout(Duration::from_secs(3), st.read(&mut buf))
+            .await
+            .expect("read deadline");
+        assert!(
+            read_res.is_err(),
+            "initiator stream must error after shutdown"
+        );
 
         let responder_alive = responder.await.expect("responder task");
         assert!(!responder_alive, "responder session must die on CLOSE(3)");
@@ -550,8 +613,9 @@ async fn underlying_fin_terminates_session() {
         assert_eq!(&buf, b"hello");
 
         drop(raw); // TCP FIN
-        let read_res =
-            tokio::time::timeout(Duration::from_secs(3), st.read(&mut buf)).await.expect("read deadline");
+        let read_res = tokio::time::timeout(Duration::from_secs(3), st.read(&mut buf))
+            .await
+            .expect("read deadline");
         assert!(read_res.is_err(), "stream must error when the link dies");
 
         tokio::time::timeout(Duration::from_secs(3), async {
@@ -561,7 +625,10 @@ async fn underlying_fin_terminates_session() {
         })
         .await
         .expect("session must die after underlying FIN");
-        assert!(matches!(i.open(target(1)).await, Err(MuxError::SessionClosed)));
+        assert!(matches!(
+            i.open(target(1)).await,
+            Err(MuxError::SessionClosed)
+        ));
     })
     .await
     .expect("test timed out");
@@ -584,8 +651,20 @@ async fn stall_cut_off_tears_channel_not_session() {
         let r2 = r.clone();
         // responder：A 授权但永不读；B 持续回显。任务不 join（测试尾部由 runtime 回收）。
         tokio::spawn(async move {
-            let a = r2.accept_open().await.expect("accept A").grant().await.expect("grant A");
-            let mut b = r2.accept_open().await.expect("accept B").grant().await.expect("grant B");
+            let a = r2
+                .accept_open()
+                .await
+                .expect("accept A")
+                .grant()
+                .await
+                .expect("grant A");
+            let mut b = r2
+                .accept_open()
+                .await
+                .expect("accept B")
+                .grant()
+                .await
+                .expect("grant B");
             let _a_held_unread = a;
             let mut buf = [0u8; 16];
             loop {
@@ -680,9 +759,14 @@ async fn invalid_target_rejected_locally_without_wire() {
             i.open(DialTarget::new(ip("255.255.255.255"), 80)).await,
             Err(MuxError::InvalidTarget(_))
         ));
-        assert!(matches!(i.open(target(0)).await, Err(MuxError::InvalidTarget(_))));
+        assert!(matches!(
+            i.open(target(0)).await,
+            Err(MuxError::InvalidTarget(_))
+        ));
         assert!(
-            raw_recv_within(&mut raw, Duration::from_millis(250)).await.is_none(),
+            raw_recv_within(&mut raw, Duration::from_millis(250))
+                .await
+                .is_none(),
             "local invalid-target rejection must not put frames on the wire"
         );
         assert!(i.is_alive());
@@ -699,10 +783,19 @@ async fn responder_bad_target_and_duplicate_acks_4() {
         let mut raw = c;
         let r = MuxSession::start(s, Role::Responder, fast_cfg());
 
-        for (ch, host) in [(1u32, "example.com"), (3, "0.0.0.0"), (5, "255.255.255.255"), (7, "224.0.0.1")] {
+        for (ch, host) in [
+            (1u32, "example.com"),
+            (3, "0.0.0.0"),
+            (5, "255.255.255.255"),
+            (7, "224.0.0.1"),
+        ] {
             raw_send(&mut raw, T_OPEN, ch, &open_payload(host, 80)).await;
             match raw_recv(&mut raw).await {
-                Frame::Ack { ch_id, status, detail } => {
+                Frame::Ack {
+                    ch_id,
+                    status,
+                    detail,
+                } => {
                     assert_eq!(ch_id, ch);
                     assert_eq!(status, AckStatus::BAD_TARGET);
                     assert!(detail.is_some(), "bad target must carry a detail");
@@ -713,10 +806,16 @@ async fn responder_bad_target_and_duplicate_acks_4() {
 
         // 合法 OPEN 停在 Pending；重复 ch_id -> ACK(4)
         raw_send(&mut raw, T_OPEN, 9, &open_payload("127.0.0.1", 3080)).await;
-        assert!(raw_recv_within(&mut raw, Duration::from_millis(150)).await.is_none());
+        assert!(raw_recv_within(&mut raw, Duration::from_millis(150))
+            .await
+            .is_none());
         raw_send(&mut raw, T_OPEN, 9, &open_payload("127.0.0.1", 3081)).await;
         match raw_recv(&mut raw).await {
-            Frame::Ack { ch_id, status, detail } => {
+            Frame::Ack {
+                ch_id,
+                status,
+                detail,
+            } => {
                 assert_eq!(ch_id, 9);
                 assert_eq!(status, AckStatus::BAD_TARGET);
                 assert!(detail.unwrap_or_default().contains("duplicate"));

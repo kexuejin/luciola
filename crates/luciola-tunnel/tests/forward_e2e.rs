@@ -1,6 +1,6 @@
-//! the tunnel plan §3 T2 验收：forward 层端到端（真实 SecureStream + 本地 TCP 回环）。
+//! forward 层端到端（真实 SecureStream + 本地 TCP 回环）。
 //!
-//! 场景对应 spec 验收清单：
+//! 覆盖场景：
 //! 1. 8 并发连接大流量交错传输；
 //! 2. 一个通道处于停顿（未打满自身队列）期间，不阻塞其他通道的 OPEN 与数据；
 //! 3. ACL 拒绝 → dial_denied+1 且**不发生拨号**，initiator 收 OPEN_ACK(1)；
@@ -13,16 +13,16 @@ mod common;
 use common::*;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use luciola_tunnel::{
-    CloseReason, DialTarget, ForwardAcl, ForwardRule, LocalForwardConfig, MuxError,
-    start_forward_endpoint, start_local_forward,
+    start_forward_endpoint, start_local_forward, CloseReason, DialTarget, ForwardAcl, ForwardRule,
+    LocalForwardConfig, MuxError,
 };
 
 // ---------------------------------------------------------------- 本机上游
@@ -57,7 +57,9 @@ async fn spawn_echo_upstream() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 
 /// 计数上游：接受即计数，连接保持打开但不服务。用于断言"从未被拨号"。
 async fn spawn_counting_upstream() -> (SocketAddr, Arc<AtomicU64>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind counting");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind counting");
     let addr = listener.local_addr().expect("counting addr");
     let accepts = Arc::new(AtomicU64::new(0));
     let c = accepts.clone();
@@ -73,7 +75,9 @@ async fn spawn_counting_upstream() -> (SocketAddr, Arc<AtomicU64>) {
 
 /// 黑洞上游：接受但永不读写（上游应用停顿）。
 async fn spawn_blackhole_upstream() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind blackhole");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind blackhole");
     let addr = listener.local_addr().expect("blackhole addr");
     tokio::spawn(async move {
         let mut held: Vec<TcpStream> = Vec::new();
@@ -127,7 +131,11 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
 }
 
 fn rule_for(addr: SocketAddr) -> ForwardRule {
-    ForwardRule { host: addr.ip(), port_from: addr.port(), port_to: addr.port() }
+    ForwardRule {
+        host: addr.ip(),
+        port_from: addr.port(),
+        port_to: addr.port(),
+    }
 }
 
 // ---------------------------------------------------------------- 验收用例
@@ -140,11 +148,14 @@ async fn eight_concurrent_connections_large_interleaved_transfer() {
         let (i, r) = mux_pair().await;
         let (i, r) = (Arc::new(i), Arc::new(r));
 
-        let endpoint = start_forward_endpoint(r, ForwardAcl::new(vec![rule_for(up_addr)]))
-            .expect("endpoint");
+        let endpoint =
+            start_forward_endpoint(r, ForwardAcl::new(vec![rule_for(up_addr)])).expect("endpoint");
         let fwd = start_local_forward(
             i,
-            LocalForwardConfig { listen_port: 0, target: DialTarget::new(up_addr.ip(), up_addr.port()) },
+            LocalForwardConfig {
+                listen_port: 0,
+                target: DialTarget::new(up_addr.ip(), up_addr.port()),
+            },
         )
         .expect("local forward");
         let local = fwd.local_addr();
@@ -191,17 +202,25 @@ async fn stalled_channel_does_not_block_others() {
 
         let fwd_bh = start_local_forward(
             i.clone(),
-            LocalForwardConfig { listen_port: 0, target: DialTarget::new(bh_addr.ip(), bh_addr.port()) },
+            LocalForwardConfig {
+                listen_port: 0,
+                target: DialTarget::new(bh_addr.ip(), bh_addr.port()),
+            },
         )
         .expect("fwd blackhole");
         let fwd_echo = start_local_forward(
             i.clone(),
-            LocalForwardConfig { listen_port: 0, target: DialTarget::new(echo_addr.ip(), echo_addr.port()) },
+            LocalForwardConfig {
+                listen_port: 0,
+                target: DialTarget::new(echo_addr.ip(), echo_addr.port()),
+            },
         )
         .expect("fwd echo");
 
         // A：连黑洞并写入 200KB（远低于队列上限 256×64KiB），上游永不读 → 通道停顿但不打满队列。
-        let mut a = TcpStream::connect(fwd_bh.local_addr()).await.expect("connect A");
+        let mut a = TcpStream::connect(fwd_bh.local_addr())
+            .await
+            .expect("connect A");
         let a_task = tokio::spawn(async move {
             let buf = vec![0xA5u8; 50_000];
             for _ in 0..4 {
@@ -255,7 +274,10 @@ async fn acl_deny_counts_and_never_dials() {
             .expect("endpoint");
 
         // ① 直接 OPEN forbidden：initiator 收到明确的 OPEN_ACK(1)。
-        let err = match i.open(DialTarget::new(forbidden_addr.ip(), forbidden_addr.port())).await {
+        let err = match i
+            .open(DialTarget::new(forbidden_addr.ip(), forbidden_addr.port()))
+            .await
+        {
             Err(e) => e,
             Ok(_) => panic!("open forbidden must be rejected"),
         };
@@ -292,7 +314,10 @@ async fn acl_deny_counts_and_never_dials() {
         // ③ 会话仍健康：允许目标照常工作。
         let fwd_echo = start_local_forward(
             i.clone(),
-            LocalForwardConfig { listen_port: 0, target: DialTarget::new(echo_addr.ip(), echo_addr.port()) },
+            LocalForwardConfig {
+                listen_port: 0,
+                target: DialTarget::new(echo_addr.ip(), echo_addr.port()),
+            },
         )
         .expect("fwd echo");
         roundtrip(fwd_echo.local_addr(), 2, vec![7u8; 30_000]).await;
@@ -331,7 +356,10 @@ async fn dial_failure_counts_and_acks_2() {
             MuxError::Rejected { status, detail } => {
                 assert_eq!(*status, 2, "DIAL_FAILED status");
                 let detail = detail.as_deref().expect("dial failed detail");
-                assert!(detail.contains("dial failed"), "detail 应说明拨号失败: {detail}");
+                assert!(
+                    detail.contains("dial failed"),
+                    "detail 应说明拨号失败: {detail}"
+                );
             }
             other => panic!("expected Rejected(2), got {other:?}"),
         }
@@ -357,11 +385,15 @@ async fn session_disconnect_fails_fast_and_stops_forward() {
         let (i, r) = mux_pair().await;
         let (i, r) = (Arc::new(i), Arc::new(r));
 
-        let endpoint = start_forward_endpoint(r.clone(), ForwardAcl::new(vec![rule_for(echo_addr)]))
-            .expect("endpoint");
+        let endpoint =
+            start_forward_endpoint(r.clone(), ForwardAcl::new(vec![rule_for(echo_addr)]))
+                .expect("endpoint");
         let fwd = start_local_forward(
             i.clone(),
-            LocalForwardConfig { listen_port: 0, target: DialTarget::new(echo_addr.ip(), echo_addr.port()) },
+            LocalForwardConfig {
+                listen_port: 0,
+                target: DialTarget::new(echo_addr.ip(), echo_addr.port()),
+            },
         )
         .expect("fwd");
 
@@ -372,7 +404,9 @@ async fn session_disconnect_fails_fast_and_stops_forward() {
         i.shutdown();
 
         // 本地 fail-fast：新连接立刻被关闭（会话未建立路径）。
-        let mut c = TcpStream::connect(fwd.local_addr()).await.expect("connect after shutdown");
+        let mut c = TcpStream::connect(fwd.local_addr())
+            .await
+            .expect("connect after shutdown");
         let mut buf = [0u8; 8];
         let n = tokio::time::timeout(Duration::from_secs(3), c.read(&mut buf))
             .await

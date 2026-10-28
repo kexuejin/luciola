@@ -244,7 +244,12 @@ impl SecureSendHalf {
 ///
 /// Shared by [`SecureStream`] and the `into_split` halves — the two `write_all`
 /// calls stay together so the wire format is identical everywhere.
-async fn write_frame<W>(sink: &mut W, cipher: &Aes256Gcm, counter: u64, plaintext: &[u8]) -> Result<(), LinkError>
+async fn write_frame<W>(
+    sink: &mut W,
+    cipher: &Aes256Gcm,
+    counter: u64,
+    plaintext: &[u8],
+) -> Result<(), LinkError>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {

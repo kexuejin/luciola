@@ -1,9 +1,9 @@
-//! T2 forward —— 本地端口转发与服务端 ACL 白名单（the tunnel plan §2.3）。
+//! forward —— 本地端口转发与服务端 ACL 白名单。
 //!
 //! 两端分工：
 //!
-//! - **LocalForward**（initiator 侧）：监听 `127.0.0.1:<listen_port>`（D6：只绑环回，
-//!   不对外暴露），每个入站 TCP 连接经 `MuxSession::open()` 建一条 mux 通道，
+//! - **LocalForward**（initiator 侧）：监听 `127.0.0.1:<listen_port>`（只绑环回，
+//!   不对外暴露：本地转发入口不鉴权，绑 `0.0.0.0` 等于向全 LAN 开放未加密隧道），每个入站 TCP 连接经 `MuxSession::open()` 建一条 mux 通道，
 //!   与对端 `target` 双向拷贝。会话未建立/被拒时立即关闭本地连接（fail-fast，
 //!   浏览器自行重试）。
 //! - **ForwardEndpoint**（responder 侧）：`accept_open()` 循环，把每个 OPEN 请求
@@ -106,9 +106,15 @@ impl ForwardRule {
             }
         };
         if from > to {
-            return Err(TunnelError::InvalidRule(format!("{spec} (port_from > port_to)")));
+            return Err(TunnelError::InvalidRule(format!(
+                "{spec} (port_from > port_to)"
+            )));
         }
-        Ok(Self { host, port_from: from, port_to: to })
+        Ok(Self {
+            host,
+            port_from: from,
+            port_to: to,
+        })
     }
 }
 
@@ -126,9 +132,9 @@ impl ForwardAcl {
     /// 是否放行。IP 经 `::ffff:v4` 映射标准化后按精确值比较（spec §2.3）。
     pub fn allows(&self, target: &DialTarget) -> bool {
         let host = normalize_ip(target.host);
-        self.rules
-            .iter()
-            .any(|r| normalize_ip(r.host) == host && (r.port_from..=r.port_to).contains(&target.port))
+        self.rules.iter().any(|r| {
+            normalize_ip(r.host) == host && (r.port_from..=r.port_to).contains(&target.port)
+        })
     }
 }
 
@@ -363,7 +369,12 @@ pub fn start_forward_endpoint(
 }
 
 /// 处理一个 OPEN 请求：ACL（默认拒绝）→ 拨号（dial_timeout 上限）→ grant → 双向拷贝。
-async fn serve_one(req: OpenRequest, acl: ForwardAcl, counters: Arc<ForwardCounters>, dial_timeout: Duration) {
+async fn serve_one(
+    req: OpenRequest,
+    acl: ForwardAcl,
+    counters: Arc<ForwardCounters>,
+    dial_timeout: Duration,
+) {
     let target = req.target;
 
     // ① 目标合法性（防御纵深；mux 解析阶段已挡大部分非法目标）。
@@ -387,13 +398,18 @@ async fn serve_one(req: OpenRequest, acl: ForwardAcl, counters: Arc<ForwardCount
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => {
             counters.dial_failed.fetch_add(1, Ordering::SeqCst);
-            let _ = req.deny(AckStatus::DIAL_FAILED, Some(format!("dial failed: {e}"))).await;
+            let _ = req
+                .deny(AckStatus::DIAL_FAILED, Some(format!("dial failed: {e}")))
+                .await;
             return;
         }
         Err(_) => {
             counters.dial_failed.fetch_add(1, Ordering::SeqCst);
             let _ = req
-                .deny(AckStatus::DIAL_FAILED, Some(format!("dial timeout after {dial_timeout:?}")))
+                .deny(
+                    AckStatus::DIAL_FAILED,
+                    Some(format!("dial timeout after {dial_timeout:?}")),
+                )
                 .await;
             return;
         }

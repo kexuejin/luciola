@@ -29,16 +29,19 @@ impl TestListener {
         self.0.lock().unwrap().clone()
     }
     fn count(&self, state: &str) -> usize {
-        self.0.lock()
+        self.0
+            .lock()
             .unwrap()
             .iter()
             .filter(|(s, _)| s == state)
             .count()
     }
     fn has_detail_prefix(&self, state: &str, prefix: &str) -> bool {
-        self.0.lock().unwrap().iter().any(|(s, d)| {
-            s == state && d.as_deref().is_some_and(|d| d.starts_with(prefix))
-        })
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(s, d)| s == state && d.as_deref().is_some_and(|d| d.starts_with(prefix)))
     }
 }
 
@@ -47,7 +50,13 @@ impl SecureSessionListener for TestListener {
         self.0.lock().unwrap().push((state, detail));
     }
 
-    fn on_message(&self, _message: Vec<u8>, _peer_fingerprint: String, _remote_addr: Option<String>) {}
+    fn on_message(
+        &self,
+        _message: Vec<u8>,
+        _peer_fingerprint: String,
+        _remote_addr: Option<String>,
+    ) {
+    }
 }
 
 fn wait_until(pred: impl Fn() -> bool, ms: u64) -> bool {
@@ -262,7 +271,8 @@ fn bind_conflict_reports_forward_bind_failed() {
     let r = p.dial.start_local_forward(occupied, "127.0.0.1".into(), 9);
     assert!(!r, "被占端口应同步失败");
     assert!(
-        p.dial_ev.has_detail_prefix("error", "forward_bind_failed: "),
+        p.dial_ev
+            .has_detail_prefix("error", "forward_bind_failed: "),
         "应上报 forward_bind_failed: {:?}",
         p.dial_ev.events(),
     );
@@ -284,7 +294,8 @@ fn endpoint_acl_denies_counted_not_forwarded() {
     let r = p.listen.enable_forward_endpoint(vec![]);
     assert!(!r, "空规则应被拒");
     assert!(
-        p.listen_ev.has_detail_prefix("error", "invalid forward rule"),
+        p.listen_ev
+            .has_detail_prefix("error", "invalid forward rule"),
         "空规则错误应上报: {:?}",
         p.listen_ev.events(),
     );
@@ -306,10 +317,7 @@ fn endpoint_acl_denies_counted_not_forwarded() {
     assert!(p.dial.start_local_forward(l, "127.0.0.1".into(), upstream));
     let addr: std::net::SocketAddr = format!("127.0.0.1:{l}").parse().unwrap();
     let bound = wait_until(
-        || {
-            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1))
-                .is_ok()
-        },
+        || std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1)).is_ok(),
         30_000,
     );
     assert!(bound, "本地监听未就绪");
@@ -359,7 +367,9 @@ fn wrong_role_no_base_and_invalid_target_rejected_synchronously() {
 
     // Listen 角色调本地转发 → RoleMismatch。
     let before = p.listen_ev.count("error");
-    let r = p.listen.start_local_forward(free_port(), "127.0.0.1".into(), 9);
+    let r = p
+        .listen
+        .start_local_forward(free_port(), "127.0.0.1".into(), 9);
     assert!(!r, "Listen 角色不该能注册本地转发");
     assert_eq!(p.listen_ev.count("error"), before + 1);
 
@@ -372,7 +382,9 @@ fn wrong_role_no_base_and_invalid_target_rejected_synchronously() {
 
     // 非法目标 host → InvalidTarget。
     let before = p.dial_ev.count("error");
-    let r = p.dial.start_local_forward(free_port(), "not-an-ip".into(), 9);
+    let r = p
+        .dial
+        .start_local_forward(free_port(), "not-an-ip".into(), 9);
     assert!(!r);
     assert_eq!(p.dial_ev.count("error"), before + 1);
     assert!(p.dial_ev.has_detail_prefix("error", "invalid target"));
@@ -445,10 +457,7 @@ fn stop_releases_port_and_disconnect_pauses_tunnel() {
         p.dial.forward_stats(),
     );
     let refused = wait_until(
-        || {
-            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1))
-                .is_err()
-        },
+        || std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1)).is_err(),
         15_000,
     );
     assert!(refused, "暂停后本地端口应拒绝连接");

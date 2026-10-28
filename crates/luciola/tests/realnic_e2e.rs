@@ -7,8 +7,8 @@
 //!
 //! 环境不具备（无真实网卡/无 GUA）时优雅跳过——与"测试不许依赖环境"的纪律一致。
 
-use luciola::link::secure::{accept_secure, connect_secure};
 use luciola::link::bind_dual_stack_listener;
+use luciola::link::secure::{accept_secure, connect_secure};
 use luciola::proto::{DeviceType, Profile};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
 use network_interface::NetworkInterfaceConfig;
@@ -136,7 +136,12 @@ async fn real_nic_keyed_beacon_and_link_local_channel() {
 
     let mut client = tokio::time::timeout(
         Duration::from_secs(8),
-        connect_secure(&dial_target, channel_port, &b_identity.seed, &a_identity.public_key),
+        connect_secure(
+            &dial_target,
+            channel_port,
+            &b_identity.seed,
+            &a_identity.public_key,
+        ),
     )
     .await
     .expect("secure dial over real NIC must not hang")
@@ -184,9 +189,8 @@ async fn real_nic_legacy_beacon_without_public_key() {
 
     let seed_a = a_identity.seed.clone();
     let key_b = b_identity.public_key.clone();
-    let accept_task = tokio::spawn(async move {
-        accept_secure(&channel_listener, &seed_a, Some(&key_b)).await
-    });
+    let accept_task =
+        tokio::spawn(async move { accept_secure(&channel_listener, &seed_a, Some(&key_b)).await });
 
     let mut profile_b = test_profile("modern_B", Some(b_identity.public_key.clone()));
     profile_b.tcp_port = 0;
@@ -226,7 +230,12 @@ async fn real_nic_legacy_beacon_without_public_key() {
     // 带外已知公钥（等价于二维码扫码得来的 pin）照常建链。
     let mut client = tokio::time::timeout(
         Duration::from_secs(8),
-        connect_secure(&found.ip, channel_port, &b_identity.seed, &a_identity.public_key),
+        connect_secure(
+            &found.ip,
+            channel_port,
+            &b_identity.seed,
+            &a_identity.public_key,
+        ),
     )
     .await
     .expect("dial must not hang")

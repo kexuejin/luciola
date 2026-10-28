@@ -1,13 +1,13 @@
-//! mux v1 —— 在一条 SecureStream 上复用多路 LAN TCP 通道（the tunnel plan §1 线协议 + §2.2 核心 API）。
+//! mux v1 —— 在一条 SecureStream 上复用多路 LAN TCP 通道。
 //!
-//! 设计要点（全部对应 spec 条目）：
+//! 设计要点：
 //!
 //! - 12 字节帧头：MX | ver 0x01 | type | ch_id(u32be) | payload_len(u32be)；
-//!   解码器按协议常量 MAX_DATA_FRAME = 64KiB 校验长度，越界即结构性违规（D9）。
+//!   解码器按协议常量 MAX_DATA_FRAME = 64KiB 校验长度，越界即结构性违规（终止会话）。
 //! - 通道 ID：Initiator 奇数分配（1,3,5,…）且单调不复用；v1 收到偶数 ch_id 的
-//!   通道帧 = 结构性违规，终止会话（D8/D9，v2 反向转发时按方向放宽）。
-//! - grant 先把通道置 Active、再写 ACK(0)（§1.3 顺序）；OPEN_ACK(非0) 是终态帧，
-//!   只回收通道、不补发 CLOSE。
+//!   通道帧 = 结构性违规，终止会话（v2 反向转发时按方向放宽）。
+//! - grant 先把通道置 Active、再写 ACK(0)（顺序反了会让对端在 ACK 前写入 DATA
+//!   被判违规）；OPEN_ACK(非0) 是终态帧，只回收通道、不补发 CLOSE。
 //! - 终止是幂等的：terminate(reason) 首次触发者生效，避免 CLOSE 互踢循环；
 //!   会话级关闭 = CLOSE(type 0x05, ch_id 0, reason)。
 //! - 级联停顿硬超时（§1.4）：通道入站队列 send 超过 stall_hard_timeout →
@@ -29,8 +29,8 @@ use std::time::Duration;
 
 use luciola::link::secure::{SecureRecvHalf, SecureSendHalf, SecureStream};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::{mpsc, oneshot, watch};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::PollSender;
 use tracing::{debug, warn};
 
@@ -98,7 +98,10 @@ impl DialTarget {
     }
 
     pub fn from_addr(addr: std::net::SocketAddr) -> Self {
-        Self { host: addr.ip(), port: addr.port() }
+        Self {
+            host: addr.ip(),
+            port: addr.port(),
+        }
     }
 
     /// §1.2 目标合法性（解析阶段与 responder 侧 OPEN 校验共用）：
@@ -211,13 +214,32 @@ impl MuxConfig {
 /// 解码后的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
-    Open { ch_id: u32, host: String, port: u16 },
-    Ack { ch_id: u32, status: u8, detail: Option<String> },
-    Data { ch_id: u32, bytes: Vec<u8> },
-    Eof { ch_id: u32 },
-    Close { ch_id: u32, reason: u8 },
+    Open {
+        ch_id: u32,
+        host: String,
+        port: u16,
+    },
+    Ack {
+        ch_id: u32,
+        status: u8,
+        detail: Option<String>,
+    },
+    Data {
+        ch_id: u32,
+        bytes: Vec<u8>,
+    },
+    Eof {
+        ch_id: u32,
+    },
+    Close {
+        ch_id: u32,
+        reason: u8,
+    },
     /// PING/PONG/WINDOW（保留类型，ch_id 0）：读侧直接忽略。
-    Reserved { ftype: u8, ch_id: u32 },
+    Reserved {
+        ftype: u8,
+        ch_id: u32,
+    },
 }
 
 /// 编码一帧。payload 不得超过 MAX_DATA_FRAME（DATA 分片在 poll_write 内完成）。
@@ -300,9 +322,16 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame, MuxError> {
             } else {
                 None
             };
-            Ok(Frame::Ack { ch_id, status, detail })
+            Ok(Frame::Ack {
+                ch_id,
+                status,
+                detail,
+            })
         }
-        T_DATA => Ok(Frame::Data { ch_id, bytes: payload.to_vec() }),
+        T_DATA => Ok(Frame::Data {
+            ch_id,
+            bytes: payload.to_vec(),
+        }),
         T_EOF => {
             if !payload.is_empty() {
                 return proto_err("eof: payload must be empty");
@@ -313,7 +342,10 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame, MuxError> {
             if payload.len() != 1 {
                 return proto_err("close: payload must be exactly one reason byte");
             }
-            Ok(Frame::Close { ch_id, reason: payload[0] })
+            Ok(Frame::Close {
+                ch_id,
+                reason: payload[0],
+            })
         }
         T_PING | T_PONG | T_WINDOW => Ok(Frame::Reserved { ftype, ch_id }),
         other => proto_err(format!("unknown frame type {:#04x}", other)),
@@ -463,7 +495,10 @@ impl Inner {
 /// 若表内条目仍是 dead 指向的那一个，则移除并置位 dead（可选向通道队列推一条终态消息）。
 fn remove_entry(inner: &Inner, ch_id: u32, dead: &Arc<AtomicBool>, push: Option<MuxInbound>) {
     let mut table = inner.table.lock().unwrap();
-    let is_same = table.get(&ch_id).map(|e| Arc::ptr_eq(&e.dead, dead)).unwrap_or(false);
+    let is_same = table
+        .get(&ch_id)
+        .map(|e| Arc::ptr_eq(&e.dead, dead))
+        .unwrap_or(false);
     if is_same {
         if let Some(entry) = table.remove(&ch_id) {
             entry.dead.store(true, Ordering::SeqCst);
@@ -530,7 +565,12 @@ impl OpenRequest {
         if status == AckStatus::OK || status > AckStatus::BAD_TARGET {
             // 非法状态：按已答复处理并回收通道——既不回帧、也不触发 Drop 自动 deny(2)
             self.answered = true;
-            remove_entry(&self.inner, self.ch_id, &entry_dead_marker(&self.inner, self.ch_id), None);
+            remove_entry(
+                &self.inner,
+                self.ch_id,
+                &entry_dead_marker(&self.inner, self.ch_id),
+                None,
+            );
             return Err(MuxError::InvalidAckStatus(status));
         }
         self.answered = true;
@@ -540,7 +580,11 @@ impl OpenRequest {
         // 永不匹配的死 Arc，等价 no-op。
         remove_entry(inner, ch_id, &entry_dead_marker(inner, ch_id), None);
         let payload = encode_ack_payload(status, detail.as_deref());
-        match inner.ctrl_tx.send(encode_frame(T_ACK, ch_id, &payload)).await {
+        match inner
+            .ctrl_tx
+            .send(encode_frame(T_ACK, ch_id, &payload))
+            .await
+        {
             Ok(()) => Ok(()),
             Err(_) => Err(MuxError::SessionClosed),
         }
@@ -570,7 +614,10 @@ impl Drop for OpenRequest {
 // same-entry 判定，这里取一次当前 dead（若无条目则用一个新 Arc 永不匹配，等价 no-op）。
 fn entry_dead_marker(inner: &Inner, ch_id: u32) -> Arc<AtomicBool> {
     let table = inner.table.lock().unwrap();
-    table.get(&ch_id).map(|e| e.dead.clone()).unwrap_or_else(|| Arc::new(AtomicBool::new(false)))
+    table
+        .get(&ch_id)
+        .map(|e| e.dead.clone())
+        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)))
 }
 
 // ---------------------------------------------------------------- MuxSession
@@ -668,7 +715,12 @@ impl MuxSession {
             let mut table = inner.table.lock().unwrap();
             table.insert(
                 ch_id,
-                Entry { state: State::Pending, in_tx, dead: dead.clone(), ack: Some(ack_tx) },
+                Entry {
+                    state: State::Pending,
+                    in_tx,
+                    dead: dead.clone(),
+                    ack: Some(ack_tx),
+                },
             );
         }
         inner.opened_total.fetch_add(1, Ordering::SeqCst);
@@ -683,7 +735,11 @@ impl MuxSession {
             Err(_) => {
                 // 超时放弃：回收通道并补发 CLOSE(upstream_reset)，防对端孤儿条目（§1.3）
                 remove_entry(inner, ch_id, &dead, None);
-                let _ = inner.ctrl_tx.try_send(encode_frame(T_CLOSE, ch_id, &[CloseReason::UPSTREAM_RESET]));
+                let _ = inner.ctrl_tx.try_send(encode_frame(
+                    T_CLOSE,
+                    ch_id,
+                    &[CloseReason::UPSTREAM_RESET],
+                ));
                 Err(MuxError::OpenTimeout(inner.cfg.open_timeout))
             }
             Ok(Ok(Ok(()))) => Ok(MuxStream::new(ch_id, inner.clone(), in_rx, dead)),
@@ -728,7 +784,10 @@ impl MuxSession {
     pub fn stats(&self) -> MuxStats {
         let table = self.inner.table.lock().unwrap();
         let open = table.values().filter(|e| e.state == State::Active).count();
-        MuxStats { channels_open: open, channels_total: self.inner.opened_total.load(Ordering::SeqCst) }
+        MuxStats {
+            channels_open: open,
+            channels_total: self.inner.opened_total.load(Ordering::SeqCst),
+        }
     }
 
     /// 会话配置（只读快照）。
@@ -827,7 +886,11 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
             // 锁内只做准入决策（无 await），事件全部在锁外发送；
             // 队列容量 ≥ max_channels，正常路径下表长永远够。
             #[derive(Clone, Copy, PartialEq)]
-            enum Admit { Pass, Limit, Dup }
+            enum Admit {
+                Pass,
+                Limit,
+                Dup,
+            }
             let admit = {
                 use std::collections::hash_map::Entry as MapEntry;
                 let mut table = inner.table.lock().unwrap();
@@ -837,7 +900,12 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
                     match table.entry(ch_id) {
                         MapEntry::Occupied(_) => Admit::Dup,
                         MapEntry::Vacant(v) => {
-                            v.insert(Entry { state: State::Pending, in_tx, dead: dead.clone(), ack: None });
+                            v.insert(Entry {
+                                state: State::Pending,
+                                in_tx,
+                                dead: dead.clone(),
+                                ack: None,
+                            });
                             Admit::Pass
                         }
                     }
@@ -845,28 +913,47 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
             };
             match admit {
                 Admit::Limit => {
-                    send_ctrl(inner, encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT])).await;
+                    send_ctrl(
+                        inner,
+                        encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
+                    )
+                    .await;
                     return Ok(());
                 }
                 Admit::Dup => {
                     // 重复 ch_id：不复用旧通道，回 OPEN_ACK(4)（§1.2 bad_target）
-                    let payload = encode_ack_payload(AckStatus::BAD_TARGET, Some("duplicate channel id"));
+                    let payload =
+                        encode_ack_payload(AckStatus::BAD_TARGET, Some("duplicate channel id"));
                     send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
                     return Ok(());
                 }
                 Admit::Pass => {}
             }
             inner.opened_total.fetch_add(1, Ordering::SeqCst);
-            let req = OpenRequest { target, ch_id, rx: Some(in_rx), inner: inner.clone(), answered: false };
+            let req = OpenRequest {
+                target,
+                ch_id,
+                rx: Some(in_rx),
+                inner: inner.clone(),
+                answered: false,
+            };
             if inner.open_req_tx.try_send(req).is_err() {
                 // 不应发生（队列容量 ≥ max_channels）；兜底按 channel_limit 终态回收。
                 remove_entry(inner, ch_id, &dead, None);
-                send_ctrl(inner, encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT])).await;
+                send_ctrl(
+                    inner,
+                    encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
+                )
+                .await;
             }
             Ok(())
         }
 
-        Frame::Ack { ch_id, status, detail } => {
+        Frame::Ack {
+            ch_id,
+            status,
+            detail,
+        } => {
             // 方向：ACK 只能 Responder → Initiator。
             if inner.role == Role::Responder {
                 return Err(());
@@ -958,7 +1045,10 @@ async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Re
         Target::Pending => Err(()), // OPEN_ACK 前收到通道帧 → 结构性违规（§1.3/D9）
         Target::Unknown => {
             if matches!(msg, MuxInbound::Data(_)) {
-                let _ = inner.ctrl_tx.try_send(encode_frame(T_CLOSE, ch_id, &[CloseReason::NORMAL]));
+                let _ =
+                    inner
+                        .ctrl_tx
+                        .try_send(encode_frame(T_CLOSE, ch_id, &[CloseReason::NORMAL]));
             }
             Ok(())
         }
@@ -989,9 +1079,11 @@ async fn deliver(
                 inner.cfg.stall_hard_timeout
             );
             remove_entry(inner, ch_id, &dead, None);
-            let _ = inner
-                .ctrl_tx
-                .try_send(encode_frame(T_CLOSE, ch_id, &[CloseReason::UPSTREAM_RESET]));
+            let _ = inner.ctrl_tx.try_send(encode_frame(
+                T_CLOSE,
+                ch_id,
+                &[CloseReason::UPSTREAM_RESET],
+            ));
         }
     }
 }
@@ -1059,9 +1151,24 @@ pub struct MuxStream {
 }
 
 impl MuxStream {
-    fn new(ch_id: u32, inner: Arc<Inner>, rx: mpsc::Receiver<MuxInbound>, dead: Arc<AtomicBool>) -> Self {
+    fn new(
+        ch_id: u32,
+        inner: Arc<Inner>,
+        rx: mpsc::Receiver<MuxInbound>,
+        dead: Arc<AtomicBool>,
+    ) -> Self {
         let data = PollSender::new(inner.data_tx.clone());
-        Self { ch_id, inner, rx, dead, data, read_buf: None, read_state: ReadState::Running, write_eof: false, got_close: false }
+        Self {
+            ch_id,
+            inner,
+            rx,
+            dead,
+            data,
+            read_buf: None,
+            read_state: ReadState::Running,
+            write_eof: false,
+            got_close: false,
+        }
     }
 
     /// 通道 ID（奇数；D8）。
@@ -1076,7 +1183,11 @@ impl MuxStream {
 }
 
 impl AsyncRead for MuxStream {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         // 上一帧 DATA 的剩余字节（帧可大于本次读缓冲）
         if let Some((data, off)) = &mut this.read_buf {
@@ -1104,7 +1215,10 @@ impl AsyncRead for MuxStream {
                 Poll::Ready(None) => {
                     // 队列发送端全部消失：条目已被回收
                     this.read_state = ReadState::Reset("channel closed");
-                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "channel closed")));
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "channel closed",
+                    )));
                 }
                 Poll::Ready(Some(msg)) => match msg {
                     MuxInbound::Data(bytes) => {
@@ -1134,17 +1248,25 @@ impl AsyncRead for MuxStream {
                     MuxInbound::Close(reason) => {
                         this.got_close = true;
                         let why: &'static str = match reason {
-                            CloseReason::PROTOCOL_VIOLATION => "channel closed by peer (protocol violation)",
+                            CloseReason::PROTOCOL_VIOLATION => {
+                                "channel closed by peer (protocol violation)"
+                            }
                             CloseReason::UPSTREAM_RESET => "upstream reset",
                             CloseReason::SESSION_SHUTDOWN => "session shutdown",
                             _ => "channel closed",
                         };
                         this.read_state = ReadState::Reset(why);
-                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, why)));
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::ConnectionReset,
+                            why,
+                        )));
                     }
                     MuxInbound::SessionDown => {
                         this.read_state = ReadState::Reset("session shutdown");
-                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionAborted, "session shutdown")));
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::ConnectionAborted,
+                            "session shutdown",
+                        )));
                     }
                 },
             }
@@ -1153,13 +1275,23 @@ impl AsyncRead for MuxStream {
 }
 
 impl AsyncWrite for MuxStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         if this.write_eof {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, "write after poll_shutdown")));
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "write after poll_shutdown",
+            )));
         }
         if this.dead.load(Ordering::SeqCst) {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "channel closed")));
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "channel closed",
+            )));
         }
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
@@ -1168,12 +1300,18 @@ impl AsyncWrite for MuxStream {
         let n = buf.len().min(this.inner.cfg.max_data_frame);
         match this.data.poll_reserve(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(_)) => Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "session writer stopped"))),
+            Poll::Ready(Err(_)) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "session writer stopped",
+            ))),
             Poll::Ready(Ok(())) => {
                 let frame = encode_frame(T_DATA, this.ch_id, &buf[..n]);
                 match this.data.send_item(frame) {
                     Ok(()) => Poll::Ready(Ok(n)),
-                    Err(_) => Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "session writer stopped"))),
+                    Err(_) => Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "session writer stopped",
+                    ))),
                 }
             }
         }
@@ -1229,7 +1367,14 @@ mod tests {
         let f = encode_frame(T_OPEN, 1, &encode_open_payload(&target));
         assert_eq!(f.len(), HEADER_LEN + 1 + 9 + 2);
         let dec = decode_frame(&f).unwrap();
-        assert_eq!(dec, Frame::Open { ch_id: 1, host: "127.0.0.1".into(), port: 3080 });
+        assert_eq!(
+            dec,
+            Frame::Open {
+                ch_id: 1,
+                host: "127.0.0.1".into(),
+                port: 3080
+            }
+        );
     }
 
     #[test]
@@ -1249,29 +1394,67 @@ mod tests {
     #[test]
     fn codec_roundtrip_data_eof_close() {
         let f = encode_frame(T_DATA, 7, &[0u8, 1, 2, 255]);
-        assert_eq!(decode_frame(&f).unwrap(), Frame::Data { ch_id: 7, bytes: vec![0, 1, 2, 255] });
+        assert_eq!(
+            decode_frame(&f).unwrap(),
+            Frame::Data {
+                ch_id: 7,
+                bytes: vec![0, 1, 2, 255]
+            }
+        );
 
         let f = encode_frame(T_EOF, 9, &[]);
         assert_eq!(decode_frame(&f).unwrap(), Frame::Eof { ch_id: 9 });
 
         let f = encode_frame(T_CLOSE, 0, &[CloseReason::SESSION_SHUTDOWN]);
-        assert_eq!(decode_frame(&f).unwrap(), Frame::Close { ch_id: 0, reason: 3 });
+        assert_eq!(
+            decode_frame(&f).unwrap(),
+            Frame::Close {
+                ch_id: 0,
+                reason: 3
+            }
+        );
     }
 
     #[test]
     fn codec_roundtrip_ack_with_and_without_detail() {
         let f = encode_frame(T_ACK, 1, &encode_ack_payload(AckStatus::OK, None));
-        assert_eq!(decode_frame(&f).unwrap(), Frame::Ack { ch_id: 1, status: 0, detail: None });
-
-        let f = encode_frame(T_ACK, 1, &encode_ack_payload(AckStatus::DIAL_FAILED, Some("no route")));
         assert_eq!(
             decode_frame(&f).unwrap(),
-            Frame::Ack { ch_id: 1, status: 2, detail: Some("no route".into()) }
+            Frame::Ack {
+                ch_id: 1,
+                status: 0,
+                detail: None
+            }
+        );
+
+        let f = encode_frame(
+            T_ACK,
+            1,
+            &encode_ack_payload(AckStatus::DIAL_FAILED, Some("no route")),
+        );
+        assert_eq!(
+            decode_frame(&f).unwrap(),
+            Frame::Ack {
+                ch_id: 1,
+                status: 2,
+                detail: Some("no route".into())
+            }
         );
 
         // §1.1：acl_denied 不附 detail，即使尝试附带也在编码期丢弃
-        let f = encode_frame(T_ACK, 1, &encode_ack_payload(AckStatus::ACL_DENIED, Some("secret")));
-        assert_eq!(decode_frame(&f).unwrap(), Frame::Ack { ch_id: 1, status: 1, detail: None });
+        let f = encode_frame(
+            T_ACK,
+            1,
+            &encode_ack_payload(AckStatus::ACL_DENIED, Some("secret")),
+        );
+        assert_eq!(
+            decode_frame(&f).unwrap(),
+            Frame::Ack {
+                ch_id: 1,
+                status: 1,
+                detail: None
+            }
+        );
     }
 
     #[test]
@@ -1298,7 +1481,10 @@ mod tests {
     #[test]
     fn decode_rejects_truncation() {
         let f = encode_frame(T_DATA, 1, &[1, 2, 3]);
-        assert!(matches!(decode_frame(&f[..HEADER_LEN + 2]), Err(MuxError::Protocol(_))));
+        assert!(matches!(
+            decode_frame(&f[..HEADER_LEN + 2]),
+            Err(MuxError::Protocol(_))
+        ));
         assert!(matches!(decode_frame(&f[..4]), Err(MuxError::Protocol(_))));
     }
 
@@ -1352,7 +1538,7 @@ mod tests {
         assert!(!ok("224.0.0.1", 80)); // 组播
         assert!(!ok("ff02::1", 80));
         assert!(!ok("255.255.255.255", 80)); // 广播
-        // 方括号/zone 形式不是合法 IP 字面量，parse 即失败
+                                             // 方括号/zone 形式不是合法 IP 字面量，parse 即失败
         assert!("[::1]:80".parse::<IpAddr>().is_err());
         assert!("fe80::1%eth0".parse::<IpAddr>().is_err());
     }

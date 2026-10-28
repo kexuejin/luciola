@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-use luciola::link::secure::{SecureStream, accept_secure, connect_secure};
+use luciola::link::secure::{accept_secure, connect_secure, SecureStream};
 use luciola::trust::identity_from_seed;
 use luciola_tunnel::{decode_frame, encode_frame, DialTarget, Frame, MuxConfig, MuxSession, Role};
 
@@ -24,16 +24,23 @@ pub async fn secure_pair() -> (SecureStream, SecureStream) {
     let addr = listener.local_addr().expect("addr");
     let pin_r = identity_from_seed(&SEED_R).public_key;
     let pin_i = identity_from_seed(&SEED_I).public_key;
-    let server = tokio::spawn(async move { accept_secure(&listener, &SEED_R, Some(&pin_i[..])).await });
+    let server =
+        tokio::spawn(async move { accept_secure(&listener, &SEED_R, Some(&pin_i[..])).await });
     let client = connect_secure(&addr.ip().to_string(), addr.port(), &SEED_I, &pin_r[..])
         .await
         .expect("handshake");
-    let server = server.await.expect("accept task").expect("accept handshake");
+    let server = server
+        .await
+        .expect("accept task")
+        .expect("accept handshake");
     (client, server)
 }
 
 pub fn fast_cfg() -> MuxConfig {
-    MuxConfig { open_timeout: Duration::from_millis(1500), ..Default::default() }
+    MuxConfig {
+        open_timeout: Duration::from_millis(1500),
+        ..Default::default()
+    }
 }
 
 pub async fn mux_pair_cfg(cfg: MuxConfig) -> (MuxSession, MuxSession) {

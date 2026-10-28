@@ -4,7 +4,7 @@
 //! reliable, ordered, message-oriented channel (in practice a
 //! `luciola::link::secure::SecureStream`).
 //!
-//! Design invariants (see the refactoring plan Phase 4):
+//! Design invariants:
 //! - the receiver writes every chunk at its **absolute offset** — arrival
 //!   order is irrelevant, duplicates are idempotent, nothing is appended
 //!   blindly;

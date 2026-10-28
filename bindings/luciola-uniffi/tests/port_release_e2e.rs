@@ -1,7 +1,7 @@
-//! 消费方仓库 `jvmAcceptanceTest` 端口释放断言在 Rust/uniffi 层的复现:
-//! `SecureSession.listen(P)` → 连接 → 传数据 → `stop()` → 一个**不带
-//! SO_REUSEADDR** 的裸 bind 必须能在 5 秒内重新占用 P。
-//! (验收探针就是 Kotlin 的 `ServerSocket(port)`。)
+//! Port-release contract at the Rust/uniffi layer: `SecureSession.listen(P)` →
+//! connect → transfer → `stop()` → a plain bind **without SO_REUSEADDR** must be
+//! able to reclaim P within 5 seconds. (The consumer acceptance probe is a Kotlin
+//! `ServerSocket(port)`.)
 
 use luciola_uniffi::{generate_device_identity, SecureSession, SecureSessionListener};
 use std::sync::Arc;

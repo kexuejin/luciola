@@ -2,16 +2,16 @@ use clap::{Parser, Subcommand};
 use luciola::link::bind_dual_stack_listener;
 use luciola::link::secure::{accept_secure, connect_secure_raced};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
+use luciola_net::NetworkDetector;
+use luciola_proto::Profile;
 use luciola_tunnel::{
     start_forward_endpoint, start_local_forward, DialTarget, ForwardAcl, ForwardRule,
     LocalForwardConfig, MuxConfig, MuxSession, Role,
 };
-use std::net::IpAddr;
-use std::sync::Arc;
-use luciola_net::NetworkDetector;
-use luciola_proto::Profile;
 use qrcode::render::unicode;
 use qrcode::QrCode;
+use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 #[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -80,7 +80,7 @@ enum Commands {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
     },
-    /// 端口隧道：secure 链路上的 LAN TCP 转发（the tunnel plan r4 §2.3）
+    /// 端口隧道：secure 链路上的 LAN TCP 转发
     Forward {
         #[command(subcommand)]
         action: ForwardCommands,
@@ -500,7 +500,7 @@ async fn run_agent(_socket_path: &str, _port: u16) -> Result<(), Box<dyn std::er
     Err("the discovery agent requires unix domain sockets (unix platforms only)".into())
 }
 
-// =========================== T2 端口隧道（the tunnel plan r4 §2.3） ===========================
+// =========================== 端口隧道（forward） ===========================
 
 /// hex 解码（CLI 不引入额外依赖的最小实现）。
 fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
@@ -671,7 +671,10 @@ async fn forward_dial(
     let seed = parse_seed(seed_hex)?;
     let pin = parse_pin(pin_peer)?;
     let addrs = vec![host];
-    println!("local_pub={}", encode_hex(&luciola::trust::identity_from_seed(&seed).public_key));
+    println!(
+        "local_pub={}",
+        encode_hex(&luciola::trust::identity_from_seed(&seed).public_key)
+    );
 
     let mut backoff = Duration::from_millis(500);
     loop {
@@ -696,7 +699,10 @@ async fn forward_dial(
                         std::process::exit(1);
                     }
                 };
-                println!("forward_ready listen={} target={target}", guard.local_addr());
+                println!(
+                    "forward_ready listen={} target={target}",
+                    guard.local_addr()
+                );
 
                 let peer_closed = tokio::select! {
                     _ = session.wait_closed() => session.peer_closed(),

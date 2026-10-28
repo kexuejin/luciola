@@ -1,25 +1,26 @@
 //! luciola-tunnel — 在单条 SecureStream 上做 LAN TCP 复用与转发。
 //!
-//! 按 the tunnel plan（rev r4）实施：
+//! 三个模块：
 //!
-//! - Phase T1（本 crate 核心）：mux 模块 —— 12 字节帧头的 mux v1 协议、
-//!   会话/通道状态机、MuxSession / MuxStream / OpenRequest。
-//! - Phase T2：forward 模块 —— 本地端口转发与服务端 ACL 白名单。
-//! - Phase T3：tunnel_link 模块 —— 隧道链路控制面（cmd + supervisor 双线程，//!   懒建立/退避重建/注册表恢复），uniffi 与 node 两个绑定层复用。
+//! - mux（本 crate 核心）：12 字节帧头的 mux v1 协议、会话/通道状态机、
+//!   MuxSession / MuxStream / OpenRequest。
+//! - forward：本地端口转发与服务端 ACL 白名单。
+//! - tunnel_link：隧道链路控制面（cmd + supervisor 双线程，懒建立/退避重建/
+//!   注册表恢复），uniffi 与 node 两个绑定层复用它。
 //!
 //! # 调度前提
 //!
 //! MuxSession::start 内部会 tokio::spawn reader/writer 任务，
 //! start_local_forward / start_forward_endpoint 在调用处捕获 Handle ——
-//! 全部必须在 tokio runtime 上下文中调用（spec §2.2/§2.3）。
+//! 全部必须在 tokio runtime 上下文中调用。
 
 pub mod forward;
 pub mod mux;
 pub mod tunnel_link;
 
 pub use forward::{
-    ForwardAcl, ForwardCounters, ForwardEndpointGuard, ForwardRule, ForwardStatus, LocalForwardConfig,
-    LocalForwardGuard, start_forward_endpoint, start_local_forward,
+    start_forward_endpoint, start_local_forward, ForwardAcl, ForwardCounters, ForwardEndpointGuard,
+    ForwardRule, ForwardStatus, LocalForwardConfig, LocalForwardGuard,
 };
 pub use mux::{
     decode_frame, encode_frame, AckStatus, CloseReason, DialTarget, Frame, MuxConfig, MuxError,
