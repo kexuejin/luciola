@@ -1,5 +1,7 @@
 # Luciola (萤火) — Resilient LAN Peer Discovery & Secure Local Connections
 
+[![CI](https://github.com/kexuejin/luciola/actions/workflows/ci.yml/badge.svg)](https://github.com/kexuejin/luciola/actions/workflows/ci.yml)
+
 **A Rust-powered local-network engine for real-world conditions**: discover peers on a LAN, race the best connection path, and move data over authenticated encrypted channels — even behind Clash/Sing-box TUN VPNs, on China-broadband IPv6-only setups, across ZeroTier/Tailscale overlays, and through routers that break multicast.
 
 Luciola is the foundation layer for **local-first apps** — LAN clipboard sync, direct file transfer, screen sharing, local AI companions — so every product doesn't reinvent (and mis-debug) LAN networking. One Rust core, first-class bindings for **Kotlin Multiplatform (Android/JVM), iOS/Swift, and Node.js/Electron**.
@@ -50,23 +52,56 @@ cargo run -p luciola-cli -- forward dial --listen 3080 --connect <peer-ip>:3001 
 cargo run -p luciola-cli -- forward pin --seed <hex>  # derive public key & PIN
 ```
 
-### Android / KMP products
+### App integration: three tiers
+
+The KMP library's cross-platform entry point is **`DiscoveryController`** in
+`commonMain` — peer table, debounced network-change rebuilds, and the watchdog —
+fed by three injected ports (`DiscoveryEnginePort`, `NetworkMonitorPort`,
+`TaskScheduler`). Each platform ships a thin shell that wires those ports:
+
+| Platform | Shell | Network monitor |
+| :-- | :-- | :-- |
+| Android | `AndroidDiscoveryController` | `AndroidNetworkMonitor` (ConnectivityManager) |
+| Desktop JVM | `DesktopDiscoveryController` | `DesktopNetworkMonitor` (interface polling) |
+| iOS (Kotlin) | `DiscoveryController` + `UniffiEngineAdapter` | `IosNetworkMonitor` (Network.framework path monitor) |
+| iOS (Swift) | uniffi Swift bindings (`DiscoverySession`, `SecureSession`) | your own `NWPathMonitor` — what [examples/ios-demo](examples/ios-demo) runs |
 
 ```kotlin
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("io.github.kexuejin:luciola:0.7.0")
+implementation("io.github.kexuejin:luciola:0.7.0")   // see the version note below
 
-val controller = AndroidDiscoveryController(
+// Android — convenience shell, callbacks marshalled to the main thread
+val androidController = AndroidDiscoveryController(
     context = this,
     sessionName = Build.MODEL,
     product = "my-clipboard-app",
     onPeersChanged = { peers -> /* PeerUiModel list, main thread */ },
     onEngineError = { code, msg -> /* surface bind_failed etc. */ },
 )
-controller.start()
+androidController.start()
+
+// Desktop JVM — same supervision core; polls interfaces instead of push events
+val desktopController = DesktopDiscoveryController(
+    sessionName = System.getenv("USER") ?: "desktop",
+    product = "my-app",
+    onPeersChanged = { peers -> /* PeerUiModel list, any thread */ },
+)
+desktopController.start()
+// later: desktopController.close()  — stops the engine and the timer thread
 ```
+
+> **Version note.** The repository is at **0.7.0, which is not published.**
+> Verified registry maxima (2026-10-28): Maven Central `0.4.2`, crates.io
+> `0.3.1`; `@luciola/core` was never published to npm. To consume locally,
+> build from source or publish to your own `mavenLocal()` with
+> `scripts/publish-maven-local.sh`. See [CONTRIBUTING.md](CONTRIBUTATION.md).
+
+**iOS, honestly:** the Swift path above is what runs in
+[examples/ios-demo](examples/ios-demo) (simulator-verified). The Kotlin path
+(`IosNetworkMonitor`) compiles for iosArm64/iosSimulatorArm64 in CI, but a
+device/simulator **runtime of the Kotlin iOS path has not been verified yet**.
 
 ### Node.js / Electron
 

@@ -1,5 +1,7 @@
 # Luciola (萤火) — 高韧性局域网对等发现与安全本地连接引擎
 
+[![CI](https://github.com/kexuejin/luciola/actions/workflows/ci.yml/badge.svg)](https://github.com/kexuejin/luciola/actions/workflows/ci.yml)
+
 **为真实网络环境打造的 Rust 本地网络引擎**:在局域网内发现对等设备、竞速选出最优连接路径、通过认证加密信道传输数据——在 Clash/Sing-box TUN 代理、国内宽带 IPv6-only、ZeroTier/Tailscale 虚拟网络、以及不转发多播的路由器面前依然可用。
 
 Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输、投屏、本地 AI 伴侣)的底座层,让每个产品不必重复发明(并反复踩坑)局域网网络。一个 Rust 核心,**Kotlin Multiplatform(Android/JVM)、iOS/Swift、Node.js/Electron** 三方绑定均为一等公民。
@@ -50,23 +52,46 @@ cargo run -p luciola-cli -- forward dial --listen 3080 --connect <peer-ip>:3001 
 cargo run -p luciola-cli -- forward pin --seed <hex>  # 查看公钥指纹与 PIN
 ```
 
-### Android / KMP 产品接入
+### 应用接入:三端分层
+
+KMP 库的跨平台入口是 `commonMain` 里的 **`DiscoveryController`**(对等表、网络变化防抖重建、看门狗),由三个注入端口驱动(`DiscoveryEnginePort`、`NetworkMonitorPort`、`TaskScheduler`)。每个平台提供一个薄壳负责接线:
+
+| 平台 | 壳 | 网络观测 |
+| :-- | :-- | :-- |
+| Android | `AndroidDiscoveryController` | `AndroidNetworkMonitor`(ConnectivityManager) |
+| 桌面 JVM | `DesktopDiscoveryController` | `DesktopNetworkMonitor`(网卡轮询) |
+| iOS(Kotlin) | `DiscoveryController` + `UniffiEngineAdapter` | `IosNetworkMonitor`(Network.framework 路径监听) |
+| iOS(Swift) | uniffi Swift 绑定(`DiscoverySession`、`SecureSession`) | 自带 `NWPathMonitor` —— [examples/ios-demo](examples/ios-demo) 采用此路径 |
 
 ```kotlin
 // settings.gradle.kts
 dependencyResolutionManagement { repositories { mavenLocal(); google(); mavenCentral() } }
 
-implementation("io.github.kexuejin:luciola:0.7.0")
+implementation("io.github.kexuejin:luciola:0.7.0")   // 见下方版本说明
 
-val controller = AndroidDiscoveryController(
+// Android —— 便利壳,回调派发到主线程
+val androidController = AndroidDiscoveryController(
     context = this,
     sessionName = Build.MODEL,
     product = "my-clipboard-app",
     onPeersChanged = { peers -> /* PeerUiModel 列表,主线程 */ },
     onEngineError = { code, msg -> /* 上报 bind_failed 等 */ },
 )
-controller.start()
+androidController.start()
+
+// 桌面 JVM —— 同一监督核心,以网卡轮询替代推送事件
+val desktopController = DesktopDiscoveryController(
+    sessionName = System.getenv("USER") ?: "desktop",
+    product = "my-app",
+    onPeersChanged = { peers -> /* PeerUiModel 列表,任意线程 */ },
+)
+desktopController.start()
+// 之后: desktopController.close()  —— 停止引擎与计时线程
 ```
+
+> **版本说明**:仓库当前为 **0.7.0,尚未发布**(2026-10-28 实测注册表最高版:Maven Central `0.4.2`、crates.io `0.3.1`;npm 从未发布 `@luciola/core`)。本地使用请从源码构建,或用 `scripts/publish-maven-local.sh` 发布到自己的 `mavenLocal()`。见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+**iOS 的诚实边界**:上面的 Swift 路径是 [examples/ios-demo](examples/ios-demo) 实际运行的(模拟器验证);Kotlin 路径(`IosNetworkMonitor`)在 CI 里通过 iosArm64/iosSimulatorArm64 编译,但 **Kotlin iOS 路径的设备/模拟器运行时尚未验证**。
 
 ### Node.js / Electron
 
