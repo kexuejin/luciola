@@ -13,11 +13,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.7.0"
 edition = "2021"
 authors = ["Luciola Contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/luciola-p2p/luciola"
+repository = "https://github.com/kexuejin/luciola"
 readme = "README.md"
 keywords = ["p2p", "discovery", "lan", "ipv6", "peer-to-peer"]
 categories = ["network-programming", "asynchronous"]

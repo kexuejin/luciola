@@ -1,6 +1,6 @@
 {
   "name": "@luciola/core",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "description": "Lightweight, resilient LAN peer discovery and interface intelligence for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
@@ -8,7 +8,7 @@
     "name": "luciola"
   },
   "scripts": {
-    "build": "cargo build && cp $(cargo metadata --format-version 1 | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/debug/libluciola_node.dylib ./luciola.node 2>/dev/null || cp target/debug/libluciola_node.dylib ./luciola.node",
+    "build": "cargo build && cp $(cargo metadata --format-version 1 --no-deps | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/debug/libluciola_node.dylib ./luciola.node",
     "test": "node test.js && node test/forward.test.mjs"
   },
   "files": [
@@ -27,6 +27,6 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/luciola-p2p/luciola.git"
+    "url": "https://github.com/kexuejin/luciola.git"
   }
 }
