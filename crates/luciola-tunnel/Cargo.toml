@@ -1,0 +1,17 @@
+[package]
+name = "luciola-tunnel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LAN TCP multiplexing (mux v1) and forwarding over a luciola SecureStream — the tunnel plan"
+
+[dependencies]
+luciola = { path = "../luciola", version = "0.3.1" }
+tokio.workspace = true
+tokio-util.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util", "macros"] }

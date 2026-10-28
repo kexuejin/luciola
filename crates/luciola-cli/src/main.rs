@@ -1,5 +1,13 @@
 use clap::{Parser, Subcommand};
+use luciola::link::bind_dual_stack_listener;
+use luciola::link::secure::{accept_secure, connect_secure_raced};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
+use luciola_tunnel::{
+    start_forward_endpoint, start_local_forward, DialTarget, ForwardAcl, ForwardRule,
+    LocalForwardConfig, MuxConfig, MuxSession, Role,
+};
+use std::net::IpAddr;
+use std::sync::Arc;
 use luciola_net::NetworkDetector;
 use luciola_proto::Profile;
 use qrcode::render::unicode;
@@ -71,6 +79,54 @@ enum Commands {
         /// Port to use in QR URL (default: 8080)
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
+    },
+    /// 端口隧道：secure 链路上的 LAN TCP 转发（the tunnel plan r4 §2.3）
+    Forward {
+        #[command(subcommand)]
+        action: ForwardCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ForwardCommands {
+    /// Responder：监听隧道端口，按 ACL 白名单为对端拨号本机目标
+    Serve {
+        /// 隧道监听端口（0 = 系统分配）
+        #[arg(long, default_value_t = 3001)]
+        tunnel_port: u16,
+        /// 本端身份种子（hex，32 字节）
+        #[arg(long)]
+        seed: String,
+        /// 对端公钥 pin（32 字节原文 hex；"forward pin --seed" 可推导）。缺省即拒绝，无 TOFU
+        #[arg(long)]
+        pin_peer: String,
+        /// 允许拨号的目标白名单（可多次）：IP:PORT 或 IP:FROM-TO；缺省全拒绝
+        #[arg(long = "allow", required = true)]
+        allow: Vec<String>,
+    },
+    /// Initiator：本机 127.0.0.1:listen → 对端隧道 → target
+    Dial {
+        /// 本机监听端口（仅 127.0.0.1；0 = 系统分配）
+        #[arg(long, default_value_t = 3080)]
+        listen: u16,
+        /// 对端隧道地址 host:port
+        #[arg(long)]
+        connect: String,
+        /// 经隧道到达的目标地址 IP:PORT（对端机上）
+        #[arg(long)]
+        target: String,
+        /// 本端身份种子（hex，32 字节）
+        #[arg(long)]
+        seed: String,
+        /// 对端公钥 pin（32 字节原文 hex；"forward pin --seed" 可推导）
+        #[arg(long)]
+        pin_peer: String,
+    },
+    /// 从身份种子推导公钥 / 指纹 / 短码（供对端 --pin-peer 与配对展示）
+    Pin {
+        /// 本端身份种子（hex，32 字节）
+        #[arg(long)]
+        seed: String,
     },
 }
 
@@ -301,6 +357,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("========================================================");
         }
+        Commands::Forward { action } => match action {
+            ForwardCommands::Serve {
+                tunnel_port,
+                seed,
+                pin_peer,
+                allow,
+            } => forward_serve(tunnel_port, &seed, &pin_peer, allow).await?,
+            ForwardCommands::Dial {
+                listen,
+                connect,
+                target,
+                seed,
+                pin_peer,
+            } => forward_dial(listen, &connect, &target, &seed, &pin_peer).await?,
+            ForwardCommands::Pin { seed } => {
+                let id = luciola::trust::identity_from_seed(&parse_seed(&seed)?);
+                println!("public_key={}", encode_hex(&id.public_key));
+                println!("fingerprint={}", id.fingerprint);
+                println!("short_pin={}", id.short_pin);
+            }
+        },
     }
 
     Ok(())
@@ -421,4 +498,229 @@ async fn handle_agent_client(
 #[cfg(not(unix))]
 async fn run_agent(_socket_path: &str, _port: u16) -> Result<(), Box<dyn std::error::Error>> {
     Err("the discovery agent requires unix domain sockets (unix platforms only)".into())
+}
+
+// =========================== T2 端口隧道（the tunnel plan r4 §2.3） ===========================
+
+/// hex 解码（CLI 不引入额外依赖的最小实现）。
+fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
+    let s = s.trim();
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
+        return Err(format!("hex 必须是偶数长度的 ASCII：{s}"));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string()))
+        .collect()
+}
+
+/// hex 编码（`forward pin` 与启动行输出）。
+fn encode_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 身份种子（hex → 32 字节）。握手端 `SigningKey::from_bytes` 只收 32 字节，提前给出清晰报错。
+fn parse_seed(hex: &str) -> Result<[u8; 32], String> {
+    let v = decode_hex(hex).map_err(|e| format!("bad --seed: {e}"))?;
+    <[u8; 32]>::try_from(v.as_slice())
+        .map_err(|_| format!("--seed 必须是 32 字节，实际 {} 字节", v.len()))
+}
+
+/// 对端 pin = **公钥原文 32 字节 hex**（配对交换的 `public_key`，或 `forward pin` 输出）。
+/// **pin 缺省 = 拒绝连接（deny-by-default，无 TOFU）**。
+///
+/// 注意：配对 URI 的 `fp=sha256:<hex>` 是公钥的 SHA-256 **摘要**，不可反推——
+/// 误传摘要不会被悄悄当公钥用（握手必失败且难懂），这里显式拒绝并给替代路径。
+fn parse_pin(s: &str) -> Result<[u8; 32], String> {
+    let s = s.trim();
+    if let Some(digest) = s.strip_prefix("sha256:") {
+        return Err(format!(
+            "sha256:{digest} 是公钥的摘要指纹，无法反推公钥；--pin-peer 需要公钥原文 hex（对端执行 luciola-cli forward pin --seed <其种子> 得到 public_key，或取配对交换的 public_key）"
+        ));
+    }
+    let v = decode_hex(s).map_err(|e| format!("bad --pin-peer: {e}"))?;
+    <[u8; 32]>::try_from(v.as_slice()).map_err(|_| {
+        format!(
+            "--pin-peer 必须是 32 字节公钥原文 hex，实际 {} 字节",
+            v.len()
+        )
+    })
+}
+
+/// `host:port`（IPv6 支持 `[::1]:port`）→ (host, port)。
+fn parse_host_port(s: &str) -> Result<(String, u16), String> {
+    let err = || format!("地址必须是 host:port 形式：{s}");
+    if let Some(rest) = s.strip_prefix('[') {
+        let (h, p) = rest.split_once("]:").ok_or_else(err)?;
+        let port: u16 = p.parse().map_err(|_| err())?;
+        return Ok((h.to_string(), port));
+    }
+    let (h, p) = s.rsplit_once(':').ok_or_else(err)?;
+    let port: u16 = p.parse().map_err(|_| err())?;
+    Ok((h.to_string(), port))
+}
+
+/// `IP:PORT` → [DialTarget]（§1.2 合法性在解析阶段即检查）。
+fn parse_target(s: &str) -> Result<DialTarget, String> {
+    let (host, port) = parse_host_port(s)?;
+    let ip: IpAddr = host.parse().map_err(|_| format!("非法 IP：{s}"))?;
+    let t = DialTarget::new(ip, port);
+    if !t.validate() {
+        return Err(format!("非法目标（port=0 / 未指定 / 组播 / 广播）：{s}"));
+    }
+    Ok(t)
+}
+
+/// T2 responder 侧（r4 §2.3 链路引导契约）：
+/// `bind_dual_stack_listener` + `accept_secure(pin 必填)`，随后进入监督循环 ——
+/// 会话结束（或握手被拒）后回到 accept，等待下一条链路；Ctrl+C 优雅退出。
+/// 监听失败打印 `forward_bind_failed` 并 `exit != 0`。
+async fn forward_serve(
+    tunnel_port: u16,
+    seed_hex: &str,
+    pin_peer: &str,
+    allow: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let seed = parse_seed(seed_hex)?;
+    let pin = parse_pin(pin_peer)?;
+    let rules = allow
+        .iter()
+        .map(|s| ForwardRule::parse(s))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("非法 --allow 规则：{e}"))?;
+    let acl = ForwardAcl::new(rules);
+
+    let listener = match bind_dual_stack_listener(tunnel_port).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("forward_bind_failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    // 本端公钥公示：对端把它填进自己的 --pin-peer（改种子后须同步）。
+    let local_pub = encode_hex(&luciola::trust::identity_from_seed(&seed).public_key);
+    println!(
+        "forward_serving tunnel_port={} local_pub={} allow={:?}",
+        listener.local_addr()?.port(),
+        local_pub,
+        allow
+    );
+
+    let mut backoff = Duration::from_millis(500);
+    loop {
+        let accepted = tokio::select! {
+            r = accept_secure(&listener, &seed, Some(&pin)) => r,
+            _ = tokio::signal::ctrl_c() => {
+                println!("forward_stopped");
+                return Ok(());
+            }
+        };
+        match accepted {
+            Ok(stream) => {
+                backoff = Duration::from_millis(500);
+                let session = Arc::new(MuxSession::start(
+                    stream,
+                    Role::Responder,
+                    MuxConfig::default(),
+                ));
+                let endpoint = start_forward_endpoint(session.clone(), acl.clone())?;
+                println!("link_up mux_session_ready");
+                let reason = tokio::select! {
+                    r = session.wait_closed() => Some(r),
+                    _ = tokio::signal::ctrl_c() => None,
+                };
+                let st = endpoint.status();
+                endpoint.stop().await;
+                match reason {
+                    None => {
+                        session.shutdown();
+                        println!("forward_stopped status={st:?}");
+                        return Ok(());
+                    }
+                    Some(r) => println!(
+                        "link_closed reason={r} peer_close={} status={st:?} → accept next",
+                        session.peer_closed()
+                    ),
+                }
+            }
+            Err(e) => {
+                // 握手失败（扫描器 / pin 不符）：退避，避免成为廉价旋转入口。
+                println!("handshake_failed: {e}");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(5));
+            }
+        }
+    }
+}
+
+/// T2 initiator 侧：本地 127.0.0.1 转发 + 链路监督。
+///
+/// 按 §2.2 `peer_close` 语义分流：
+/// - 对端**主动 CLOSE(ch 0)** → 计划内关闭 → **优雅退出**（e2e 验收：会话断开后客户端 CLI 优雅退出）；
+/// - **传输层断开**（peer_close=false）→ **退避重建**：链路 → MuxSession → forward 规则整链重建
+///   （r4 §2.3「CLI 侧监督」，与 T3 同语义）。
+async fn forward_dial(
+    listen: u16,
+    connect: &str,
+    target: &str,
+    seed_hex: &str,
+    pin_peer: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (host, tunnel_port) = parse_host_port(connect)?;
+    let target = parse_target(target)?;
+    let seed = parse_seed(seed_hex)?;
+    let pin = parse_pin(pin_peer)?;
+    let addrs = vec![host];
+    println!("local_pub={}", encode_hex(&luciola::trust::identity_from_seed(&seed).public_key));
+
+    let mut backoff = Duration::from_millis(500);
+    loop {
+        match connect_secure_raced(addrs.clone(), tunnel_port, &seed, &pin).await {
+            Ok(stream) => {
+                backoff = Duration::from_millis(500);
+                let session = Arc::new(MuxSession::start(
+                    stream,
+                    Role::Initiator,
+                    MuxConfig::default(),
+                ));
+                let guard = match start_local_forward(
+                    session.clone(),
+                    LocalForwardConfig {
+                        listen_port: listen,
+                        target,
+                    },
+                ) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        eprintln!("forward_bind_failed: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                println!("forward_ready listen={} target={target}", guard.local_addr());
+
+                let peer_closed = tokio::select! {
+                    _ = session.wait_closed() => session.peer_closed(),
+                    _ = tokio::signal::ctrl_c() => {
+                        session.shutdown();
+                        guard.stop().await;
+                        println!("forward_stopped");
+                        return Ok(());
+                    }
+                };
+                let st = guard.status();
+                guard.stop().await;
+                if peer_closed {
+                    // 对端计划内关闭 → 优雅退出，不重建。
+                    println!("link_closed_by_peer → graceful exit status={st:?}");
+                    return Ok(());
+                }
+                println!("link_lost → rebuild in {backoff:?} status={st:?}");
+            }
+            Err(e) => {
+                println!("link_failed: {e} → retry in {backoff:?}");
+            }
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(30));
+    }
 }
