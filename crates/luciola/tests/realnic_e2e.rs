@@ -13,7 +13,6 @@ use luciola::proto::{DeviceType, Profile};
 use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
 use network_interface::NetworkInterfaceConfig;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// 本机真实网卡上的一个 IPv4（非回环）。没有就跳过。
 fn real_ipv4() -> Option<String> {

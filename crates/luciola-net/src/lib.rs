@@ -58,6 +58,9 @@ pub fn is_virtual_interface_name(name: &str) -> bool {
         "hamachi",
         "bluetooth",
         "bridge",
+        "awdl",
+        "llw",
+        "anpi",
     ];
 
     virtual_patterns
@@ -693,6 +696,9 @@ mod tests {
         assert!(is_virtual_interface_name("UTUN5"));
         assert!(is_virtual_interface_name("docker0"));
         assert!(is_virtual_interface_name("veth1234"));
+        assert!(is_virtual_interface_name("awdl0"));
+        assert!(is_virtual_interface_name("llw0"));
+        assert!(is_virtual_interface_name("anpi1"));
         assert!(is_virtual_interface_name("本地连接* 12"));
 
         assert!(!is_virtual_interface_name("en0"));
