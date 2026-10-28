@@ -71,3 +71,5 @@ jobs:
         run: cargo build -p luciola-node
       - name: Run smoke test
         run: node bindings/luciola-node/test.js
+      - name: Run tunnel forwarding test
+        run: node bindings/luciola-node/test/forward.test.mjs
