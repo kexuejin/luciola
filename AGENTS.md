@@ -238,8 +238,12 @@ repaired:
 - A new workspace crate must be added to the workspace **and** to the ordered list in
   `scripts/publish-crates.sh` in the same commit. `luciola-transfer` and
   `luciola-tunnel` were missing from that list once and shipped unpublished; the list
-  now reads `luciola-ip luciola-proto luciola-net luciola luciola-transfer
-  luciola-tunnel luciola-cli`.
+  now reads `luciola-ip luciola-proto luciola-net luciola-transfer luciola
+  luciola-tunnel luciola-cli` — transfer **before** luciola, because luciola's
+  optional dep with an exact version req must already exist on the registry when
+  luciola publishes (transfer's dep on luciola is dev-only and stripped, so this
+  direction is the only publishable one; the old order is why crates.io sat at
+  0.3.1 across several in-tree releases).
 - The CI Node job must run **both** `bindings/luciola-node/test.js` and
   `bindings/luciola-node/test/forward.test.mjs`; forwarding regressions used to be
   unguarded in CI because only the smoke test was wired in.

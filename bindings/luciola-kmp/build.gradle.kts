@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.github.kexuejin"
-version = "0.7.0"
+version = "0.8.0"
 
 repositories {
     mavenCentral()
@@ -80,6 +80,15 @@ kotlin {
             // "Could not find 'libluciola_uniffi.a' binary in neither of []"（路径列表为空）。
             extraOpts("-libraryPath", libDir.absolutePath)
         }
+        // 原生测试二进制（iosSimulatorArm64Test）是本工程第一个真正做 native
+        // link 的产物（框架/xcframework 由 cargo 与 Xcode 侧链接，JVM 走 JNA），
+        // 链接器需要显式拿到静态库：Undefined symbols _uniffi_... 即此因。
+        target.compilations.getByName("test").compilerOptions.configure {
+            freeCompilerArgs.addAll(
+                "-linker-option", "-L${libDir.absolutePath}",
+                "-linker-option", "-lluciola_uniffi",
+            )
+        }
     }
 
     // JVM-only sources shared by the Android and desktop compilations: the
@@ -121,6 +130,16 @@ kotlin {
                 implementation(kotlin("test"))
             }
         }
+        // iOS 原生测试（§12 真实验证）：在模拟器进程里跑 cinterop 绑定与隧道 e2e。
+        // ./gradlew :luciola:iosSimulatorArm64Test（需要 aarch64-apple-ios-sim 静态库）。
+        // iosTest 由默认层级模板在目标注册后才存在 —— AGP 9 KMP 插件注册晚于
+        // 配置期，eager getting 会报 not found（与上方 iosMain 注释同因），惰性挂。
+        matching { it.name == "iosTest" }.configureEach {
+            kotlin.srcDir(File(projectDir, "src/iosTest/kotlin"))
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
     }
 }
 
@@ -132,6 +151,20 @@ tasks.withType<Test>().configureEach {
     if (hostLibDir.isDirectory) {
         systemProperty("jna.library.path", hostLibDir.absolutePath)
     }
+}
+
+// 原生测试二进制链接的 libluciola_uniffi.a **不在** Gradle 的输入追踪里
+//（linker 参数是不透明字符串，cinterop klib 只看头文件）。库重建后
+// linkDebugTest*/linkReleaseTest* 仍判 up-to-date，测试进程会静默链到旧引擎
+// —— 症状是"新 FFI 方法行为像旧 ABI"（参数错位 / junk data / 恒 false），
+// 与 AGENTS.md §3 的"AAR 里旧 .so"陷阱同构。把 .a 注册为输入堵死它；
+// 仍不够时对 def 文件做内容级改动强制 cinterop+link 重跑。
+tasks.matching { it.name.startsWith("link") && it.name.contains("TestIos") }.configureEach {
+    val root = nativeRoot("iosNativeRoot")
+    inputs.files(
+        File(root, "aarch64-apple-ios/release/libluciola_uniffi.a"),
+        File(root, "aarch64-apple-ios-sim/release/libluciola_uniffi.a"),
+    )
 }
 
 // nativeRoot() is declared with the other build helpers above the kotlin block.

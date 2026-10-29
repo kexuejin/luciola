@@ -846,6 +846,11 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
     func disableForwardEndpoint()  -> Bool
     
     /**
+     * 关闭 remote endpoint（幂等）。
+     */
+    func disableRemoteEndpoint()  -> Bool
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
@@ -854,13 +859,22 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
     
     /**
      * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
-     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；规则主机为 IP 字面量
+     * 或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。失败同上走 on_state。
      */
     func enableForwardEndpoint(rules: [ForwardRuleDto])  -> Bool
     
     /**
+     * 启用/替换 remote endpoint ACL（v2；仅 connect()/Dial 角色）：放行
+     * Responder 发起的通道并拨本机目标。规则同 enable_forward_endpoint；
+     * 未启用 = 默认拒绝一切 remote forward 拨入。
+     */
+    func enableRemoteEndpoint(rules: [ForwardRuleDto])  -> Bool
+    
+    /**
      * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
-     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     * 历史折叠计数、类别（local / udp_local / remote_endpoint / endpoint / remote）。
+     * 注册过任何转发/端点后即有行，重建期间 active=false。
      */
     func forwardStats()  -> [ForwardStatusDto]
     
@@ -892,17 +906,41 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
     func setRetryPolicy(minMs: UInt64, maxMs: UInt64, jitterPct: UInt64) 
     
     /**
+     * 隧道 mux keepalive（v2）：`interval_ms=0` 关闭；dead_after_ms 会被
+     * clamp 到 ≥ interval_ms。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+     * 改动随下一次隧道链路重建生效。
+     */
+    func setTunnelKeepalive(intervalMs: UInt64, deadAfterMs: UInt64) 
+    
+    /**
      * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
      */
     func setTunnelPort(port: UInt16)  -> Bool
     
     /**
      * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
      * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
      * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
      * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
      */
     func startLocalForward(listenPort: UInt16, host: String, port: UInt16)  -> Bool
+    
+    /**
+     * 注册 remote forward（v2 `-R`；仅 listen()/Responder 角色）：本机
+     * 127.0.0.1:listen_port 的每条入站连接经隧道（偶数通道）转发到**对端机**
+     * 上的 host:port。对端须 enable_remote_endpoint 放行该目标；对端为 v1 时
+     * 通道建立失败（对端 mux 按违规终止，勿对旧版本启用）。
+     */
+    func startRemoteForward(listenPort: UInt16, host: String, port: UInt16)  -> Bool
+    
+    /**
+     * 注册 UDP 转发（v2 NAT 式会话映射；仅 connect()/Dial 角色）：
+     * 本机 127.0.0.1:listen_port 的每个源地址映射一条数据报通道到对端
+     * host:port；对端 endpoint 的 ACL 规则须 `udp=true` 放行。
+     * 映射空闲超时自动回收（默认 60s）。
+     */
+    func startUdpForward(listenPort: UInt16, host: String, port: UInt16)  -> Bool
     
     /**
      * Link health counters (sent/received frames, connections, retries).
@@ -913,6 +951,16 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
      * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
      */
     func stopLocalForward(listenPort: UInt16)  -> Bool
+    
+    /**
+     * 注销 remote forward。未注册返回 false。
+     */
+    func stopRemoteForward(listenPort: UInt16)  -> Bool
+    
+    /**
+     * 注销 UDP 转发。未注册返回 false。
+     */
+    func stopUdpForward(listenPort: UInt16)  -> Bool
     
 }
 /**
@@ -1009,6 +1057,16 @@ open func disableForwardEndpoint() -> Bool  {
 }
     
     /**
+     * 关闭 remote endpoint（幂等）。
+     */
+open func disableRemoteEndpoint() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_disable_remote_endpoint(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
@@ -1021,7 +1079,8 @@ open func disconnect()  {try! rustCall() {
     
     /**
      * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
-     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；规则主机为 IP 字面量
+     * 或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。失败同上走 on_state。
      */
 open func enableForwardEndpoint(rules: [ForwardRuleDto]) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
@@ -1032,8 +1091,22 @@ open func enableForwardEndpoint(rules: [ForwardRuleDto]) -> Bool  {
 }
     
     /**
+     * 启用/替换 remote endpoint ACL（v2；仅 connect()/Dial 角色）：放行
+     * Responder 发起的通道并拨本机目标。规则同 enable_forward_endpoint；
+     * 未启用 = 默认拒绝一切 remote forward 拨入。
+     */
+open func enableRemoteEndpoint(rules: [ForwardRuleDto]) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_enable_remote_endpoint(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeForwardRuleDto.lower(rules),$0
+    )
+})
+}
+    
+    /**
      * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
-     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     * 历史折叠计数、类别（local / udp_local / remote_endpoint / endpoint / remote）。
+     * 注册过任何转发/端点后即有行，重建期间 active=false。
      */
 open func forwardStats() -> [ForwardStatusDto]  {
     return try!  FfiConverterSequenceTypeForwardStatusDto.lift(try! rustCall() {
@@ -1101,6 +1174,19 @@ open func setRetryPolicy(minMs: UInt64, maxMs: UInt64, jitterPct: UInt64)  {try!
 }
     
     /**
+     * 隧道 mux keepalive（v2）：`interval_ms=0` 关闭；dead_after_ms 会被
+     * clamp 到 ≥ interval_ms。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+     * 改动随下一次隧道链路重建生效。
+     */
+open func setTunnelKeepalive(intervalMs: UInt64, deadAfterMs: UInt64)  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_keepalive(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(intervalMs),
+        FfiConverterUInt64.lower(deadAfterMs),$0
+    )
+}
+}
+    
+    /**
      * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
      */
 open func setTunnelPort(port: UInt16) -> Bool  {
@@ -1113,6 +1199,7 @@ open func setTunnelPort(port: UInt16) -> Bool  {
     
     /**
      * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
      * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
      * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
      * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
@@ -1120,6 +1207,38 @@ open func setTunnelPort(port: UInt16) -> Bool  {
 open func startLocalForward(listenPort: UInt16, host: String, port: UInt16) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_start_local_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),
+        FfiConverterString.lower(host),
+        FfiConverterUInt16.lower(port),$0
+    )
+})
+}
+    
+    /**
+     * 注册 remote forward（v2 `-R`；仅 listen()/Responder 角色）：本机
+     * 127.0.0.1:listen_port 的每条入站连接经隧道（偶数通道）转发到**对端机**
+     * 上的 host:port。对端须 enable_remote_endpoint 放行该目标；对端为 v1 时
+     * 通道建立失败（对端 mux 按违规终止，勿对旧版本启用）。
+     */
+open func startRemoteForward(listenPort: UInt16, host: String, port: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_start_remote_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),
+        FfiConverterString.lower(host),
+        FfiConverterUInt16.lower(port),$0
+    )
+})
+}
+    
+    /**
+     * 注册 UDP 转发（v2 NAT 式会话映射；仅 connect()/Dial 角色）：
+     * 本机 127.0.0.1:listen_port 的每个源地址映射一条数据报通道到对端
+     * host:port；对端 endpoint 的 ACL 规则须 `udp=true` 放行。
+     * 映射空闲超时自动回收（默认 60s）。
+     */
+open func startUdpForward(listenPort: UInt16, host: String, port: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_start_udp_forward(self.uniffiClonePointer(),
         FfiConverterUInt16.lower(listenPort),
         FfiConverterString.lower(host),
         FfiConverterUInt16.lower(port),$0
@@ -1143,6 +1262,28 @@ open func stats() -> LinkStats  {
 open func stopLocalForward(listenPort: UInt16) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_stop_local_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),$0
+    )
+})
+}
+    
+    /**
+     * 注销 remote forward。未注册返回 false。
+     */
+open func stopRemoteForward(listenPort: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_stop_remote_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),$0
+    )
+})
+}
+    
+    /**
+     * 注销 UDP 转发。未注册返回 false。
+     */
+open func stopUdpForward(listenPort: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_stop_udp_forward(self.uniffiClonePointer(),
         FfiConverterUInt16.lower(listenPort),$0
     )
 })
@@ -1831,19 +1972,28 @@ public func FfiConverterTypeDiscoveredPeer_lower(_ value: DiscoveredPeer) -> Rus
 
 
 /**
- * 转发规则（T3 `enable_forward_endpoint`）：单 IP 上的端口区间，含端点。
+ * 转发规则（T3 `enable_forward_endpoint` / v2 `enable_remote_endpoint`）：
+ * 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
  */
 public struct ForwardRuleDto {
     public var host: String
     public var portFrom: UInt16
     public var portTo: UInt16
+    /**
+     * v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
+     */
+    public var udp: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(host: String, portFrom: UInt16, portTo: UInt16) {
+    public init(host: String, portFrom: UInt16, portTo: UInt16, 
+        /**
+         * v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
+         */udp: Bool) {
         self.host = host
         self.portFrom = portFrom
         self.portTo = portTo
+        self.udp = udp
     }
 }
 
@@ -1863,6 +2013,9 @@ extension ForwardRuleDto: Equatable, Hashable {
         if lhs.portTo != rhs.portTo {
             return false
         }
+        if lhs.udp != rhs.udp {
+            return false
+        }
         return true
     }
 
@@ -1870,6 +2023,7 @@ extension ForwardRuleDto: Equatable, Hashable {
         hasher.combine(host)
         hasher.combine(portFrom)
         hasher.combine(portTo)
+        hasher.combine(udp)
     }
 }
 
@@ -1884,7 +2038,8 @@ public struct FfiConverterTypeForwardRuleDto: FfiConverterRustBuffer {
             try ForwardRuleDto(
                 host: FfiConverterString.read(from: &buf), 
                 portFrom: FfiConverterUInt16.read(from: &buf), 
-                portTo: FfiConverterUInt16.read(from: &buf)
+                portTo: FfiConverterUInt16.read(from: &buf), 
+                udp: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -1892,6 +2047,7 @@ public struct FfiConverterTypeForwardRuleDto: FfiConverterRustBuffer {
         FfiConverterString.write(value.host, into: &buf)
         FfiConverterUInt16.write(value.portFrom, into: &buf)
         FfiConverterUInt16.write(value.portTo, into: &buf)
+        FfiConverterBool.write(value.udp, into: &buf)
     }
 }
 
@@ -1912,7 +2068,8 @@ public func FfiConverterTypeForwardRuleDto_lower(_ value: ForwardRuleDto) -> Rus
 
 
 /**
- * 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口。
+ * 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口 + 类别。
+ * `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
  */
 public struct ForwardStatusDto {
     public var active: Bool
@@ -1921,16 +2078,18 @@ public struct ForwardStatusDto {
     public var channelsTotal: UInt64
     public var dialDenied: UInt64
     public var dialFailed: UInt64
+    public var kind: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(active: Bool, listenPort: UInt16, channelsOpen: UInt64, channelsTotal: UInt64, dialDenied: UInt64, dialFailed: UInt64) {
+    public init(active: Bool, listenPort: UInt16, channelsOpen: UInt64, channelsTotal: UInt64, dialDenied: UInt64, dialFailed: UInt64, kind: String) {
         self.active = active
         self.listenPort = listenPort
         self.channelsOpen = channelsOpen
         self.channelsTotal = channelsTotal
         self.dialDenied = dialDenied
         self.dialFailed = dialFailed
+        self.kind = kind
     }
 }
 
@@ -1959,6 +2118,9 @@ extension ForwardStatusDto: Equatable, Hashable {
         if lhs.dialFailed != rhs.dialFailed {
             return false
         }
+        if lhs.kind != rhs.kind {
+            return false
+        }
         return true
     }
 
@@ -1969,6 +2131,7 @@ extension ForwardStatusDto: Equatable, Hashable {
         hasher.combine(channelsTotal)
         hasher.combine(dialDenied)
         hasher.combine(dialFailed)
+        hasher.combine(kind)
     }
 }
 
@@ -1986,7 +2149,8 @@ public struct FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer {
                 channelsOpen: FfiConverterUInt64.read(from: &buf), 
                 channelsTotal: FfiConverterUInt64.read(from: &buf), 
                 dialDenied: FfiConverterUInt64.read(from: &buf), 
-                dialFailed: FfiConverterUInt64.read(from: &buf)
+                dialFailed: FfiConverterUInt64.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -1997,6 +2161,7 @@ public struct FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.channelsTotal, into: &buf)
         FfiConverterUInt64.write(value.dialDenied, into: &buf)
         FfiConverterUInt64.write(value.dialFailed, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
     }
 }
 
@@ -3833,13 +3998,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint() != 35699) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_disable_remote_endpoint() != 10815) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_securesession_disconnect() != 52412) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint() != 20016) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint() != 14717) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 6653) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_enable_remote_endpoint() != 65037) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 30122) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467) {
@@ -3857,16 +4028,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy() != 49064) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_keepalive() != 1419) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_port() != 4575) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward() != 29058) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward() != 51827) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_start_remote_forward() != 22878) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_start_udp_forward() != 27128) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_stop_local_forward() != 21454) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_stop_remote_forward() != 42058) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward() != 19408) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {

@@ -1163,6 +1163,20 @@ internal typealias UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByVal
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Synchronized
 private fun findLibraryName(componentName: String): String {
     val libOverride = System.getProperty("uniffi.component.$componentName.libraryOverride")
@@ -1292,13 +1306,19 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint() != 35699.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_disable_remote_endpoint() != 10815.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_method_securesession_disconnect() != 52412.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint() != 20016.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint() != 14717.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 6653.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_securesession_enable_remote_endpoint() != 65037.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 30122.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467.toShort()) {
@@ -1316,16 +1336,31 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy() != 49064.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_keepalive() != 1419.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_port() != 4575.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward() != 29058.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward() != 51827.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_start_remote_forward() != 22878.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_start_udp_forward() != 27128.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_stats() != 9425.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_stop_local_forward() != 21454.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_stop_remote_forward() != 42058.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward() != 19408.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413.toShort()) {
@@ -1464,10 +1499,16 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_disable_remote_endpoint(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_disconnect(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_enable_remote_endpoint(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_forward_stats(
@@ -1488,16 +1529,31 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_keepalive(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_port(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_start_remote_forward(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_start_udp_forward(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_stats(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_stop_local_forward(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_stop_remote_forward(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_truststore_entries(
@@ -1652,12 +1708,23 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Byte
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_disable_remote_endpoint(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_disconnect(
         `ptr`: Pointer?,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_enable_forward_endpoint(
+        `ptr`: Pointer?,
+        `rules`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_enable_remote_endpoint(
         `ptr`: Pointer?,
         `rules`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
@@ -1702,6 +1769,13 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_keepalive(
+        `ptr`: Pointer?,
+        `intervalMs`: Long,
+        `deadAfterMs`: Long,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_port(
         `ptr`: Pointer?,
         `port`: Short,
@@ -1716,12 +1790,40 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Byte
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_start_remote_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        `host`: RustBufferByValue,
+        `port`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_start_udp_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        `host`: RustBufferByValue,
+        `port`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_stats(
         `ptr`: Pointer?,
         uniffiCallStatus: UniffiRustCallStatus,
     ): RustBufferByValue
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_stop_local_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_stop_remote_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_stop_udp_forward(
         `ptr`: Pointer?,
         `listenPort`: Short,
         uniffiCallStatus: UniffiRustCallStatus,
@@ -2819,6 +2921,20 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
     }
 
     /**
+     * 关闭 remote endpoint（幂等）。
+     */
+    public actual override fun `disableRemoteEndpoint`(): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_disable_remote_endpoint(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
@@ -2836,7 +2952,8 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
 
     /**
      * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
-     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；规则主机为 IP 字面量
+     * 或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。失败同上走 on_state。
      */
     public actual override fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean {
         return FfiConverterBoolean.lift(callWithPointer {
@@ -2851,8 +2968,26 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
     }
 
     /**
+     * 启用/替换 remote endpoint ACL（v2；仅 connect()/Dial 角色）：放行
+     * Responder 发起的通道并拨本机目标。规则同 enable_forward_endpoint；
+     * 未启用 = 默认拒绝一切 remote forward 拨入。
+     */
+    public actual override fun `enableRemoteEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_enable_remote_endpoint(
+                    it,
+                    FfiConverterSequenceTypeForwardRuleDto.lower(`rules`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
      * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
-     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     * 历史折叠计数、类别（local / udp_local / remote_endpoint / endpoint / remote）。
+     * 注册过任何转发/端点后即有行，重建期间 active=false。
      */
     public actual override fun `forwardStats`(): List<ForwardStatusDto> {
         return FfiConverterSequenceTypeForwardStatusDto.lift(callWithPointer {
@@ -2947,6 +3082,24 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
     }
 
     /**
+     * 隧道 mux keepalive（v2）：`interval_ms=0` 关闭；dead_after_ms 会被
+     * clamp 到 ≥ interval_ms。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+     * 改动随下一次隧道链路重建生效。
+     */
+    public actual override fun `setTunnelKeepalive`(`intervalMs`: kotlin.ULong, `deadAfterMs`: kotlin.ULong) {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_keepalive(
+                    it,
+                    FfiConverterULong.lower(`intervalMs`),
+                    FfiConverterULong.lower(`deadAfterMs`),
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
      * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
      */
     public actual override fun `setTunnelPort`(`port`: kotlin.UShort): kotlin.Boolean {
@@ -2963,6 +3116,7 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
 
     /**
      * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
      * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
      * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
      * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
@@ -2971,6 +3125,46 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
         return FfiConverterBoolean.lift(callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
                 UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_start_local_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    FfiConverterString.lower(`host`),
+                    FfiConverterUShort.lower(`port`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * 注册 remote forward（v2 `-R`；仅 listen()/Responder 角色）：本机
+     * 127.0.0.1:listen_port 的每条入站连接经隧道（偶数通道）转发到**对端机**
+     * 上的 host:port。对端须 enable_remote_endpoint 放行该目标；对端为 v1 时
+     * 通道建立失败（对端 mux 按违规终止，勿对旧版本启用）。
+     */
+    public actual override fun `startRemoteForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_start_remote_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    FfiConverterString.lower(`host`),
+                    FfiConverterUShort.lower(`port`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * 注册 UDP 转发（v2 NAT 式会话映射；仅 connect()/Dial 角色）：
+     * 本机 127.0.0.1:listen_port 的每个源地址映射一条数据报通道到对端
+     * host:port；对端 endpoint 的 ACL 规则须 `udp=true` 放行。
+     * 映射空闲超时自动回收（默认 60s）。
+     */
+    public actual override fun `startUdpForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_start_udp_forward(
                     it,
                     FfiConverterUShort.lower(`listenPort`),
                     FfiConverterString.lower(`host`),
@@ -3002,6 +3196,36 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
         return FfiConverterBoolean.lift(callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
                 UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_stop_local_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * 注销 remote forward。未注册返回 false。
+     */
+    public actual override fun `stopRemoteForward`(`listenPort`: kotlin.UShort): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_stop_remote_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * 注销 UDP 转发。未注册返回 false。
+     */
+    public actual override fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_stop_udp_forward(
                     it,
                     FfiConverterUShort.lower(`listenPort`),
                     uniffiRustCallStatus,
@@ -3397,19 +3621,22 @@ public object FfiConverterTypeForwardRuleDto: FfiConverterRustBuffer<ForwardRule
             FfiConverterString.read(buf),
             FfiConverterUShort.read(buf),
             FfiConverterUShort.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
     override fun allocationSize(value: ForwardRuleDto): ULong = (
             FfiConverterString.allocationSize(value.`host`) +
             FfiConverterUShort.allocationSize(value.`portFrom`) +
-            FfiConverterUShort.allocationSize(value.`portTo`)
+            FfiConverterUShort.allocationSize(value.`portTo`) +
+            FfiConverterBoolean.allocationSize(value.`udp`)
     )
 
     override fun write(value: ForwardRuleDto, buf: ByteBuffer) {
         FfiConverterString.write(value.`host`, buf)
         FfiConverterUShort.write(value.`portFrom`, buf)
         FfiConverterUShort.write(value.`portTo`, buf)
+        FfiConverterBoolean.write(value.`udp`, buf)
     }
 }
 
@@ -3425,6 +3652,7 @@ public object FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer<ForwardSt
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -3434,7 +3662,8 @@ public object FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer<ForwardSt
             FfiConverterULong.allocationSize(value.`channelsOpen`) +
             FfiConverterULong.allocationSize(value.`channelsTotal`) +
             FfiConverterULong.allocationSize(value.`dialDenied`) +
-            FfiConverterULong.allocationSize(value.`dialFailed`)
+            FfiConverterULong.allocationSize(value.`dialFailed`) +
+            FfiConverterString.allocationSize(value.`kind`)
     )
 
     override fun write(value: ForwardStatusDto, buf: ByteBuffer) {
@@ -3444,6 +3673,7 @@ public object FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer<ForwardSt
         FfiConverterULong.write(value.`channelsTotal`, buf)
         FfiConverterULong.write(value.`dialDenied`, buf)
         FfiConverterULong.write(value.`dialFailed`, buf)
+        FfiConverterString.write(value.`kind`, buf)
     }
 }
 

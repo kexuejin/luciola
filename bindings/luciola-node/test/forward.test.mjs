@@ -3,6 +3,7 @@
 // 停转发释放端口可重绑、close() 暂停隧道（注册表保留 → active=false）。
 import { createRequire } from 'node:module';
 import net from 'node:net';
+import dgram from 'node:dgram';
 import assert from 'node:assert';
 
 const require = createRequire(import.meta.url);
@@ -114,7 +115,7 @@ async function main() {
   // —— 响应端先启用端点（spec：惰性建立按侧）——
   const srvErr0 = countOf(srvEv, 'error');
   assert.strictEqual(
-    srv.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 1, portTo: 65535 }]),
+    srv.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 1, portTo: 65535, udp: false }]),
     true,
     '响应端 enableForwardEndpoint 应成功',
   );
@@ -122,14 +123,15 @@ async function main() {
   // —— 同步拒绝（spec line 363：false + on_state("error")，不静默）——
   const dialErr0 = countOf(dialEv, 'error');
   assert.strictEqual(
-    dial.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 1, portTo: 65535 }]),
+    dial.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 1, portTo: 65535, udp: false }]),
     false,
     '发起端启用端点应被角色拒绝',
   );
   assert.strictEqual(
-    dial.startLocalForward(0, 'not-an-ip', 80),
+    // v2：'not-an-ip' 是合法主机名字符串（解析在对端）；纯数字串才被拒
+    dial.startLocalForward(0, '1.2.3.999', 80),
     false,
-    '非法目标 IP 应被同步拒绝',
+    '非法目标（纯数字串）应被同步拒绝',
   );
   assert.strictEqual(srv.enableForwardEndpoint([]), false, '空 rules = 全拒绝，且同步报错');
 
@@ -225,10 +227,117 @@ async function main() {
 
   srv.close();
   echo.close();
+  console.log('  · T3 验收通过');
+}
+
+// —— T4 (v2)：UDP 转发 + remote forward + keepalive/主机名控制面 ——
+async function mainV2() {
+  const L = await freePortPair();
+  const idSrv = luciola.identityFromSeed(Buffer.alloc(32, 2));
+  const idDial = luciola.identityFromSeed(Buffer.alloc(32, 1));
+
+  const srvEv = [];
+  const dialEv = [];
+  const srv = new luciola.SecureChannel(idSrv.seed);
+  const dial = new luciola.SecureChannel(idDial.seed);
+  srv.listen(L, null, (ev) => { if (ev.state) srvEv.push(ev); });
+  dial.connect(['127.0.0.1'], L, idSrv.publicKey, true, (ev) => { if (ev.state) dialEv.push(ev); });
+  await waitUntil(() => dial.isConnected(), 20000, '消息链路 connected');
+  console.log('  · [v2] 消息链路 connected');
+
+  // keepalive 调整（下一次隧道重建生效；0 = 关闭）
+  dial.setTunnelKeepalive(5000, 15000);
+  srv.setTunnelKeepalive(0, 0);
+
+  // —— UDP 转发（NAT 式映射）——
+  const udpEcho = dgram.createSocket('udp4');
+  const udpUpPort = await new Promise((res) => udpEcho.bind(0, '127.0.0.1', () => res(udpEcho.address().port)));
+  udpEcho.on('message', (msg, rinfo) => udpEcho.send(msg, rinfo.port, rinfo.address));
+  assert.strictEqual(
+    srv.enableForwardEndpoint([{ host: '127.0.0.1', portFrom: 1, portTo: 65535, udp: true }]),
+    true, '含 udp 规则的端点应启用',
+  );
+  const udpLocalPort = 20000 + Math.floor(Math.random() * 30000);
+  assert.strictEqual(dial.startUdpForward(udpLocalPort, '127.0.0.1', udpUpPort), true, 'UDP 转发注册');
+  const sock = dgram.createSocket('udp4');
+  const udpOk = await new Promise((res) => {
+    let tries = 0;
+    const tick = () => {
+      tries += 1;
+      if (tries > 60) return res(false);
+      sock.send('udp-e2e', udpLocalPort, '127.0.0.1', () => {});
+      const t = setTimeout(() => tick(), 300);
+      sock.once('message', (msg) => { clearTimeout(t); res(msg.toString() === 'udp-e2e'); });
+    };
+    tick();
+  });
+  assert.ok(udpOk, '经隧道的 UDP 回环应成功');
+  const udpRow = dial.forwardStats().find((s) => s.kind === 'udp_local');
+  assert.ok(udpRow && udpRow.active, 'udp_local 行 active');
+  assert.strictEqual(dialEv.filter((e) => e.state === 'error').length, 0, 'UDP happy path 零 error');
+  console.log('  · [v2] UDP 转发回环通过');
+  dial.stopUdpForward(udpLocalPort);
+  sock.close();
+  udpEcho.close();
+
+  // —— remote forward（-R）：默认拒绝 → 启用后回环 ——
+  const echo = net.createServer((c) => { c.on('data', (d) => c.write(d)); });
+  const echoPort = await new Promise((res) => echo.listen(0, '127.0.0.1', () => res(echo.address().port)));
+  const remotePort = 20000 + Math.floor(Math.random() * 30000);
+  assert.strictEqual(srv.startRemoteForward(remotePort, '127.0.0.1', echoPort), true, 'remote forward 注册');
+  // 隧道懒建立需要 Dial 侧也有工作：哑本地转发
+  const dummyUp = 20000 + Math.floor(Math.random() * 30000);
+  const dummyPort = 20000 + Math.floor(Math.random() * 30000);
+  assert.strictEqual(dial.startLocalForward(dummyPort, '127.0.0.1', dummyUp), true);
+  // 默认拒绝：连接被关闭而非回显
+  let denied = false;
+  {
+    const dl = Date.now() + 60000;
+    while (Date.now() < dl && !denied) {
+      denied = await new Promise((res) => {
+        // 拒绝的判定 = 对端主动关闭（RST 或干净 FIN）；ECONNREFUSED = 监听尚未
+        // 绑定（懒建立）→ 交给 wait_until 重试；收到数据 = 拒绝失效。
+        const c = net.connect({ port: remotePort, host: '127.0.0.1' });
+        let settled = false;
+        const done = (v) => { if (!settled) { settled = true; clearTimeout(t); res(v); } };
+        const t = setTimeout(() => { c.destroy(); done(false); }, 8000);
+        c.on('error', (e) => done(e.code === 'ECONNRESET'));
+        c.on('connect', () => c.write('x'));
+        c.on('data', () => done(false));
+        c.on('close', () => done(true));
+      });
+      if (!denied) await sleep(300);
+    }
+  }
+  assert.ok(denied, '未启用 remote endpoint 时拨入必须被拒绝');
+  assert.strictEqual(dial.enableRemoteEndpoint([{ host: '127.0.0.1', portFrom: 1, portTo: 65535, udp: false }]), true);
+  let rok = false;
+  const dl2 = Date.now() + 30000;
+  while (Date.now() < dl2 && !rok) {
+    rok = await tcpRoundtrip(remotePort, Buffer.from('remote-e2e'));
+    if (!rok) await sleep(300);
+  }
+  assert.ok(rok, 'remote forward 回环应成功');
+  assert.ok(
+    srv.forwardStats().some((s) => s.kind === 'remote' && s.active),
+    'remote 行 active',
+  );
+  assert.ok(
+    dial.forwardStats().some((s) => s.kind === 'remote_endpoint'),
+    'remote_endpoint 行存在',
+  );
+  console.log('  · [v2] remote forward 默认拒绝 + 回环通过');
+
+  dial.stopLocalForward(dummyPort);
+  srv.stopRemoteForward(remotePort);
+  dial.close();
+  srv.close();
+  echo.close();
   console.log('forward.test.mjs: ALL PASS');
 }
 
 main()
+  .then(mainV2)
   .then(() => process.exit(0))
   .catch((e) => {
     console.error(e);

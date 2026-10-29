@@ -255,7 +255,8 @@ export class SecureChannel {
   };
   close(): void;
   /**
-   * T3 本地转发（发起端）：本机监听 → 经隧道 → target。同步失败（未连接 /
+   * T3/T4 本地转发（发起端）：本机监听 → 经隧道 → target。`host` 为 IP 字面量
+   * 或主机名（v2：主机名由对端解析并按会话钉扎）。同步失败（未连接 /
    * 角色不符 / 端口冲突 / 非法目标）返回 false 并经 onEvent 报 "error"
    *（端口冲突 detail 前缀 "forward_bind_failed: "）。
    */
@@ -263,26 +264,60 @@ export class SecureChannel {
   /** T3 停止一个本地转发并释放端口；重复停止返回 false。 */
   stopLocalForward(listenPort: number): boolean;
   /**
-   * T3 端点（响应端）：在 tunnelPort 上 accept 并按 rules 做拨入 ACL。
+   * T4 UDP 转发（发起端，NAT 式会话映射）：本机 127.0.0.1:listenPort 的每个
+   * 源地址映射一条数据报通道到对端 host:port；对端 ACL 规则须 udp=true 放行。
+   * 映射空闲超时自动回收（默认 60s）。
+   */
+  startUdpForward(listenPort: number, host: string, port: number): boolean;
+  /** T4 注销 UDP 转发；未注册返回 false。 */
+  stopUdpForward(listenPort: number): boolean;
+  /**
+   * T3/T4 端点（响应端）：在 tunnelPort 上 accept 并按 rules 做拨入 ACL。
+   * 规则主机为 IP 字面量或主机名；udp=true 的规则同时放行 UDP 拨号（DOPEN）。
    * 空 rules = 全拒绝。失败返回 false 并经 onEvent 报 "error"。
    */
   enableForwardEndpoint(rules: JsForwardRule[]): boolean;
   /** T3 撤下端点（隧道保持，仅停 accept 与转发）。 */
   disableForwardEndpoint(): boolean;
+  /**
+   * T4 remote endpoint ACL（发起端）：放行响应端 remote forward（-R）拨入的
+   * 本机目标；未启用 = 默认拒绝。
+   */
+  enableRemoteEndpoint(rules: JsForwardRule[]): boolean;
+  /** T4 关闭 remote endpoint（幂等）。 */
+  disableRemoteEndpoint(): boolean;
+  /**
+   * T4 remote forward（响应端，`-R`）：本机 127.0.0.1:listenPort 的每条入站
+   * 连接经隧道（偶数通道）转发到对端机上的 host:port；对端须启用
+   * remote endpoint 放行目标，且对端须为 v2。
+   */
+  startRemoteForward(listenPort: number, host: string, port: number): boolean;
+  /** T4 注销 remote forward；未注册返回 false。 */
+  stopRemoteForward(listenPort: number): boolean;
+  /**
+   * T4 隧道 mux keepalive（v2）：intervalMs=0 关闭；deadAfterMs 被 clamp 到
+   * ≥ intervalMs。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+   * 随下一次隧道链路重建生效。
+   */
+  setTunnelKeepalive(intervalMs: number, deadAfterMs: number): void;
   /** T3 覆盖隧道端口（0 = 默认 securePort+1）；运行中随下一次隧道重建生效。 */
   setTunnelPort(port: number): boolean;
-  /** T3 状态表：每个本地转发/端点一行（active = 已绑定）。 */
+  /**
+   * T3/T4 状态表：每个转发/端点一行（active = 已绑定）。
+   * kind ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
+   */
   forwardStats(): JsForwardStatus[];
 }
 
-/** T3 转发 ACL 规则（主机必须是 IP 字面量）。 */
+/** T3/T4 转发 ACL 规则（主机为 IP 字面量或主机名；udp 同时放行 UDP 拨号）。 */
 export interface JsForwardRule {
   host: string;
   portFrom: number;
   portTo: number;
+  udp: boolean;
 }
 
-/** T3 转发状态行。 */
+/** T3/T4 转发状态行。 */
 export interface JsForwardStatus {
   active: boolean;
   listenPort: number;
@@ -290,6 +325,7 @@ export interface JsForwardStatus {
   channelsTotal: number;
   dialDenied: number;
   dialFailed: number;
+  kind: string;
 }
 
 /** Canonical pairing payload (`luciola://pair` v2). */

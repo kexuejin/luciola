@@ -81,6 +81,27 @@ node bindings/luciola-node/test/forward.test.mjs
 CI's Node job runs `test.js` only; `test/forward.test.mjs` is a **local** gate today, so
 run it yourself whenever you touch the tunnel or the Node forwarding surface.
 
+**5) KMP iOS runtime verification (macOS + Xcode only):**
+
+The iOS compile checks above prove nothing about runtime behaviour (§12 of AGENTS.md).
+The `iosTest` suite executes the Kotlin/Native path inside an iOS simulator: cinterop
+binding smoke, `IosNetworkMonitor` over Network.framework, tunnel control-plane
+contracts, and a full tunnel TCP loopback e2e.
+
+```bash
+cargo build --release -p luciola-uniffi --target aarch64-apple-ios-sim
+cd examples/android-demo
+./gradlew :luciola:iosSimulatorArm64Test --no-daemon
+cd ../..
+```
+
+If the results look insane (a brand-new FFI method behaving like the old ABI, record
+lifting reporting "junk data left in buffer"), suspect a **stale-linked test binary**:
+Gradle does not track `libluciola_uniffi.a` as a link input by content alone — the
+`.a` files are registered as inputs of the iOS test link tasks, but when in doubt
+touch `bindings/luciola-kmp/src/uniffiKmp/nativeInterop/luciola_uniffi.def` with a
+real content change and rerun.
+
 CI runs the Rust gate on Windows too. Anything Unix-specific has to be gated (see the
 history of `fix(cli): gate the unix-socket agent off Windows`); do not assume a
 POSIX-only API is portable without a `#[cfg(unix)]` boundary and a Windows fallback.

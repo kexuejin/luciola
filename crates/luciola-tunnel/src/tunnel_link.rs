@@ -15,14 +15,18 @@
 //!   runtime + `block_on`，负责 tunnel端口的拨号/监听/接受、退避重建、
 //!   Guard 生命周期与计数折叠。所有阻塞点均 `select!` 关停信号。
 //!
-//! ## 关键语义（spec T3）
+//! ## 关键语义（spec T3/T4）
 //!
-//! - **懒建立**：注册任一 local forward 或启用 endpoint 后才拨/监听
-//!   tunnel_port（`secure 端口 + 1`，`TunnelLink::set_tunnel_port` 显式覆盖）。
+//! - **懒建立**：注册任一转发或启用端点后才拨/监听 tunnel_port
+//!   （`secure 端口 + 1`，`TunnelLink::set_tunnel_port` 显式覆盖）。
 //! - **断链自动重建**：MuxSession 死亡 → 折叠计数 → 退避重建 → 按注册表
-//!   恢复全部 forward/endpoint；上层只看到 `ForwardStat::active` 变化。
+//!   恢复全部转发/端点；上层只看到 `ForwardStat::active` 变化。
 //! - **注册表与基址跨重建存活**：pause（消息链路断开）只拆除活跃转发，
 //!   `set_base`（connect/listen）恢复。
+//! - **五类注册条目**（v2）：`locals`（Dial 侧本地 TCP 转发）、`udps`（Dial 侧
+//!   UDP 转发）、`remote_endpoint`（Dial 侧接受 remote forward 的 ACL）、
+//!   `endpoint`（Listen 侧拨入 ACL）、`remotes`（Listen 侧 remote forward）。
+//!   角色校验：前三者要求 Dial 基址，后两者要求 Listen 基址。
 //! - **上报**：`TunnelReporter::report` 的 kind 与
 //!   `SecureSessionListener::on_state` 同构（"error" | "retrying"）。
 //!   隧道不产生 "connected"/"closed"（消息链路已覆盖），活跃度走 stats。
@@ -32,7 +36,6 @@
 
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
-use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -45,8 +48,9 @@ use tokio::sync::Notify;
 use tracing::debug;
 
 use crate::forward::{
-    start_forward_endpoint, start_local_forward, ForwardAcl, ForwardEndpointGuard, ForwardRule,
-    ForwardStatus, LocalForwardConfig, LocalForwardGuard,
+    start_forward_endpoint, start_local_forward, start_remote_forward, start_udp_forward,
+    ForwardAcl, ForwardEndpointGuard, ForwardRule, ForwardStatus, LocalForwardConfig,
+    LocalForwardGuard, UdpForwardConfig, UdpForwardGuard,
 };
 use crate::mux::{DialTarget, MuxConfig, MuxSession, Role};
 use crate::TunnelError;
@@ -55,6 +59,9 @@ use crate::TunnelError;
 const BACKOFF_INIT: Duration = Duration::from_millis(500);
 /// 重建退避上限。
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// keepalive 默认值（与 `MuxConfig::default()` 一致）：15s 间隔 / 45s 判死。
+const KEEPALIVE_DEFAULT: (u64, u64) = (15_000, 45_000);
 
 // ---------------------------------------------------------------- 对外类型
 
@@ -109,17 +116,45 @@ impl TunnelBase {
     }
 }
 
+/// stats 行类别（v2）：一条转发/端点注册在哪个面上。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForwardKind {
+    /// Dial 侧本地 TCP 转发。
+    Local,
+    /// Dial 侧 UDP 转发（NAT 式映射）。
+    UdpLocal,
+    /// Dial 侧 remote endpoint（接受 Responder 发起的通道）。
+    RemoteEndpoint,
+    /// Listen 侧转发端点（拨入 ACL）。
+    Endpoint,
+    /// Listen 侧 remote forward（-R，向对端发起通道）。
+    Remote,
+}
+
+impl ForwardKind {
+    /// FFI/CLI 展示文本。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ForwardKind::Local => "local",
+            ForwardKind::UdpLocal => "udp_local",
+            ForwardKind::RemoteEndpoint => "remote_endpoint",
+            ForwardKind::Endpoint => "endpoint",
+            ForwardKind::Remote => "remote",
+        }
+    }
+}
+
 /// `forward_stats()` 的一行（DTO 由绑定层再包一层）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardStat {
     /// 链路已建立且本条转发的 Guard 存活。
     pub active: bool,
-    /// 实际监听端口（listen_port=0 注册时为系统分配的实端口）。
+    /// 实际监听端口（listen_port=0 注册时为系统分配的实端口；端点行为 tunnel_port）。
     pub listen_port: u16,
     /// 本次 Guard 的活计数 + 拆除时折叠的历史累计（channels_open 不累计）。
     pub status: ForwardStatus,
-    /// true = 转发端点（服务端 endpoint 行，listen_port = tunnel_port）。
-    pub is_endpoint: bool,
+    /// 条目类别。
+    pub kind: ForwardKind,
 }
 
 // ---------------------------------------------------------------- 内部类型
@@ -129,11 +164,21 @@ type Reply = std_mpsc::Sender<Result<(), TunnelError>>;
 enum Cmd {
     StartLocal {
         listen_port: u16,
-        host: IpAddr,
+        host: String,
         port: u16,
         reply: Reply,
     },
     StopLocal {
+        listen_port: u16,
+        reply: Reply,
+    },
+    StartUdp {
+        listen_port: u16,
+        host: String,
+        port: u16,
+        reply: Reply,
+    },
+    StopUdp {
         listen_port: u16,
         reply: Reply,
     },
@@ -144,9 +189,30 @@ enum Cmd {
     DisableEndpoint {
         reply: Reply,
     },
+    StartRemote {
+        listen_port: u16,
+        host: String,
+        port: u16,
+        reply: Reply,
+    },
+    StopRemote {
+        listen_port: u16,
+        reply: Reply,
+    },
+    EnableRemoteEndpoint {
+        rules: Vec<ForwardRule>,
+        reply: Reply,
+    },
+    DisableRemoteEndpoint {
+        reply: Reply,
+    },
     SetTunnelPort {
         port: u16,
         reply: Reply,
+    },
+    SetKeepalive {
+        interval_ms: u64,
+        dead_after_ms: u64,
     },
     SetBase {
         base: TunnelBase,
@@ -164,8 +230,8 @@ enum EstablishOutcome {
     Shutdown,
 }
 
-/// 注册表条目：目标 + 历史折叠计数。
-struct LocalReg {
+/// 注册表条目：目标 + 历史折叠计数（TCP 转发两类共用形状）。
+struct ForwardReg {
     target: DialTarget,
     base: ForwardStatus,
 }
@@ -180,8 +246,11 @@ struct EndpointReg {
 #[derive(Default)]
 struct Registry {
     paused: bool,
-    locals: BTreeMap<u16, LocalReg>,
+    locals: BTreeMap<u16, ForwardReg>,
+    udps: BTreeMap<u16, ForwardReg>,
     endpoint: Option<EndpointReg>,
+    remotes: BTreeMap<u16, ForwardReg>,
+    remote_endpoint: Option<EndpointReg>,
 }
 
 /// 活跃资源：仅 supervisor 线程写；stats 只读短锁。
@@ -191,7 +260,10 @@ struct Live {
     /// 当前隧道链路端口（0 = 无链路）。
     link_port: u16,
     locals: BTreeMap<u16, (DialTarget, LocalForwardGuard)>,
+    udps: BTreeMap<u16, (DialTarget, UdpForwardGuard)>,
     endpoint: Option<(Vec<ForwardRule>, ForwardEndpointGuard)>,
+    remotes: BTreeMap<u16, (DialTarget, LocalForwardGuard)>,
+    remote_endpoint: Option<(Vec<ForwardRule>, ForwardEndpointGuard)>,
     active: bool,
 }
 
@@ -202,12 +274,19 @@ struct Snap {
     base: Option<TunnelBase>,
     port_override: u16,
     locals: BTreeMap<u16, DialTarget>,
+    udps: BTreeMap<u16, DialTarget>,
     endpoint: Option<Vec<ForwardRule>>,
+    remotes: BTreeMap<u16, DialTarget>,
+    remote_endpoint: Option<Vec<ForwardRule>>,
 }
 
 impl Snap {
     fn has_work(&self) -> bool {
-        !self.locals.is_empty() || self.endpoint.is_some()
+        !self.locals.is_empty()
+            || !self.udps.is_empty()
+            || !self.remotes.is_empty()
+            || self.endpoint.is_some()
+            || self.remote_endpoint.is_some()
     }
 }
 
@@ -218,10 +297,16 @@ struct Shared {
     base: StdMutex<Option<TunnelBase>>,
     reporter: StdMutex<Option<Arc<dyn TunnelReporter>>>,
     port_override: AtomicU16,
+    /// 隧道 mux keepalive 覆盖（interval_ms, dead_after_ms）；0 interval = 关闭。
+    keepalive: StdMutex<(u64, u64)>,
     registry: StdMutex<Registry>,
     live: StdMutex<Live>,
     wake: Notify,
 }
+
+/// 停止命令的注册表/活跃表选择器（locals / udps / remotes 三张同构表共用）。
+type RegTableSel<'a> = &'a dyn Fn(&mut Registry) -> &mut BTreeMap<u16, ForwardReg>;
+type LiveTableSel<'a, T> = &'a dyn Fn(&Live) -> &BTreeMap<u16, (DialTarget, T)>;
 
 impl Shared {
     fn snapshot(&self) -> Snap {
@@ -232,9 +317,38 @@ impl Shared {
             paused: reg.paused,
             base,
             port_override,
-            locals: reg.locals.iter().map(|(p, r)| (*p, r.target)).collect(),
+            locals: reg
+                .locals
+                .iter()
+                .map(|(p, r)| (*p, r.target.clone()))
+                .collect(),
+            udps: reg
+                .udps
+                .iter()
+                .map(|(p, r)| (*p, r.target.clone()))
+                .collect(),
             endpoint: reg.endpoint.as_ref().map(|e| e.rules.clone()),
+            remotes: reg
+                .remotes
+                .iter()
+                .map(|(p, r)| (*p, r.target.clone()))
+                .collect(),
+            remote_endpoint: reg.remote_endpoint.as_ref().map(|e| e.rules.clone()),
         }
+    }
+
+    /// supervisor 用：把 keepalive 覆盖折进 MuxConfig。
+    fn mux_config(&self) -> MuxConfig {
+        let mut cfg = MuxConfig::default();
+        let (interval_ms, dead_after_ms) = *self.keepalive.lock().unwrap();
+        if interval_ms == 0 {
+            cfg.keepalive_interval = None;
+            cfg.keepalive_dead_after = None;
+        } else {
+            cfg.keepalive_interval = Some(Duration::from_millis(interval_ms));
+            cfg.keepalive_dead_after = Some(Duration::from_millis(dead_after_ms.max(interval_ms)));
+        }
+        cfg
     }
 
     /// 无锁调用 reporter（锁内禁止上报）。
@@ -251,30 +365,51 @@ impl Shared {
         self.report(kind, detail);
     }
 
+    /// Dial 基址守卫（locals/udps/remote_endpoint 共用）。
+    fn require_dial_base(&self, what: &str, alt: &str) -> Result<TunnelBase, TunnelError> {
+        let base = self.base.lock().unwrap().clone().ok_or_else(|| {
+            TunnelError::NotConfigured(format!(
+                "隧道未配置：先 connect() 建立发起端会话，再注册{what}"
+            ))
+        })?;
+        if !base.is_dial() {
+            return Err(TunnelError::RoleMismatch(format!(
+                "{what} 只能用于 connect()（发起端）会话；本会话是 listen()（服务端），请改用{alt}"
+            )));
+        }
+        Ok(base)
+    }
+
+    /// Listen 基址守卫（endpoint/remotes 共用）。
+    fn require_listen_base(&self, what: &str, alt: &str) -> Result<TunnelBase, TunnelError> {
+        let base = self.base.lock().unwrap().clone().ok_or_else(|| {
+            TunnelError::NotConfigured(format!(
+                "隧道未配置：先 listen() 建立服务端会话，再启用{what}"
+            ))
+        })?;
+        if base.is_dial() {
+            return Err(TunnelError::RoleMismatch(format!(
+                "{what} 只能用于 listen()（服务端）会话；本会话是 connect()（发起端），请改用{alt}"
+            )));
+        }
+        Ok(base)
+    }
+
     // ---- 命令处理（cmd 线程；探测用 std::net，无 runtime） ----
 
     fn cmd_start_local(
         &self,
         listen_port: u16,
-        host: IpAddr,
+        host: String,
         port: u16,
     ) -> Result<(), TunnelError> {
         let target = DialTarget::new(host, port);
         if !target.validate() {
             return Err(TunnelError::InvalidTarget(format!(
-                "非法转发目标 {host}:{port}（端口 0 / 未指定 / 组播 / 广播地址均不允许）",
+                "非法转发目标 {target}（端口 0 / 未指定 / 组播 / 广播地址或非法主机名均不允许）",
             )));
         }
-        let base = self.base.lock().unwrap().clone().ok_or_else(|| {
-            TunnelError::NotConfigured(
-                "隧道未配置：先 connect() 建立发起端会话，再注册本地转发".into(),
-            )
-        })?;
-        if !base.is_dial() {
-            return Err(TunnelError::RoleMismatch(
-                "start_local_forward 只能用于 connect()（发起端）会话；本会话是 listen()（服务端），请改用 enable_forward_endpoint".into(),
-            ));
-        }
+        self.require_dial_base("本地转发", "enable_forward_endpoint")?;
         if listen_port != 0 {
             // D6 同步段探测：绑不上就立刻 false + on_state（不等 supervisor）。
             std::net::TcpListener::bind(("127.0.0.1", listen_port))
@@ -288,7 +423,7 @@ impl Shared {
                 None => {
                     reg.locals.insert(
                         listen_port,
-                        LocalReg {
+                        ForwardReg {
                             target,
                             base: ForwardStatus::default(),
                         },
@@ -300,29 +435,66 @@ impl Shared {
         Ok(())
     }
 
-    fn cmd_stop_local(&self, listen_port: u16) -> Result<(), TunnelError> {
-        // 注册键 = 请求端口（0 = 系统分配）。stats 行在有活链时给的是实际端口 ——
-        // 精确键未命中时，回退按活链实测端口匹配，让 stop 收到的值与 stats 展示一致。
-        // 锁序：先 registry 后 live（与全仓一致），且不跨 await（本函数纯同步）。
+    fn cmd_start_udp(&self, listen_port: u16, host: String, port: u16) -> Result<(), TunnelError> {
+        let target = DialTarget::new(host, port);
+        if !target.validate() {
+            return Err(TunnelError::InvalidTarget(format!(
+                "非法 UDP 转发目标 {target}",
+            )));
+        }
+        self.require_dial_base("UDP 转发", "enable_forward_endpoint")?;
+        if listen_port != 0 {
+            std::net::UdpSocket::bind(("127.0.0.1", listen_port))
+                .map_err(|e| TunnelError::Bind(format!("127.0.0.1:{listen_port} (udp): {e}")))?;
+        }
+        {
+            let mut reg = self.registry.lock().unwrap();
+            match reg.udps.get_mut(&listen_port) {
+                Some(entry) => entry.target = target,
+                None => {
+                    reg.udps.insert(
+                        listen_port,
+                        ForwardReg {
+                            target,
+                            base: ForwardStatus::default(),
+                        },
+                    );
+                }
+            }
+        }
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    /// 停止一个 TCP/UDP/remote 转发：先精确键，再回退按活链实测端口匹配
+    /// （stats 展示的是实端口，stop 收到的值应与之一致）。`reg_table` 选择
+    /// 注册表，`live_table` 选择对应活跃表（Guard 统一实现 [`ListenPort`]）。
+    /// 锁序：registry 先于 live；本函数纯同步、不跨 await。
+    fn cmd_stop_forward<T: ListenPort>(
+        &self,
+        reg_table: RegTableSel<'_>,
+        live_table: LiveTableSel<'_, T>,
+        what: &str,
+        listen_port: u16,
+    ) -> Result<(), TunnelError> {
         let removed = {
             let mut reg = self.registry.lock().unwrap();
-            if reg.locals.remove(&listen_port).is_some() {
+            if reg_table(&mut reg).remove(&listen_port).is_some() {
                 true
             } else {
                 let hit = {
                     let live = self.live.lock().unwrap();
-                    reg.locals
+                    reg_table(&mut reg)
                         .keys()
                         .find(|&&k| {
                             k != listen_port
-                                && live
-                                    .locals
+                                && live_table(&live)
                                     .get(&k)
-                                    .is_some_and(|(_, g)| g.local_addr().port() == listen_port)
+                                    .is_some_and(|(_, g)| g.listen_port() == listen_port)
                         })
                         .copied()
                 };
-                hit.is_some_and(|k| reg.locals.remove(&k).is_some())
+                hit.is_some_and(|k| reg_table(&mut reg).remove(&k).is_some())
             }
         };
         self.wake.notify_one();
@@ -330,35 +502,14 @@ impl Shared {
             Ok(())
         } else {
             Err(TunnelError::Stopped(format!(
-                "listen_port {listen_port} 未在转发注册表中",
+                "{what} {listen_port} 未在转发注册表中",
             )))
         }
     }
 
     fn cmd_enable_endpoint(&self, rules: Vec<ForwardRule>) -> Result<(), TunnelError> {
-        let base = self.base.lock().unwrap().clone().ok_or_else(|| {
-            TunnelError::NotConfigured(
-                "隧道未配置：先 listen() 建立服务端会话，再启用转发端点".into(),
-            )
-        })?;
-        if base.is_dial() {
-            return Err(TunnelError::RoleMismatch(
-                "enable_forward_endpoint 只能用于 listen()（服务端）会话；本会话是 connect()（发起端），请改用 start_local_forward".into(),
-            ));
-        }
-        if rules.is_empty() {
-            return Err(TunnelError::InvalidRule(
-                "转发端点规则表为空：至少放行一条 (host, port_from..=port_to)".into(),
-            ));
-        }
-        for r in &rules {
-            if r.port_from > r.port_to {
-                return Err(TunnelError::InvalidRule(format!(
-                    "规则 {}:{}-{} 起止端口倒置",
-                    r.host, r.port_from, r.port_to
-                )));
-            }
-        }
+        let base = self.require_listen_base("转发端点", "start_local_forward")?;
+        validate_rules(&rules)?;
         // tunnel_port 冲突同步探测（双栈：v4 必须干净；v6 缺失环境忽略）。
         let tp = base.tunnel_port(self.port_override.load(Ordering::Relaxed))?;
         std::net::TcpListener::bind(("0.0.0.0", tp))
@@ -387,6 +538,67 @@ impl Shared {
 
     fn cmd_disable_endpoint(&self) -> Result<(), TunnelError> {
         self.registry.lock().unwrap().endpoint = None;
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    fn cmd_start_remote(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<(), TunnelError> {
+        let target = DialTarget::new(host, port);
+        if !target.validate() {
+            return Err(TunnelError::InvalidTarget(format!(
+                "非法 remote forward 目标 {target}",
+            )));
+        }
+        self.require_listen_base("remote forward", "enable_remote_endpoint")?;
+        if listen_port != 0 {
+            std::net::TcpListener::bind(("127.0.0.1", listen_port))
+                .map_err(|e| TunnelError::Bind(format!("127.0.0.1:{listen_port}: {e}")))?;
+        }
+        {
+            let mut reg = self.registry.lock().unwrap();
+            match reg.remotes.get_mut(&listen_port) {
+                Some(entry) => entry.target = target,
+                None => {
+                    reg.remotes.insert(
+                        listen_port,
+                        ForwardReg {
+                            target,
+                            base: ForwardStatus::default(),
+                        },
+                    );
+                }
+            }
+        }
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    fn cmd_enable_remote_endpoint(&self, rules: Vec<ForwardRule>) -> Result<(), TunnelError> {
+        self.require_dial_base("remote endpoint", "start_remote_forward")?;
+        validate_rules(&rules)?;
+        {
+            let mut reg = self.registry.lock().unwrap();
+            match reg.remote_endpoint.as_mut() {
+                Some(entry) => entry.rules = rules,
+                None => {
+                    reg.remote_endpoint = Some(EndpointReg {
+                        rules,
+                        base: ForwardStatus::default(),
+                    });
+                }
+            }
+        }
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    fn cmd_disable_remote_endpoint(&self) -> Result<(), TunnelError> {
+        self.registry.lock().unwrap().remote_endpoint = None;
         self.wake.notify_one();
         Ok(())
     }
@@ -438,6 +650,20 @@ impl Shared {
                     _ => {}
                 }
             }
+            for (port, (target, _)) in &live.udps {
+                match reg.udps.get(port) {
+                    None => stop.push(*port),
+                    Some(r) if r.target != *target => restart.push(*port),
+                    _ => {}
+                }
+            }
+            for (port, (target, _)) in &live.remotes {
+                match reg.remotes.get(port) {
+                    None => stop.push(*port),
+                    Some(r) if r.target != *target => restart.push(*port),
+                    _ => {}
+                }
+            }
             (stop, restart)
         };
         for port in stop_ports.iter().chain(restart_ports.iter()) {
@@ -452,6 +678,26 @@ impl Shared {
                     }
                 }
             }
+            let taken = self.live.lock().unwrap().udps.remove(port);
+            if let Some((_, guard)) = taken {
+                guard.stop().await;
+                if restart_ports.contains(port) {
+                    let mut reg = self.registry.lock().unwrap();
+                    if let Some(entry) = reg.udps.get_mut(port) {
+                        fold(&mut entry.base, guard.status());
+                    }
+                }
+            }
+            let taken = self.live.lock().unwrap().remotes.remove(port);
+            if let Some((_, guard)) = taken {
+                guard.stop().await;
+                if restart_ports.contains(port) {
+                    let mut reg = self.registry.lock().unwrap();
+                    if let Some(entry) = reg.remotes.get_mut(port) {
+                        fold(&mut entry.base, guard.status());
+                    }
+                }
+            }
         }
 
         // 2) 需要启的：注册表有、live 没有（含刚被 Restart 停掉的）。
@@ -461,7 +707,7 @@ impl Shared {
             reg.locals
                 .iter()
                 .filter(|(p, _)| !live.locals.contains_key(p))
-                .map(|(p, r)| (*p, r.target))
+                .map(|(p, r)| (*p, r.target.clone()))
                 .collect()
         };
         for (port, target) in starts {
@@ -469,7 +715,7 @@ impl Shared {
                 session.clone(),
                 LocalForwardConfig {
                     listen_port: port,
-                    target,
+                    target: target.clone(),
                 },
             ) {
                 Ok(guard) => {
@@ -482,49 +728,133 @@ impl Shared {
                 Err(e) => self.report_err(&e),
             }
         }
-
-        // 3) 端点：规则集变化则先停旧、折叠历史，再启新。
-        let (want, have) = {
+        let udp_starts: Vec<(u16, DialTarget)> = {
             let reg = self.registry.lock().unwrap();
             let live = self.live.lock().unwrap();
-            (
-                reg.endpoint.as_ref().map(|e| e.rules.clone()),
-                live.endpoint.as_ref().map(|e| e.0.clone()),
-            )
+            reg.udps
+                .iter()
+                .filter(|(p, _)| !live.udps.contains_key(p))
+                .map(|(p, r)| (*p, r.target.clone()))
+                .collect()
         };
-        if want != have {
-            let taken = { self.live.lock().unwrap().endpoint.take() };
-            if let Some((old_rules, guard)) = taken {
-                guard.stop().await;
-                let mut reg = self.registry.lock().unwrap();
-                if let Some(entry) = reg.endpoint.as_mut() {
-                    // 条目仍在（换规则场景）→ 折叠历史；已注销则自然丢弃。
-                    if want.is_some() || entry.rules == old_rules {
-                        fold(&mut entry.base, guard.status());
-                    }
+        for (port, target) in udp_starts {
+            match start_udp_forward(
+                session.clone(),
+                UdpForwardConfig {
+                    listen_port: port,
+                    target: target.clone(),
+                },
+            ) {
+                Ok(guard) => {
+                    self.live.lock().unwrap().udps.insert(port, (target, guard));
+                }
+                Err(e) => self.report_err(&e),
+            }
+        }
+        let remote_starts: Vec<(u16, DialTarget)> = {
+            let reg = self.registry.lock().unwrap();
+            let live = self.live.lock().unwrap();
+            reg.remotes
+                .iter()
+                .filter(|(p, _)| !live.remotes.contains_key(p))
+                .map(|(p, r)| (*p, r.target.clone()))
+                .collect()
+        };
+        for (port, target) in remote_starts {
+            match start_remote_forward(
+                session.clone(),
+                LocalForwardConfig {
+                    listen_port: port,
+                    target: target.clone(),
+                },
+            ) {
+                Ok(guard) => {
+                    self.live
+                        .lock()
+                        .unwrap()
+                        .remotes
+                        .insert(port, (target, guard));
+                }
+                Err(e) => self.report_err(&e),
+            }
+        }
+
+        // 3) 两个端点（endpoint / remote_endpoint）：规则集变化则先停旧、折叠历史，再启新。
+        for (want, which) in [
+            (
+                {
+                    let reg = self.registry.lock().unwrap();
+                    reg.endpoint.as_ref().map(|e| e.rules.clone())
+                },
+                EndpointSide::Endpoint,
+            ),
+            (
+                {
+                    let reg = self.registry.lock().unwrap();
+                    reg.remote_endpoint.as_ref().map(|e| e.rules.clone())
+                },
+                EndpointSide::RemoteEndpoint,
+            ),
+        ] {
+            self.sync_endpoint(session, want, which).await;
+        }
+    }
+
+    /// 单个端点面（endpoint / remote_endpoint）的停旧-启新同步。
+    async fn sync_endpoint(
+        &self,
+        session: &Arc<MuxSession>,
+        want: Option<Vec<ForwardRule>>,
+        which: EndpointSide,
+    ) {
+        let have = {
+            let live = self.live.lock().unwrap();
+            match which {
+                EndpointSide::Endpoint => live.endpoint.as_ref().map(|e| e.0.clone()),
+                EndpointSide::RemoteEndpoint => live.remote_endpoint.as_ref().map(|e| e.0.clone()),
+            }
+        };
+        if want == have {
+            return;
+        }
+        let taken = { self.live.lock().unwrap().take_for(which) };
+        if let Some((old_rules, guard)) = taken {
+            guard.stop().await;
+            let mut reg = self.registry.lock().unwrap();
+            let slot = match which {
+                EndpointSide::Endpoint => reg.endpoint.as_mut(),
+                EndpointSide::RemoteEndpoint => reg.remote_endpoint.as_mut(),
+            };
+            if let Some(entry) = slot {
+                // 条目仍在（换规则场景）→ 折叠历史；已注销则自然丢弃。
+                if want.is_some() || entry.rules == old_rules {
+                    fold(&mut entry.base, guard.status());
                 }
             }
-            if let Some(rules) = want {
-                match start_forward_endpoint(session.clone(), ForwardAcl::new(rules.clone())) {
-                    Ok(guard) => {
-                        self.live.lock().unwrap().endpoint = Some((rules, guard));
-                    }
-                    Err(e) => self.report_err(&e),
+        }
+        if let Some(rules) = want {
+            match start_forward_endpoint(session.clone(), ForwardAcl::new(rules.clone())) {
+                Ok(guard) => {
+                    self.live.lock().unwrap().set_for(which, (rules, guard));
                 }
+                Err(e) => self.report_err(&e),
             }
         }
     }
 
     /// 拆除链路与全部活跃 Guard；计数折叠回注册表（channels_open 归零不累计）。
     async fn teardown(&self) {
-        let (locals, ep, session) = {
+        let (locals, udps, remotes, ep, rep, session) = {
             let mut live = self.live.lock().unwrap();
             live.active = false;
             live.link_port = 0;
             let locals = std::mem::take(&mut live.locals);
+            let udps = std::mem::take(&mut live.udps);
+            let remotes = std::mem::take(&mut live.remotes);
             let ep = live.endpoint.take();
+            let rep = live.remote_endpoint.take();
             let session = live.session.take();
-            (locals, ep, session)
+            (locals, udps, remotes, ep, rep, session)
         };
         if let Some(s) = session {
             s.shutdown();
@@ -533,7 +863,16 @@ impl Shared {
         for (_, guard) in locals.values() {
             guard.stop().await;
         }
+        for (_, guard) in udps.values() {
+            guard.stop().await;
+        }
+        for (_, guard) in remotes.values() {
+            guard.stop().await;
+        }
         if let Some((_, guard)) = &ep {
+            guard.stop().await;
+        }
+        if let Some((_, guard)) = &rep {
             guard.stop().await;
         }
         {
@@ -543,8 +882,23 @@ impl Shared {
                     fold(&mut entry.base, guard.status());
                 }
             }
+            for (port, (_, guard)) in &udps {
+                if let Some(entry) = reg.udps.get_mut(port) {
+                    fold(&mut entry.base, guard.status());
+                }
+            }
+            for (port, (_, guard)) in &remotes {
+                if let Some(entry) = reg.remotes.get_mut(port) {
+                    fold(&mut entry.base, guard.status());
+                }
+            }
             if let Some((_, guard)) = &ep {
                 if let Some(entry) = reg.endpoint.as_mut() {
+                    fold(&mut entry.base, guard.status());
+                }
+            }
+            if let Some((_, guard)) = &rep {
+                if let Some(entry) = reg.remote_endpoint.as_mut() {
                     fold(&mut entry.base, guard.status());
                 }
             }
@@ -554,31 +908,49 @@ impl Shared {
     /// 统计行（registry 先于 live；只读短锁；锁内不 await、不上报）。
     fn stats(&self) -> Vec<ForwardStat> {
         let mut rows = Vec::new();
-        // 先取端点行（registry → live）；无注册端点时本地行仍要继续。
-        let endpoint_row = {
+        // 端点行（registry → live）：无注册端点时不产生行。
+        let endpoint_rows: Vec<(ForwardKind, ForwardStatus, bool, u16)> = {
             let reg = self.registry.lock().unwrap();
             let live = self.live.lock().unwrap();
-            match &reg.endpoint {
-                None => None,
-                Some(entry) => {
-                    let listen = if live.link_port != 0 {
-                        live.link_port
-                    } else {
-                        let base = self.base.lock().unwrap().clone();
-                        let ov = self.port_override.load(Ordering::Relaxed);
-                        // 无链路：报告按基址推导的「应然」端口（行仍可见，active=false）。
-                        base.as_ref()
-                            .and_then(|b| b.tunnel_port(ov).ok())
-                            .unwrap_or(0)
-                    };
-                    Some((
-                        entry.base,
-                        live.endpoint.as_ref().map(|(_, g)| g.status()),
-                        live.active,
-                        listen,
-                    ))
-                }
+            let mut rows = Vec::new();
+            for (kind, entry, live_guard) in [
+                (
+                    ForwardKind::Endpoint,
+                    reg.endpoint.as_ref(),
+                    live.endpoint.as_ref().map(|(_, g)| g.status()),
+                ),
+                (
+                    ForwardKind::RemoteEndpoint,
+                    reg.remote_endpoint.as_ref(),
+                    live.remote_endpoint.as_ref().map(|(_, g)| g.status()),
+                ),
+            ] {
+                let Some(entry) = entry else { continue };
+                let listen = if live.link_port != 0 {
+                    live.link_port
+                } else {
+                    let base = self.base.lock().unwrap().clone();
+                    let ov = self.port_override.load(Ordering::Relaxed);
+                    // 无链路：报告按基址推导的「应然」端口（行仍可见，active=false）。
+                    base.as_ref()
+                        .and_then(|b| b.tunnel_port(ov).ok())
+                        .unwrap_or(0)
+                };
+                rows.push((kind, entry.base, live_guard, live.active, listen));
             }
+            rows.into_iter()
+                .map(|(kind, base, live_s, active, listen)| {
+                    (
+                        kind,
+                        match live_s {
+                            Some(s) => merge(&base, &s),
+                            None => base,
+                        },
+                        active,
+                        listen,
+                    )
+                })
+                .collect()
         };
         // 本地行（registry → live）。
         {
@@ -596,31 +968,134 @@ impl Shared {
                             active: live.active,
                             listen_port: listen,
                             status: merge(&entry.base, &guard.status()),
-                            is_endpoint: false,
+                            kind: ForwardKind::Local,
                         });
                     }
                     None => rows.push(ForwardStat {
                         active: false,
                         listen_port: *port,
                         status: entry.base,
-                        is_endpoint: false,
+                        kind: ForwardKind::Local,
+                    }),
+                }
+            }
+            for (port, entry) in &reg.udps {
+                match live.udps.get(port) {
+                    Some((_, guard)) => {
+                        let listen = if *port == 0 {
+                            guard.local_addr().port()
+                        } else {
+                            *port
+                        };
+                        rows.push(ForwardStat {
+                            active: live.active,
+                            listen_port: listen,
+                            status: merge(&entry.base, &guard.status()),
+                            kind: ForwardKind::UdpLocal,
+                        });
+                    }
+                    None => rows.push(ForwardStat {
+                        active: false,
+                        listen_port: *port,
+                        status: entry.base,
+                        kind: ForwardKind::UdpLocal,
+                    }),
+                }
+            }
+            for (port, entry) in &reg.remotes {
+                match live.remotes.get(port) {
+                    Some((_, guard)) => {
+                        let listen = if *port == 0 {
+                            guard.local_addr().port()
+                        } else {
+                            *port
+                        };
+                        rows.push(ForwardStat {
+                            active: live.active,
+                            listen_port: listen,
+                            status: merge(&entry.base, &guard.status()),
+                            kind: ForwardKind::Remote,
+                        });
+                    }
+                    None => rows.push(ForwardStat {
+                        active: false,
+                        listen_port: *port,
+                        status: entry.base,
+                        kind: ForwardKind::Remote,
                     }),
                 }
             }
         }
-        if let Some((ep_base, ep_live, ep_active, ep_listen)) = endpoint_row {
+        for (kind, status, active, listen) in endpoint_rows {
             rows.push(ForwardStat {
-                active: ep_active,
-                listen_port: ep_listen,
-                status: match ep_live {
-                    Some(s) => merge(&ep_base, &s),
-                    None => ep_base,
-                },
-                is_endpoint: true,
+                active,
+                listen_port: listen,
+                status,
+                kind,
             });
         }
         rows
     }
+}
+
+#[derive(Clone, Copy)]
+enum EndpointSide {
+    Endpoint,
+    RemoteEndpoint,
+}
+
+/// Guard 统一取实际监听端口（stop 回退匹配用）。
+trait ListenPort {
+    fn listen_port(&self) -> u16;
+}
+
+impl ListenPort for LocalForwardGuard {
+    fn listen_port(&self) -> u16 {
+        self.local_addr().port()
+    }
+}
+
+impl ListenPort for UdpForwardGuard {
+    fn listen_port(&self) -> u16 {
+        self.local_addr().port()
+    }
+}
+
+impl Live {
+    fn take_for(
+        &mut self,
+        which: EndpointSide,
+    ) -> Option<(Vec<ForwardRule>, ForwardEndpointGuard)> {
+        match which {
+            EndpointSide::Endpoint => self.endpoint.take(),
+            EndpointSide::RemoteEndpoint => self.remote_endpoint.take(),
+        }
+    }
+
+    fn set_for(&mut self, which: EndpointSide, v: (Vec<ForwardRule>, ForwardEndpointGuard)) {
+        match which {
+            EndpointSide::Endpoint => self.endpoint = Some(v),
+            EndpointSide::RemoteEndpoint => self.remote_endpoint = Some(v),
+        }
+    }
+}
+
+/// 端点/转发规则公共校验：非空 + 起止端口正序。
+fn validate_rules(rules: &[ForwardRule]) -> Result<(), TunnelError> {
+    if rules.is_empty() {
+        return Err(TunnelError::InvalidRule(
+            "转发端点规则表为空：至少放行一条 (host, port_from..=port_to)".into(),
+        ));
+    }
+    for r in rules {
+        if r.port_from > r.port_to {
+            return Err(TunnelError::InvalidRule(format!(
+                "规则 {}:{}-{} 起止端口倒置",
+                r.host, r.port_from, r.port_to
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 活计数叠加进历史基数（channels_open 不累计：拆除即归零）。
@@ -812,7 +1287,7 @@ async fn supervisor(shared: Arc<Shared>, mut stop: tokio_mpsc::UnboundedReceiver
         } else {
             Role::Responder
         };
-        let session = Arc::new(MuxSession::start(stream, role, MuxConfig::default()));
+        let session = Arc::new(MuxSession::start(stream, role, shared.mux_config()));
         debug!(port = tunnel_port, "tunnel link established");
         shared.install(session.clone(), tunnel_port).await;
 
@@ -868,7 +1343,30 @@ fn handle_cmd(cmd: Cmd, shared: &Shared) -> bool {
             true
         }
         Cmd::StopLocal { listen_port, reply } => {
-            let _ = reply.send(shared.cmd_stop_local(listen_port));
+            let _ = reply.send(shared.cmd_stop_forward(
+                &|reg| &mut reg.locals,
+                &|live| &live.locals,
+                "listen_port",
+                listen_port,
+            ));
+            true
+        }
+        Cmd::StartUdp {
+            listen_port,
+            host,
+            port,
+            reply,
+        } => {
+            let _ = reply.send(shared.cmd_start_udp(listen_port, host, port));
+            true
+        }
+        Cmd::StopUdp { listen_port, reply } => {
+            let _ = reply.send(shared.cmd_stop_forward(
+                &|reg| &mut reg.udps,
+                &|live| &live.udps,
+                "udp listen_port",
+                listen_port,
+            ));
             true
         }
         Cmd::EnableEndpoint { rules, reply } => {
@@ -879,8 +1377,41 @@ fn handle_cmd(cmd: Cmd, shared: &Shared) -> bool {
             let _ = reply.send(shared.cmd_disable_endpoint());
             true
         }
+        Cmd::StartRemote {
+            listen_port,
+            host,
+            port,
+            reply,
+        } => {
+            let _ = reply.send(shared.cmd_start_remote(listen_port, host, port));
+            true
+        }
+        Cmd::StopRemote { listen_port, reply } => {
+            let _ = reply.send(shared.cmd_stop_forward(
+                &|reg| &mut reg.remotes,
+                &|live| &live.remotes,
+                "remote listen_port",
+                listen_port,
+            ));
+            true
+        }
+        Cmd::EnableRemoteEndpoint { rules, reply } => {
+            let _ = reply.send(shared.cmd_enable_remote_endpoint(rules));
+            true
+        }
+        Cmd::DisableRemoteEndpoint { reply } => {
+            let _ = reply.send(shared.cmd_disable_remote_endpoint());
+            true
+        }
         Cmd::SetTunnelPort { port, reply } => {
             let _ = reply.send(shared.cmd_set_tunnel_port(port));
+            true
+        }
+        Cmd::SetKeepalive {
+            interval_ms,
+            dead_after_ms,
+        } => {
+            *shared.keepalive.lock().unwrap() = (interval_ms, dead_after_ms.max(interval_ms));
             true
         }
         Cmd::SetBase { base, reporter } => {
@@ -939,6 +1470,7 @@ impl TunnelLink {
             base: StdMutex::new(None),
             reporter: StdMutex::new(None),
             port_override: AtomicU16::new(0),
+            keepalive: StdMutex::new(KEEPALIVE_DEFAULT),
             registry: StdMutex::new(Registry::default()),
             live: StdMutex::new(Live::default()),
             wake: Notify::new(),
@@ -974,11 +1506,12 @@ impl TunnelLink {
     }
 
     /// 注册本地转发（Dial 角色；listen_port=0 → 系统分配实端口）。
+    /// `host` 为 IP 字面量或主机名（主机名由对端解析并按会话钉扎）。
     /// 校验/探测同步完成，返回时注册已生效；实际绑定由 supervisor 惰性完成。
     pub fn start_local_forward(
         &self,
         listen_port: u16,
-        host: IpAddr,
+        host: String,
         port: u16,
     ) -> Result<(), TunnelError> {
         self.call(|reply| Cmd::StartLocal {
@@ -994,7 +1527,29 @@ impl TunnelLink {
         self.call(|reply| Cmd::StopLocal { listen_port, reply })
     }
 
+    /// 注册 UDP 转发（Dial 角色；v2 NAT 式映射，listen_port=0 → 系统分配）。
+    /// 对端 endpoint 的 ACL 规则须 `udp: true` 放行该目标。
+    pub fn start_udp_forward(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<(), TunnelError> {
+        self.call(|reply| Cmd::StartUdp {
+            listen_port,
+            host,
+            port,
+            reply,
+        })
+    }
+
+    /// 注销 UDP 转发。
+    pub fn stop_udp_forward(&self, listen_port: u16) -> Result<(), TunnelError> {
+        self.call(|reply| Cmd::StopUdp { listen_port, reply })
+    }
+
     /// 启用/替换转发端点 ACL（Listen 角色；规则非空且 from<=to；tunnel_port 双栈探测）。
+    /// 规则主机为 IP 字面量或主机名；`udp: true` 的规则同时放行 DOPEN（UDP 拨号）。
     pub fn enable_forward_endpoint(&self, rules: Vec<ForwardRule>) -> Result<(), TunnelError> {
         self.call(|reply| Cmd::EnableEndpoint { rules, reply })
     }
@@ -1004,9 +1559,50 @@ impl TunnelLink {
         self.call(|reply| Cmd::DisableEndpoint { reply })
     }
 
+    /// 注册 remote forward（Listen 角色；v2 `-R`）：本机 127.0.0.1:listen_port 的
+    /// 每条入站连接经 mux 偶数通道转发到**对端机**上的 host:port。
+    /// 对端须启用 remote endpoint ACL（`enable_remote_endpoint`）。
+    pub fn start_remote_forward(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<(), TunnelError> {
+        self.call(|reply| Cmd::StartRemote {
+            listen_port,
+            host,
+            port,
+            reply,
+        })
+    }
+
+    /// 注销 remote forward。
+    pub fn stop_remote_forward(&self, listen_port: u16) -> Result<(), TunnelError> {
+        self.call(|reply| Cmd::StopRemote { listen_port, reply })
+    }
+
+    /// 启用/替换 remote endpoint ACL（Dial 角色）：放行 Responder 发起的
+    /// 通道（偶数）并拨本机目标。空表拒绝；默认（未启用）= 全拒。
+    pub fn enable_remote_endpoint(&self, rules: Vec<ForwardRule>) -> Result<(), TunnelError> {
+        self.call(|reply| Cmd::EnableRemoteEndpoint { rules, reply })
+    }
+
+    /// 关闭 remote endpoint（幂等）。
+    pub fn disable_remote_endpoint(&self) -> Result<(), TunnelError> {
+        self.call(|reply| Cmd::DisableRemoteEndpoint { reply })
+    }
+
     /// 覆盖 tunnel_port（0 = 恢复 `secure 端口 + 1` 推导）；生效即重建链路。
     pub fn set_tunnel_port(&self, port: u16) -> Result<(), TunnelError> {
         self.call(|reply| Cmd::SetTunnelPort { port, reply })
+    }
+
+    /// 隧道 mux keepalive（v2）：interval_ms=0 关闭；改动随下一次链路重建生效。
+    pub fn set_keepalive(&self, interval_ms: u64, dead_after_ms: u64) {
+        let _ = self.cmd_tx.send(Cmd::SetKeepalive {
+            interval_ms,
+            dead_after_ms,
+        });
     }
 
     /// 注入基址与上报器（connect/listen 后调用）：解除 pause 并按注册表恢复转发。

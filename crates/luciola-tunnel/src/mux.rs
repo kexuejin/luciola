@@ -1,20 +1,36 @@
-//! mux v1 —— 在一条 SecureStream 上复用多路 LAN TCP 通道。
+//! mux —— 在一条 SecureStream 上复用多路 LAN TCP/UDP 通道。
 //!
-//! 设计要点：
+//! 帧格式 v1 不变：12 字节帧头 MX | ver 0x01 | type | ch_id(u32be) | payload_len(u32be)。
+//! v2 能力全部落在原本「保留」的帧类型上，v1 对端把它们当未知保留帧忽略
+//! （对 v1 发送 PING/WINDOW 是干净的 no-op），因此前后向兼容：
 //!
-//! - 12 字节帧头：MX | ver 0x01 | type | ch_id(u32be) | payload_len(u32be)；
-//!   解码器按协议常量 MAX_DATA_FRAME = 64KiB 校验长度，越界即结构性违规（终止会话）。
-//! - 通道 ID：Initiator 奇数分配（1,3,5,…）且单调不复用；v1 收到偶数 ch_id 的
-//!   通道帧 = 结构性违规，终止会话（v2 反向转发时按方向放宽）。
+//! - **keepalive（v2）**：会话启动即发探测 PING(nonce)，对端回 PONG(nonce)；
+//!   收到任何 PING/PONG/WINDOW 即证明对端是 v2（`peer_v2`）。v2 对端之间
+//!   `keepalive_dead_after` 静默超时终止会话（由上层重建）；v1 对端永不回
+//!   PONG，因此**永不**被静默超时误杀（R7 边界保持）。
+//! - **WINDOW 逐通道流控（v2）**：接收方消费 DATA 后回 WINDOW(delta)；
+//!   发送方在 `peer_v2` 证明后执行窗口（outstanding ≥ window_size 即挂起），
+//!   v1 对端维持 v1 语义（队列背压 + stall_hard_timeout，§1.4）。
+//!   credit 帧与 EOF/CLOSE 同走可靠路径（队列满则延迟补发，不可丢）。
+//! - **双向 OPEN（v2 remote forward，-R）**：v1 只有 Initiator 发 OPEN（奇数
+//!   通道）；v2 中 Responder 也可发 OPEN（偶数通道），仅当 `peer_v2` 已证明
+//!   ——否则按 D9 结构性违规终止（v1 对端收到偶数 OPEN 必死会话）。
+//! - **数据报通道（v2 UDP 会话映射）**：新帧类型 T_DOPEN 打开数据报模式
+//!   通道，每个 DATA 帧 = 一个 UDP 数据报（边界保留）；仅对已证明 v2 的
+//!   对端发送/接受。空 DATA 帧在线上被丢弃，故 0 长数据报不可用（记录在案）。
+//! - **主机名目标（v2）**：OPEN/DOPEN 的 host 字段本就是 utf8 文本；v2 接受
+//!   合法主机名（结构校验），解析与钉扎由策略层（forward endpoint）完成。
+//!
+//! 不变的既有语义：
+//!
 //! - grant 先把通道置 Active、再写 ACK(0)（顺序反了会让对端在 ACK 前写入 DATA
 //!   被判违规）；OPEN_ACK(非0) 是终态帧，只回收通道、不补发 CLOSE。
 //! - 终止是幂等的：terminate(reason) 首次触发者生效，避免 CLOSE 互踢循环；
 //!   会话级关闭 = CLOSE(type 0x05, ch_id 0, reason)。
 //! - 级联停顿硬超时（§1.4）：通道入站队列 send 超过 stall_hard_timeout →
-//!   只拆该通道（CLOSE(2)），会话与其余通道继续流动。
-//! - 控制帧不可丢：队列满时经 `Inner::defer_ctrl` 延迟串行补发（EOF/CLOSE 半关闭语义）。
-//! - poll_write 按部分写实现：每次最多接受 cfg.max_data_frame 字节，出站容量
-//!   等待借由 tokio_util::sync::PollSender::poll_reserve 注册 waker。
+//!   只拆该通道（CLOSE(2)），会话与其余通道继续流动（对 v1 对端仍是唯一防线）。
+//! - 控制帧不可丢：队列满时经 `Inner::defer_ctrl` 延迟串行补发（EOF/CLOSE/WINDOW）。
+//! - poll_write 按部分写实现：每次最多接受 min(max_data_frame, 窗口余量) 字节。
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -24,13 +40,13 @@ use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::task::{Context, Poll};
-use std::time::Duration;
+use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 use luciola::link::secure::{SecureRecvHalf, SecureSendHalf, SecureStream};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 use tokio_util::sync::PollSender;
 use tracing::{debug, warn};
 
@@ -50,12 +66,14 @@ pub const T_ACK: u8 = 0x02;
 pub const T_DATA: u8 = 0x03;
 pub const T_EOF: u8 = 0x04;
 pub const T_CLOSE: u8 = 0x05;
-/// 保留（v2 keepalive）。
+/// 会话级 keepalive 探测（v2；payload = 8 字节 nonce，ch_id 0）。v1 对端忽略。
 pub const T_PING: u8 = 0x06;
-/// 保留（v2 keepalive）。
+/// PING 的应答（v2；payload = 回显 nonce，ch_id 0）。v1 对端忽略。
 pub const T_PONG: u8 = 0x07;
-/// 保留（v2 流控）。
+/// 逐通道流控 credit（v2；payload = u32be 消费增量，ch_id = 通道）。v1 对端忽略。
 pub const T_WINDOW: u8 = 0x08;
+/// 数据报通道 OPEN（v2；payload 同 OPEN，ch_id 奇偶规则同 OPEN）。仅对 v2 对端发送。
+pub const T_DOPEN: u8 = 0x09;
 
 /// OPEN_ACK status（§1.1）。
 pub struct AckStatus;
@@ -78,56 +96,102 @@ impl CloseReason {
 
 // ---------------------------------------------------------------- 类型与错误
 
-/// mux 角色（D8：v1 只有 Initiator 打开通道）。
+/// mux 角色（D8）：决定本端分配的通道 ID 奇偶——Initiator 奇数、Responder 偶数
+/// （v2 起 Responder 也可发 OPEN，即 remote forward；奇偶规则不变）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Initiator,
     Responder,
 }
 
-/// 拨号目标：裸 IP 字面量 + 端口（wire 上 host 是文本 IP，不含方括号/zone）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// 拨号目标：IP 字面量或主机名 + 端口（wire 上 host 是 utf8 文本，≤255 字节）。
+///
+/// 主机名只做结构校验；解析发生在拨号侧（forward endpoint），并按会话钉扎
+/// （v2 防 rebinding：同一会话内同一主机名的解析结果复用）。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DialTarget {
-    pub host: IpAddr,
+    /// IP 字面量或主机名（构造时小写规范化、去尾部点）。
+    pub host: String,
     pub port: u16,
 }
 
 impl DialTarget {
-    pub fn new(host: IpAddr, port: u16) -> Self {
-        Self { host, port }
+    /// 由 IP 构造（v1 兼容入口）。
+    pub fn from_ip(host: IpAddr, port: u16) -> Self {
+        Self {
+            host: host.to_string(),
+            port,
+        }
     }
 
     pub fn from_addr(addr: std::net::SocketAddr) -> Self {
         Self {
-            host: addr.ip(),
+            host: addr.ip().to_string(),
             port: addr.port(),
         }
     }
 
-    /// §1.2 目标合法性（解析阶段与 responder 侧 OPEN 校验共用）：
-    /// port != 0、非未指定地址、非组播、非 IPv4 广播；
-    /// IPv6 zone-id / 方括号形式在 IpAddr::from_str 处即被拒绝。
+    /// 由文本构造（IP 字面量或主机名）。规范化：小写、去单个尾点。
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
+        let mut host: String = host.into().trim().to_lowercase();
+        if host.ends_with('.') {
+            host.pop();
+        }
+        Self { host, port }
+    }
+
+    /// host 是 IP 字面量时返回解析结果（主机名 → None）。
+    pub fn ip_literal(&self) -> Option<IpAddr> {
+        self.host.parse().ok()
+    }
+
+    /// 目标合法性（§1.2 bad_target 判定；解析阶段与 responder 侧 OPEN 校验共用）：
+    ///
+    /// - `port != 0`；
+    /// - IP 字面量：非未指定、非组播、非 IPv4 广播（zone-id/方括号在 parse 即拒绝）；
+    /// - 主机名：≤253 字节、标签 [alnum-]（≤63、不空、不以 `-` 开头/结尾）、
+    ///   不含空白/冒号/方括号/百分号，且至少含一个字母（挡纯数字串冒充主机名）。
     pub fn validate(&self) -> bool {
         if self.port == 0 {
             return false;
         }
-        if self.host.is_unspecified() || self.host.is_multicast() {
+        if self.host.is_empty() || self.host.len() > 253 {
             return false;
         }
-        if let IpAddr::V4(v4) = self.host {
-            if v4.is_broadcast() {
+        if let Some(ip) = self.ip_literal() {
+            if ip.is_unspecified() || ip.is_multicast() {
+                return false;
+            }
+            if let IpAddr::V4(v4) = ip {
+                if v4.is_broadcast() {
+                    return false;
+                }
+            }
+            return true;
+        }
+        let h = &self.host;
+        if h.bytes()
+            .any(|b| !(b.is_ascii_alphanumeric() || b == b'-' || b == b'.'))
+        {
+            return false;
+        }
+        for label in h.split('.') {
+            if label.is_empty() || label.len() > 63 {
+                return false;
+            }
+            if label.starts_with('-') || label.ends_with('-') {
                 return false;
             }
         }
-        true
+        h.bytes().any(|b| b.is_ascii_alphabetic())
     }
 }
 
 impl fmt::Display for DialTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.host {
-            IpAddr::V4(v4) => write!(f, "{}:{}", v4, self.port),
-            IpAddr::V6(v6) => write!(f, "[{}]:{}", v6, self.port),
+        match self.ip_literal() {
+            Some(IpAddr::V6(v6)) => write!(f, "[{v6}]:{}", self.port),
+            _ => write!(f, "{}:{}", self.host, self.port),
         }
     }
 }
@@ -153,9 +217,16 @@ pub enum MuxError {
     /// 通道已被回收（grant/deny 打在已死通道上）。
     #[error("channel closed")]
     ChannelClosed,
-    /// v1 中只有 Initiator 可以 open()。
-    #[error("open() is initiator-only (this session is responder)")]
-    WrongRole,
+    /// grant/grant_datagram 与通道模式不匹配（流式通道打 grant_datagram 等）。
+    #[error("channel mode mismatch")]
+    ModeMismatch,
+    /// 数据报超过单帧上限（MAX_DATA_FRAME）。
+    #[error("datagram of {0} bytes exceeds MAX_DATA_FRAME {MAX_DATA_FRAME}")]
+    DatagramTooLarge(usize),
+    /// 对端未证明 v2 能力（从不回 PONG/WINDOW），本端能力依赖 v2 线语义（如
+    /// Responder 发起 OPEN）被拒绝。
+    #[error("peer did not prove v2 capability: {0}")]
+    UnsupportedByPeer(&'static str),
     /// deny() 只接受 1..=4 的非 0 终态状态。
     #[error("invalid ACK status {0}")]
     InvalidAckStatus(u8),
@@ -164,16 +235,16 @@ pub enum MuxError {
 /// 会话统计（forward 层 Guard 的 status 透出数据源之一）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MuxStats {
-    /// 当前处于 Active 的通道数。
+    /// 当前处于 Active 的通道数（含流式与数据报）。
     pub channels_open: usize,
     /// 会话生命周期内创建过的通道总数（两条角色各自累计）。
     pub channels_total: u64,
 }
 
-/// mux 会话/通道配置。默认值来自 spec §1.4/§2.2。
+/// mux 会话/通道配置。默认值来自 spec §1.4/§2.2 与 v2 落地取值。
 #[derive(Debug, Clone)]
 pub struct MuxConfig {
-    /// 单会话通道上限：超限回 OPEN_ACK(3)。
+    /// 单会话通道上限：超限回 OPEN_ACK(3)。UDP 会话映射每个源地址占一条通道。
     pub max_channels: usize,
     /// 单通道入站帧队列容量（帧数）。
     pub channel_queue_frames: usize,
@@ -185,6 +256,17 @@ pub struct MuxConfig {
     pub dial_timeout: Duration,
     /// 级联停顿硬超时（§1.4）：入站队列打满超过它只拆该通道。
     pub stall_hard_timeout: Duration,
+    /// 逐通道流控窗口（字节，v2）。sanitize 后 ≥ max_data_frame。
+    pub window_size: usize,
+    /// keepalive PING 间隔（v2）；None = 关闭 keepalive。默认 15s。
+    pub keepalive_interval: Option<Duration>,
+    /// 对端静默判定阈值（v2）：仅当对端已证明 v2 且本端 keepalive 开启时执行；
+    /// v1 对端永不触发。默认 45s。
+    pub keepalive_dead_after: Option<Duration>,
+    /// 流式通道空闲回收；None = 不回收（默认，空闲 SSH 类长连接不受影响）。
+    pub idle_timeout: Option<Duration>,
+    /// 数据报通道（UDP 会话映射）空闲回收；默认 60s（NAT 式映射必须回收）。
+    pub udp_idle_timeout: Option<Duration>,
 }
 
 impl Default for MuxConfig {
@@ -196,6 +278,11 @@ impl Default for MuxConfig {
             open_timeout: Duration::from_secs(5),
             dial_timeout: Duration::from_secs(5),
             stall_hard_timeout: Duration::from_secs(10),
+            window_size: 256 * 1024,
+            keepalive_interval: Some(Duration::from_secs(15)),
+            keepalive_dead_after: Some(Duration::from_secs(45)),
+            idle_timeout: None,
+            udp_idle_timeout: Some(Duration::from_secs(60)),
         }
     }
 }
@@ -205,6 +292,17 @@ impl MuxConfig {
         self.max_channels = self.max_channels.max(1);
         self.channel_queue_frames = self.channel_queue_frames.max(1);
         self.max_data_frame = self.max_data_frame.clamp(1, MAX_DATA_FRAME);
+        // 窗口必须 ≥ 单帧上限，否则一帧永远发不出去（死锁）。
+        self.window_size = self
+            .window_size
+            .max(self.max_data_frame)
+            .min(4 * 1024 * 1024);
+        if let (Some(i), Some(d)) = (self.keepalive_interval, self.keepalive_dead_after) {
+            self.keepalive_dead_after = Some(d.max(i));
+        }
+        // Some(0) 视为关闭（None 才是显式关闭；0 直接归一）。
+        self.idle_timeout = self.idle_timeout.filter(|d| !d.is_zero());
+        self.udp_idle_timeout = self.udp_idle_timeout.filter(|d| !d.is_zero());
         self
     }
 }
@@ -215,6 +313,12 @@ impl MuxConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
     Open {
+        ch_id: u32,
+        host: String,
+        port: u16,
+    },
+    /// 数据报通道 OPEN（v2 UDP 会话映射）；payload 与 OPEN 相同。
+    DOpen {
         ch_id: u32,
         host: String,
         port: u16,
@@ -235,10 +339,18 @@ pub enum Frame {
         ch_id: u32,
         reason: u8,
     },
-    /// PING/PONG/WINDOW（保留类型，ch_id 0）：读侧直接忽略。
-    Reserved {
-        ftype: u8,
+    /// keepalive 探测（v2，ch_id 0）：收到即证明对端 v2，回 PONG(nonce)。
+    Ping {
+        nonce: u64,
+    },
+    /// PING 的应答（v2，ch_id 0）：收到即证明对端 v2。
+    Pong {
+        nonce: u64,
+    },
+    /// 逐通道流控 credit（v2）：对端消费了 delta 字节，本端 outstanding 递减。
+    Window {
         ch_id: u32,
+        delta: u32,
     },
 }
 
@@ -293,7 +405,7 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame, MuxError> {
     }
     let payload = &buf[HEADER_LEN..HEADER_LEN + payload_len];
     match ftype {
-        T_OPEN => {
+        T_OPEN | T_DOPEN => {
             if payload.is_empty() {
                 return proto_err("open: empty payload");
             }
@@ -306,7 +418,11 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame, MuxError> {
                 Err(_) => return proto_err("open: host is not utf8"),
             };
             let port = u16::from_be_bytes([payload[1 + host_len], payload[2 + host_len]]);
-            Ok(Frame::Open { ch_id, host, port })
+            if ftype == T_OPEN {
+                Ok(Frame::Open { ch_id, host, port })
+            } else {
+                Ok(Frame::DOpen { ch_id, host, port })
+            }
         }
         T_ACK => {
             if payload.is_empty() {
@@ -347,16 +463,39 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame, MuxError> {
                 reason: payload[0],
             })
         }
-        T_PING | T_PONG | T_WINDOW => Ok(Frame::Reserved { ftype, ch_id }),
+        T_PING | T_PONG => {
+            if payload.len() != 8 {
+                return proto_err("ping/pong: payload must be an 8-byte nonce");
+            }
+            let nonce = u64::from_be_bytes(payload.try_into().unwrap());
+            if ftype == T_PING {
+                Ok(Frame::Ping { nonce })
+            } else {
+                Ok(Frame::Pong { nonce })
+            }
+        }
+        T_WINDOW => {
+            if ch_id == 0 {
+                return proto_err("window: ch_id 0 is reserved (per-channel only)");
+            }
+            if payload.len() != 4 {
+                return proto_err("window: payload must be a 4-byte delta");
+            }
+            Ok(Frame::Window {
+                ch_id,
+                delta: u32::from_be_bytes(payload.try_into().unwrap()),
+            })
+        }
         other => proto_err(format!("unknown frame type {:#04x}", other)),
     }
 }
 
 fn encode_open_payload(target: &DialTarget) -> Vec<u8> {
-    let host = target.host.to_string().into_bytes();
+    let host = target.host.as_bytes();
+    debug_assert!(host.len() <= u8::MAX as usize, "host too long");
     let mut p = Vec::with_capacity(1 + host.len() + 2);
     p.push(host.len() as u8);
-    p.extend_from_slice(&host);
+    p.extend_from_slice(host);
     p.extend_from_slice(&target.port.to_be_bytes());
     p
 }
@@ -375,13 +514,21 @@ fn encode_ack_payload(status: u8, detail: Option<&str>) -> Vec<u8> {
     p
 }
 
+/// wire 侧目标解析：只做结构校验（IP 字面量规则或主机名规则，§1.2）。
+/// 主机名的 DNS 解析在策略层（forward endpoint）完成，mux 核心不做 IO。
 fn parse_open_target(host: &str, port: u16) -> Option<DialTarget> {
-    let host: IpAddr = host.parse().ok()?;
-    let t = DialTarget { host, port };
+    let t = DialTarget::new(host, port);
     t.validate().then_some(t)
 }
 
 // ---------------------------------------------------------------- 内部状态
+
+/// 通道模式：流式（TCP 语义）或数据报（UDP 语义，DATA 帧 = 一个数据报）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChanMode {
+    Stream,
+    Datagram,
+}
 
 /// 队列内部：入站通道消息。
 #[derive(Debug)]
@@ -403,12 +550,66 @@ enum State {
 /// open() 等待 OPEN_ACK 的结果：Ok(0 经 grant) / Err((status, detail))。
 type AckOutcome = Result<(), (u8, Option<String>)>;
 
+/// 逐通道流控状态（v2 WINDOW）。会话与 MuxStream/MuxDatagram 共享。
+struct FlowState {
+    /// 已发出但未获对端 WINDOW credit 确认的字节数。与 waker 同锁：
+    /// poll_write 的「检查窗口 + 登记 waker」与 reader 的「减 credit + 唤醒」互斥。
+    send: StdMutex<SendWindow>,
+    /// 已消费、待上报给对端的字节数（credit 阈值触发 WINDOW 帧）。
+    unacked: AtomicU64,
+    /// 异步等待方（send_datagram）的唤醒器。
+    wake: Notify,
+    /// 最近活动时刻（epoch 毫秒）；idle reaper 依据。
+    last_active_ms: AtomicU64,
+}
+
+#[derive(Default)]
+struct SendWindow {
+    outstanding: u64,
+    waker: Option<Waker>,
+}
+
+impl FlowState {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            send: StdMutex::new(SendWindow::default()),
+            unacked: AtomicU64::new(0),
+            wake: Notify::new(),
+            last_active_ms: AtomicU64::new(0),
+        })
+    }
+
+    /// peer_v2 证明时刻的钳制：证明前未执行窗口，outstanding 可能已超限。
+    fn clamp(&self, window: u64) {
+        let mut s = self.send.lock().unwrap();
+        s.outstanding = s.outstanding.min(window);
+    }
+
+    fn touch(&self, now_ms: u64) {
+        self.last_active_ms.store(now_ms, Ordering::Relaxed);
+    }
+
+    /// 通道/会话终止：唤醒所有等窗口的写方（park 的 poll_write waker 与
+    /// send_datagram 的 Notify 等待者）。漏掉 waker 会让写方在窗口耗尽 +
+    /// 通道死亡的组合下永久挂起。
+    fn kill(&self) {
+        let w = self.send.lock().unwrap().waker.take();
+        if let Some(w) = w {
+            w.wake();
+        }
+        self.wake.notify_waiters();
+    }
+}
+
 struct Entry {
     state: State,
+    mode: ChanMode,
     in_tx: mpsc::Sender<MuxInbound>,
-    /// 通道与 MuxStream 共享：置位后 poll_read/poll_write 直接报错。
+    /// 通道与 MuxStream/MuxDatagram 共享：置位后 poll_read/poll_write 直接报错。
     dead: Arc<AtomicBool>,
-    /// 仅 initiator 侧 pending 时持有（open() 的 oneshot 另一端）。
+    /// 流控状态（v2）。
+    flow: Arc<FlowState>,
+    /// 仅发起方 pending 时持有（open()/open_datagram() 的 oneshot 另一端）。
     ack: Option<oneshot::Sender<AckOutcome>>,
 }
 
@@ -416,9 +617,13 @@ struct Inner {
     cfg: MuxConfig,
     role: Role,
     table: StdMutex<HashMap<u32, Entry>>,
-    /// Initiator 分配奇数 ch_id（1,3,5,…），单调不复用（D8）。
+    /// Initiator 分配奇数 ch_id（1,3,5,…），Responder 分配偶数（2,4,6,…，v2）；
+    /// 单调不复用（D8）。
     next_ch: AtomicU32,
     alive: AtomicBool,
+    /// 对端已证明 v2 能力（收到过 PING/PONG/WINDOW 之一）。证明前：偶数通道帧
+    /// 仍按 v1 判违规、本端（Responder）不执行窗口、Responder 不得发 OPEN。
+    peer_v2: AtomicBool,
     /// 会话级 CLOSE(ch 0) 由对端线帧触发（对端主动关闭）。传输层 FIN/错误
     /// 直接 terminate 不置位——上层（CLI 监督循环）据此区分"对端关闭 → 优雅退出"与
     /// "链路断开 → 退避重建"（T2 链路引导契约）。
@@ -430,13 +635,26 @@ struct Inner {
     open_req_rx: AsyncMutex<Option<mpsc::Receiver<OpenRequest>>>,
     /// 会话终止原因；None = 存活。首次 terminate 生效（幂等）。
     term: watch::Sender<Option<u8>>,
-    /// 队列满时延迟发送的通道控制帧（EOF/drop-CLOSE）。统一队列被 DATA 背压占满时
-    /// try_send 会失败——半关闭帧丢失会让对端拷贝永久等待，故转延迟队列补发。
+    /// 队列满时延迟发送的通道控制帧（EOF/drop-CLOSE/WINDOW credit）。
+    /// 统一队列被 DATA 背压占满时 try_send 会失败——半关闭帧或 credit 丢失会让
+    /// 对端永久等待，故转延迟队列补发。
     deferred_ctrl: StdMutex<VecDeque<Vec<u8>>>,
     /// 延迟补发任务是否在跑。与 deferred_ctrl 同锁读写：单任务串行保证同通道保序。
     defer_active: AtomicBool,
     /// 会话所在 tokio 运行时（start 在 runtime 上下文内调用——调度契约，lib.rs 文档）。
     handle: tokio::runtime::Handle,
+    /// 会话起始时刻（Idle/keepalive 的毫秒时钟基准）。
+    epoch: Instant,
+    /// 最近一次从 wire 收到帧的时刻（epoch 毫秒；reader 更新）。
+    last_recv_ms: AtomicU64,
+    /// 最近一次向 wire 写出帧的时刻（epoch 毫秒；writer 更新）。
+    last_send_ms: AtomicU64,
+    /// PING nonce 计数器（探测/周期 PING 用；无加密意义）。
+    ping_counter: AtomicU64,
+}
+
+fn now_ms(epoch: Instant) -> u64 {
+    epoch.elapsed().as_millis() as u64
 }
 
 impl Inner {
@@ -451,6 +669,7 @@ impl Inner {
             entry.dead.store(true, Ordering::SeqCst);
             let _ = entry.in_tx.try_send(MuxInbound::SessionDown);
             // entry.ack 被 drop → open() 收到 RecvError → SessionClosed
+            entry.flow.kill();
         }
         drop(table);
         self.term.send_replace(Some(reason));
@@ -490,6 +709,19 @@ impl Inner {
             }
         });
     }
+
+    /// 对端 v2 能力证明（首次生效）：放行偶数通道帧、Responder 发 OPEN、
+    /// 启用窗口执行（钳制证明前已积累的 outstanding）。
+    fn set_peer_v2(&self) {
+        if self.peer_v2.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let window = self.cfg.window_size as u64;
+        let table = self.table.lock().unwrap();
+        for entry in table.values() {
+            entry.flow.clamp(window);
+        }
+    }
 }
 
 /// 若表内条目仍是 dead 指向的那一个，则移除并置位 dead（可选向通道队列推一条终态消息）。
@@ -505,6 +737,7 @@ fn remove_entry(inner: &Inner, ch_id: u32, dead: &Arc<AtomicBool>, push: Option<
             if let Some(msg) = push {
                 let _ = entry.in_tx.try_send(msg);
             }
+            entry.flow.kill();
         }
     }
 }
@@ -516,6 +749,8 @@ fn remove_entry(inner: &Inner, ch_id: u32, dead: &Arc<AtomicBool>, push: Option<
 pub struct OpenRequest {
     pub target: DialTarget,
     pub ch_id: u32,
+    /// true = 数据报通道（DOPEN，UDP 会话映射）：用 grant_datagram() 应答。
+    pub datagram: bool,
     rx: Option<mpsc::Receiver<MuxInbound>>,
     inner: Arc<Inner>,
     answered: bool,
@@ -526,14 +761,40 @@ impl fmt::Debug for OpenRequest {
         f.debug_struct("OpenRequest")
             .field("target", &self.target)
             .field("ch_id", &self.ch_id)
+            .field("datagram", &self.datagram)
             .field("answered", &self.answered)
             .finish()
     }
 }
 
 impl OpenRequest {
-    /// 允许请求：先把通道置 Active，再回 OPEN_ACK(0)（§1.3 顺序），返回已激活的流。
+    /// 允许流式请求：先把通道置 Active，再回 OPEN_ACK(0)（§1.3 顺序），返回已激活的流。
+    /// 数据报请求打 grant() → ModeMismatch（改用 grant_datagram）。
     pub async fn grant(mut self) -> Result<MuxStream, MuxError> {
+        let rx = self.activate().await?;
+        if self.datagram {
+            return Err(MuxError::ModeMismatch);
+        }
+        let ch_id = self.ch_id;
+        let inner = self.inner.clone();
+        let dead = entry_dead_marker(&inner, ch_id);
+        Ok(MuxStream::new(ch_id, inner, rx, dead))
+    }
+
+    /// 允许数据报请求（v2 UDP 会话映射）：先置 Active 再回 OPEN_ACK(0)，返回数据报端。
+    pub async fn grant_datagram(mut self) -> Result<MuxDatagram, MuxError> {
+        let rx = self.activate().await?;
+        if !self.datagram {
+            return Err(MuxError::ModeMismatch);
+        }
+        let ch_id = self.ch_id;
+        let inner = self.inner.clone();
+        let dead = entry_dead_marker(&inner, ch_id);
+        Ok(MuxDatagram::new(ch_id, inner, rx, dead))
+    }
+
+    /// grant/grant_datagram 共用：置 Active → 写 ACK(0)。返回通道队列接收端。
+    async fn activate(&mut self) -> Result<mpsc::Receiver<MuxInbound>, MuxError> {
         self.answered = true;
         let inner = &self.inner;
         if !inner.alive.load(Ordering::SeqCst) {
@@ -555,12 +816,17 @@ impl OpenRequest {
             remove_entry(inner, ch_id, &dead, None);
             return Err(MuxError::SessionClosed);
         }
-        let rx = self.rx.take().expect("OpenRequest rx taken once");
-        Ok(MuxStream::new(ch_id, inner.clone(), rx, dead))
+        let dead_marker = dead;
+        if let Some(entry) = inner.table.lock().unwrap().get(&ch_id) {
+            if Arc::ptr_eq(&entry.dead, &dead_marker) {
+                entry.flow.touch(now_ms(inner.epoch));
+            }
+        }
+        self.rx.take().ok_or(MuxError::ChannelClosed)
     }
 
     /// 拒绝请求或拨号失败：回 OPEN_ACK(status) 终态帧（可附 detail），
-    /// 不产生 MuxStream，先回收通道再发帧、不补发 CLOSE。
+    /// 不产生通道端，先回收通道再发帧、不补发 CLOSE。
     pub async fn deny(mut self, status: u8, detail: Option<String>) -> Result<(), MuxError> {
         if status == AckStatus::OK || status > AckStatus::BAD_TARGET {
             // 非法状态：按已答复处理并回收通道——既不回帧、也不触发 Drop 自动 deny(2)
@@ -624,9 +890,10 @@ fn entry_dead_marker(inner: &Inner, ch_id: u32) -> Arc<AtomicBool> {
 
 /// 一条 SecureStream 上的 mux 会话。
 ///
-/// start() 内部 spawn reader/writer 任务，必须在 tokio runtime 上下文中调用。
-/// 会话结束有三条路径：连接断开、对端 CLOSE(ch 0)、本端 shutdown()；
-/// 本端主动结束请显式调用 shutdown()（丢弃 MuxSession 本身不会断开通道）。
+/// start() 内部 spawn reader/writer（以及 keepalive / idle reaper）任务，
+/// 必须在 tokio runtime 上下文中调用。会话结束有四条路径：连接断开、对端
+/// CLOSE(ch 0)、本端 shutdown()、v2 对端 keepalive 静默超时；本端主动结束请
+/// 显式调用 shutdown()（丢弃 MuxSession 本身不会断开通道）。
 #[derive(Clone)]
 pub struct MuxSession {
     inner: Arc<Inner>,
@@ -647,11 +914,13 @@ impl MuxSession {
         let (req_tx, req_rx) = mpsc::channel::<OpenRequest>(cfg.max_channels.max(4));
         let (term, _) = watch::channel::<Option<u8>>(None);
         let inner = Arc::new(Inner {
-            cfg,
             role,
+            cfg,
             table: StdMutex::new(HashMap::new()),
-            next_ch: AtomicU32::new(1),
+            // D8：Initiator 奇数（1 起），Responder 偶数（2 起，v2 remote forward）。
+            next_ch: AtomicU32::new(if role == Role::Initiator { 1 } else { 2 }),
             alive: AtomicBool::new(true),
+            peer_v2: AtomicBool::new(false),
             peer_close: AtomicBool::new(false),
             opened_total: AtomicU64::new(0),
             ctrl_tx,
@@ -662,36 +931,84 @@ impl MuxSession {
             deferred_ctrl: StdMutex::new(VecDeque::new()),
             defer_active: AtomicBool::new(false),
             handle: tokio::runtime::Handle::current(),
+            epoch: Instant::now(),
+            last_recv_ms: AtomicU64::new(0),
+            last_send_ms: AtomicU64::new(0),
+            ping_counter: AtomicU64::new(
+                Instant::now().elapsed().as_nanos() as u64 ^ std::process::id() as u64,
+            ),
         });
 
         let r_inner = inner.clone();
         let r_term = inner.term.subscribe();
         tokio::spawn(async move { reader_loop(r_inner, recv, r_term).await });
 
+        let w_inner = inner.clone();
         let w_term = inner.term.subscribe();
-        tokio::spawn(async move { writer_loop(send, ctrl_rx, w_term).await });
+        tokio::spawn(async move { writer_loop(send, ctrl_rx, w_term, w_inner).await });
+
+        // v2 会话任务：keepalive（探测 + 周期 PING + 静默判定）与 idle reaper。
+        let k_inner = inner.clone();
+        let k_term = inner.term.subscribe();
+        tokio::spawn(async move { keepalive_loop(k_inner, k_term).await });
+        let p_inner = inner.clone();
+        let p_term = inner.term.subscribe();
+        tokio::spawn(async move { idle_reaper(p_inner, p_term).await });
 
         Self { inner }
     }
 
-    /// 打开一条通道（仅 Initiator；§1.2）。
+    /// 打开一条流式通道（发起方；v1 仅 Initiator，v2 起 Responder 也可——
+    /// remote forward 的偶数通道，但需对端已证明 v2，否则 open_timeout 内报
+    /// UnsupportedByPeer）。
     ///
     /// 流程：登记 Pending → 发 OPEN → 等 OPEN_ACK；
     /// 超时 → 回收通道并补发 CLOSE(upstream_reset)；
     /// 终态非 0 ACK → Rejected（不补发 CLOSE）；会话死亡 → SessionClosed。
     pub async fn open(&self, target: DialTarget) -> Result<MuxStream, MuxError> {
+        let (ch_id, in_rx, dead) = self.open_channel(target, ChanMode::Stream).await?;
+        Ok(MuxStream::new(ch_id, self.inner.clone(), in_rx, dead))
+    }
+
+    /// 打开一条数据报通道（v2 UDP 会话映射）：每个 DATA 帧携带一个 UDP 数据报。
+    /// Responder 侧同样需要对端已证明 v2。
+    pub async fn open_datagram(&self, target: DialTarget) -> Result<MuxDatagram, MuxError> {
+        let (ch_id, in_rx, dead) = self.open_channel(target, ChanMode::Datagram).await?;
+        Ok(MuxDatagram::new(ch_id, self.inner.clone(), in_rx, dead))
+    }
+
+    /// open()/open_datagram() 共用：登记 Pending → 发 OPEN/DOPEN → 等 ACK。
+    /// 返回 (ch_id, 通道队列接收端, dead 标记)。
+    async fn open_channel(
+        &self,
+        target: DialTarget,
+        mode: ChanMode,
+    ) -> Result<(u32, mpsc::Receiver<MuxInbound>, Arc<AtomicBool>), MuxError> {
         let inner = &self.inner;
         // 会话已死优先（spec 测试行：双端 open/accept_open 都是 SessionClosed）
         if !inner.alive.load(Ordering::SeqCst) {
             return Err(MuxError::SessionClosed);
         }
-        if inner.role != Role::Initiator {
-            return Err(MuxError::WrongRole);
-        }
         if !target.validate() {
             return Err(MuxError::InvalidTarget(target.to_string()));
         }
-        // initiator 侧对称的通道上限（responder 侧回 ACK(3)，本端直接拒绝）
+        // Responder 发 OPEN = v2 线语义（偶数通道）：等对端证明（探测 PING 的
+        // PONG 一个 RTT 内到达），证明不了按 UnsupportedByPeer 干净失败。
+        if inner.role == Role::Responder && !inner.peer_v2.load(Ordering::SeqCst) {
+            let deadline = Instant::now() + inner.cfg.open_timeout;
+            while !inner.peer_v2.load(Ordering::SeqCst) {
+                if !inner.alive.load(Ordering::SeqCst) {
+                    return Err(MuxError::SessionClosed);
+                }
+                if Instant::now() >= deadline {
+                    return Err(MuxError::UnsupportedByPeer(
+                        "responder-side open requires a v2 peer (no PONG/WINDOW seen)",
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        // 发起方侧对称的通道上限（接受方回 ACK(3)，本端直接拒绝）
         {
             let table = inner.table.lock().unwrap();
             if table.len() >= inner.cfg.max_channels {
@@ -711,21 +1028,29 @@ impl MuxSession {
         let (in_tx, in_rx) = mpsc::channel(inner.cfg.channel_queue_frames);
         let (ack_tx, ack_rx) = oneshot::channel();
         let dead = Arc::new(AtomicBool::new(false));
+        let flow = FlowState::new();
         {
             let mut table = inner.table.lock().unwrap();
             table.insert(
                 ch_id,
                 Entry {
                     state: State::Pending,
+                    mode,
                     in_tx,
                     dead: dead.clone(),
+                    flow,
                     ack: Some(ack_tx),
                 },
             );
         }
         inner.opened_total.fetch_add(1, Ordering::SeqCst);
 
-        let frame = encode_frame(T_OPEN, ch_id, &encode_open_payload(&target));
+        let ftype = if mode == ChanMode::Stream {
+            T_OPEN
+        } else {
+            T_DOPEN
+        };
+        let frame = encode_frame(ftype, ch_id, &encode_open_payload(&target));
         if inner.ctrl_tx.send(frame).await.is_err() || !inner.alive.load(Ordering::SeqCst) {
             remove_entry(inner, ch_id, &dead, None);
             return Err(MuxError::SessionClosed);
@@ -742,7 +1067,14 @@ impl MuxSession {
                 ));
                 Err(MuxError::OpenTimeout(inner.cfg.open_timeout))
             }
-            Ok(Ok(Ok(()))) => Ok(MuxStream::new(ch_id, inner.clone(), in_rx, dead)),
+            Ok(Ok(Ok(()))) => {
+                if let Some(entry) = inner.table.lock().unwrap().get(&ch_id) {
+                    if Arc::ptr_eq(&entry.dead, &dead) {
+                        entry.flow.touch(now_ms(inner.epoch));
+                    }
+                }
+                Ok((ch_id, in_rx, dead))
+            }
             Ok(Ok(Err((status, detail)))) => Err(MuxError::Rejected { status, detail }),
             Ok(Err(_)) => {
                 // oneshot 被丢弃 = 会话终止时条目被排空
@@ -752,7 +1084,8 @@ impl MuxSession {
         }
     }
 
-    /// 等待对端 open()（responder 侧；§2.2）。会话终止 → SessionClosed。
+    /// 等待对端 open()/open_datagram()（接受方；§2.2）。会话终止 → SessionClosed。
+    /// v2 起 Initiator 侧也会收到 Responder 发起的 OPEN（remote forward）。
     pub async fn accept_open(&self) -> Result<OpenRequest, MuxError> {
         let mut term_rx = self.inner.term.subscribe();
         if term_rx.borrow_and_update().is_some() {
@@ -801,6 +1134,11 @@ impl MuxSession {
         self.inner.peer_close.load(Ordering::SeqCst)
     }
 
+    /// 对端是否已证明 v2 能力（收到过 PING/PONG/WINDOW）。
+    pub fn peer_is_v2(&self) -> bool {
+        self.inner.peer_v2.load(Ordering::SeqCst)
+    }
+
     /// 等待会话终止，返回终止原因（CloseReason）。已在终止态则立即返回。
     pub async fn wait_closed(&self) -> u8 {
         let mut rx = self.inner.term.subscribe();
@@ -832,21 +1170,24 @@ async fn reader_loop(
             biased;
             _ = term_rx.changed() => break,
             res = recv.recv(&mut buf) => match res {
-                Ok(()) => match decode_frame(&buf) {
-                    Ok(frame) => match handle_frame(&inner, frame).await {
-                        Ok(()) => {}
-                        Err(()) => {
-                            warn!("mux structural violation — terminating session (D9)");
+                Ok(()) => {
+                    inner.last_recv_ms.store(now_ms(inner.epoch), Ordering::SeqCst);
+                    match decode_frame(&buf) {
+                        Ok(frame) => match handle_frame(&inner, frame).await {
+                            Ok(()) => {}
+                            Err(()) => {
+                                warn!("mux structural violation — terminating session (D9)");
+                                inner.terminate(CloseReason::PROTOCOL_VIOLATION);
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            warn!("mux frame decode failed: {e} — terminating session (D9)");
                             inner.terminate(CloseReason::PROTOCOL_VIOLATION);
                             break;
                         }
-                    },
-                    Err(e) => {
-                        warn!("mux frame decode failed: {e} — terminating session (D9)");
-                        inner.terminate(CloseReason::PROTOCOL_VIOLATION);
-                        break;
                     }
-                },
+                }
                 Err(e) => {
                     debug!("mux secure recv ended: {e}");
                     inner.terminate(CloseReason::SESSION_SHUTDOWN);
@@ -860,105 +1201,49 @@ async fn reader_loop(
 /// 分发一帧。Err(()) = 结构性违规，调用方按 D9 终止会话。
 async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
     match frame {
-        // 保留类型：v1 忽略（ch_id 约束留给 v2）。
-        Frame::Reserved { .. } => Ok(()),
-
-        Frame::Open { ch_id, host, port } => {
-            // 方向：OPEN 只能 Initiator → Responder（v1 单向转发）。
-            if inner.role == Role::Initiator {
-                return Err(());
+        Frame::Ping { nonce } => {
+            // v2 能力证明 + keepalive 应答（v1 对端不会发 PING，也不会回 PONG）
+            inner.set_peer_v2();
+            send_ctrl(inner, encode_frame(T_PONG, 0, &nonce.to_be_bytes())).await;
+            Ok(())
+        }
+        Frame::Pong { .. } => {
+            inner.set_peer_v2();
+            Ok(())
+        }
+        Frame::Window { ch_id, delta } => {
+            inner.set_peer_v2();
+            if ch_id == 0 {
+                return Ok(()); // 会话级 WINDOW：v2 未用，忽略
             }
-            // D8/D9：v1 通道帧 ch_id 必为奇数（0 为会话级帧）。
-            if ch_id % 2 == 0 {
-                return Err(());
-            }
-            // 目标不合法 → 通道级 OPEN_ACK(4)，不入表、不杀会话（§1.2）。
-            let target = match parse_open_target(&host, port) {
-                Some(t) => t,
-                None => {
-                    let payload = encode_ack_payload(AckStatus::BAD_TARGET, Some("invalid target"));
-                    send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
-                    return Ok(());
-                }
+            let flow = {
+                let table = inner.table.lock().unwrap();
+                table.get(&ch_id).map(|e| e.flow.clone())
             };
-            let (in_tx, in_rx) = mpsc::channel(inner.cfg.channel_queue_frames);
-            let dead = Arc::new(AtomicBool::new(false));
-            // 锁内只做准入决策（无 await），事件全部在锁外发送；
-            // 队列容量 ≥ max_channels，正常路径下表长永远够。
-            #[derive(Clone, Copy, PartialEq)]
-            enum Admit {
-                Pass,
-                Limit,
-                Dup,
-            }
-            let admit = {
-                use std::collections::hash_map::Entry as MapEntry;
-                let mut table = inner.table.lock().unwrap();
-                if table.len() >= inner.cfg.max_channels {
-                    Admit::Limit
-                } else {
-                    match table.entry(ch_id) {
-                        MapEntry::Occupied(_) => Admit::Dup,
-                        MapEntry::Vacant(v) => {
-                            v.insert(Entry {
-                                state: State::Pending,
-                                in_tx,
-                                dead: dead.clone(),
-                                ack: None,
-                            });
-                            Admit::Pass
-                        }
-                    }
-                }
-            };
-            match admit {
-                Admit::Limit => {
-                    send_ctrl(
-                        inner,
-                        encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
-                    )
-                    .await;
-                    return Ok(());
-                }
-                Admit::Dup => {
-                    // 重复 ch_id：不复用旧通道，回 OPEN_ACK(4)（§1.2 bad_target）
-                    let payload =
-                        encode_ack_payload(AckStatus::BAD_TARGET, Some("duplicate channel id"));
-                    send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
-                    return Ok(());
-                }
-                Admit::Pass => {}
-            }
-            inner.opened_total.fetch_add(1, Ordering::SeqCst);
-            let req = OpenRequest {
-                target,
-                ch_id,
-                rx: Some(in_rx),
-                inner: inner.clone(),
-                answered: false,
-            };
-            if inner.open_req_tx.try_send(req).is_err() {
-                // 不应发生（队列容量 ≥ max_channels）；兜底按 channel_limit 终态回收。
-                remove_entry(inner, ch_id, &dead, None);
-                send_ctrl(
-                    inner,
-                    encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
-                )
-                .await;
+            if let Some(flow) = flow {
+                apply_credit(&flow, delta);
             }
             Ok(())
         }
+
+        Frame::Open { ch_id, host, port } => handle_open(inner, ch_id, host, port, false).await,
+        Frame::DOpen { ch_id, host, port } => handle_open(inner, ch_id, host, port, true).await,
 
         Frame::Ack {
             ch_id,
             status,
             detail,
         } => {
-            // 方向：ACK 只能 Responder → Initiator。
-            if inner.role == Role::Responder {
+            // ACK 只发给通道的发起方：Initiator 收奇数通道的 ACK；
+            // Responder 收偶数通道的 ACK（v2 remote forward，需对端证明 v2）。
+            let my_parity = match inner.role {
+                Role::Initiator => 1,
+                Role::Responder => 0,
+            };
+            if ch_id % 2 != my_parity {
                 return Err(());
             }
-            if ch_id % 2 == 0 {
+            if inner.role == Role::Responder && !inner.peer_v2.load(Ordering::SeqCst) {
                 return Err(());
             }
             let settled = {
@@ -984,7 +1269,11 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
         }
 
         Frame::Data { ch_id, bytes } => {
-            if ch_id % 2 == 0 {
+            if ch_id == 0 {
+                return Err(());
+            }
+            // 未证明 v2 的对端维持 v1 奇偶规则；证明后偶数通道（remote forward）合法。
+            if !inner.peer_v2.load(Ordering::SeqCst) && ch_id % 2 == 0 {
                 return Err(());
             }
             if bytes.is_empty() {
@@ -994,7 +1283,10 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
         }
 
         Frame::Eof { ch_id } => {
-            if ch_id % 2 == 0 {
+            if ch_id == 0 {
+                return Err(());
+            }
+            if !inner.peer_v2.load(Ordering::SeqCst) && ch_id % 2 == 0 {
                 return Err(());
             }
             deliver_dispatch(inner, ch_id, MuxInbound::Eof).await
@@ -1008,7 +1300,7 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
                 inner.terminate(reason);
                 return Ok(());
             }
-            if ch_id % 2 == 0 {
+            if !inner.peer_v2.load(Ordering::SeqCst) && ch_id % 2 == 0 {
                 return Err(());
             }
             let dead = {
@@ -1023,11 +1315,119 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
     }
 }
 
+/// OPEN/DOPEN 共用处理。奇偶规则（D8/D9）：
+/// - Responder 收到的 OPEN 必为奇数（v1 语义，始终如此）；
+/// - Initiator 收到的 OPEN 必为偶数，且仅当对端已证明 v2（否则结构违规——
+///   v1 对端从不发偶数 OPEN，混版时按违规终止与 v1 行为一致）。
+async fn handle_open(
+    inner: &Arc<Inner>,
+    ch_id: u32,
+    host: String,
+    port: u16,
+    datagram: bool,
+) -> Result<(), ()> {
+    let foreign_parity = match inner.role {
+        Role::Responder => 1,
+        Role::Initiator => 0,
+    };
+    if ch_id % 2 != foreign_parity {
+        return Err(());
+    }
+    if inner.role == Role::Initiator && !inner.peer_v2.load(Ordering::SeqCst) {
+        return Err(());
+    }
+    if ch_id == 0 {
+        return Err(());
+    }
+    // 目标不合法 → 通道级 OPEN_ACK(4)，不入表、不杀会话（§1.2）。
+    let target = match parse_open_target(&host, port) {
+        Some(t) => t,
+        None => {
+            let payload = encode_ack_payload(AckStatus::BAD_TARGET, Some("invalid target"));
+            send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
+            return Ok(());
+        }
+    };
+    let (in_tx, in_rx) = mpsc::channel(inner.cfg.channel_queue_frames);
+    let dead = Arc::new(AtomicBool::new(false));
+    let flow = FlowState::new();
+    // 锁内只做准入决策（无 await），事件全部在锁外发送；
+    // 队列容量 ≥ max_channels，正常路径下表长永远够。
+    #[derive(Clone, Copy, PartialEq)]
+    enum Admit {
+        Pass,
+        Limit,
+        Dup,
+    }
+    let admit = {
+        use std::collections::hash_map::Entry as MapEntry;
+        let mut table = inner.table.lock().unwrap();
+        if table.len() >= inner.cfg.max_channels {
+            Admit::Limit
+        } else {
+            match table.entry(ch_id) {
+                MapEntry::Occupied(_) => Admit::Dup,
+                MapEntry::Vacant(v) => {
+                    v.insert(Entry {
+                        state: State::Pending,
+                        mode: if datagram {
+                            ChanMode::Datagram
+                        } else {
+                            ChanMode::Stream
+                        },
+                        in_tx,
+                        dead: dead.clone(),
+                        flow,
+                        ack: None,
+                    });
+                    Admit::Pass
+                }
+            }
+        }
+    };
+    match admit {
+        Admit::Limit => {
+            send_ctrl(
+                inner,
+                encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
+            )
+            .await;
+            return Ok(());
+        }
+        Admit::Dup => {
+            // 重复 ch_id：不复用旧通道，回 OPEN_ACK(4)（§1.2 bad_target）
+            let payload = encode_ack_payload(AckStatus::BAD_TARGET, Some("duplicate channel id"));
+            send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
+            return Ok(());
+        }
+        Admit::Pass => {}
+    }
+    inner.opened_total.fetch_add(1, Ordering::SeqCst);
+    let req = OpenRequest {
+        target,
+        ch_id,
+        datagram,
+        rx: Some(in_rx),
+        inner: inner.clone(),
+        answered: false,
+    };
+    if inner.open_req_tx.try_send(req).is_err() {
+        // 不应发生（队列容量 ≥ max_channels）；兜底按 channel_limit 终态回收。
+        remove_entry(inner, ch_id, &dead, None);
+        send_ctrl(
+            inner,
+            encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
+        )
+        .await;
+    }
+    Ok(())
+}
+
 /// 通道级数据/Eof 分发：Active 投递、Pending 即违规（OPEN_ACK 前发数据）、
 /// 未知通道丢弃且只回 CLOSE(0)（D9，不杀会话）。
 async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Result<(), ()> {
     enum Target {
-        Channel(mpsc::Sender<MuxInbound>, Arc<AtomicBool>),
+        Channel(mpsc::Sender<MuxInbound>, Arc<AtomicBool>, Arc<FlowState>),
         Pending,
         Unknown,
     }
@@ -1035,7 +1435,9 @@ async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Re
         let table = inner.table.lock().unwrap();
         match table.get(&ch_id) {
             Some(entry) => match entry.state {
-                State::Active => Target::Channel(entry.in_tx.clone(), entry.dead.clone()),
+                State::Active => {
+                    Target::Channel(entry.in_tx.clone(), entry.dead.clone(), entry.flow.clone())
+                }
                 State::Pending => Target::Pending,
             },
             None => Target::Unknown,
@@ -1052,8 +1454,8 @@ async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Re
             }
             Ok(())
         }
-        Target::Channel(in_tx, dead) => {
-            deliver(inner, ch_id, dead, in_tx, msg).await;
+        Target::Channel(in_tx, dead, flow) => {
+            deliver(inner, ch_id, dead, flow, in_tx, msg).await;
             Ok(())
         }
     }
@@ -1064,13 +1466,16 @@ async fn deliver(
     inner: &Inner,
     ch_id: u32,
     dead: Arc<AtomicBool>,
+    flow: Arc<FlowState>,
     in_tx: mpsc::Sender<MuxInbound>,
     msg: MuxInbound,
 ) {
+    // 入站流量即通道活动（UDP 映射语义：任一方向有包就续期）。
+    flow.touch(now_ms(inner.epoch));
     match tokio::time::timeout(inner.cfg.stall_hard_timeout, in_tx.send(msg)).await {
         Ok(Ok(())) => {}
         Ok(Err(_)) => {
-            // 本地 MuxStream 已被丢弃：回收条目（Drop 已补发 CLOSE(0)）
+            // 本地通道端已被丢弃：回收条目（Drop 已补发 CLOSE(0)）
             remove_entry(inner, ch_id, &dead, None);
         }
         Err(_) => {
@@ -1088,6 +1493,42 @@ async fn deliver(
     }
 }
 
+/// 应用对端 WINDOW credit：outstanding 递减并唤醒挂起的写方。
+fn apply_credit(flow: &Arc<FlowState>, delta: u32) {
+    let waker = {
+        let mut s = flow.send.lock().unwrap();
+        s.outstanding = s.outstanding.saturating_sub(delta as u64);
+        s.waker.take()
+    };
+    if let Some(w) = waker {
+        w.wake();
+    }
+    flow.wake.notify_one();
+}
+
+/// 消费侧 credit 上报：累计到阈值即回 WINDOW 帧（可靠路径：try_send 失败转延迟补发）。
+fn send_credit(inner: &Arc<Inner>, ch_id: u32, flow: &Arc<FlowState>, n: usize) {
+    if n == 0 {
+        return;
+    }
+    let threshold = (inner.cfg.window_size / 2).max(1) as u64;
+    let prev = flow.unacked.fetch_add(n as u64, Ordering::SeqCst) + n as u64;
+    if prev < threshold {
+        return;
+    }
+    // 单消费者通道：swap(0) 抢占清零，不会与并发消费竞争。
+    let total = flow.unacked.swap(0, Ordering::SeqCst);
+    if total == 0 {
+        return;
+    }
+    let delta = total.min(u32::MAX as u64) as u32;
+    let frame = encode_frame(T_WINDOW, ch_id, &delta.to_be_bytes());
+    if inner.ctrl_tx.try_send(frame.clone()).is_err() {
+        // credit 不可丢：丢了对端窗口永不回笼（永久卡死）。
+        inner.defer_ctrl(frame);
+    }
+}
+
 async fn send_ctrl(inner: &Inner, frame: Vec<u8>) {
     if inner.ctrl_tx.send(frame).await.is_err() {
         debug!("control queue closed (writer exited)");
@@ -1100,6 +1541,7 @@ async fn writer_loop(
     mut send: SecureSendHalf,
     mut frame_rx: mpsc::Receiver<Vec<u8>>,
     mut term_rx: watch::Receiver<Option<u8>>,
+    inner: Arc<Inner>,
 ) {
     loop {
         tokio::select! {
@@ -1121,9 +1563,110 @@ async fn writer_loop(
                     if send.send(&bytes).await.is_err() {
                         break;
                     }
+                    inner.last_send_ms.store(now_ms(inner.epoch), Ordering::SeqCst);
                 }
                 None => break,
             },
+        }
+    }
+}
+
+// ---------------------------------------------------------------- v2 会话任务
+
+/// keepalive（v2）：启动即发探测 PING；此后周期性在链路静默时发 PING。
+/// 静默判定（dead_after）只对已证明 v2 的对端执行——v1 对端不回 PONG，
+/// 永不因此被误杀（R7）。
+async fn keepalive_loop(inner: Arc<Inner>, mut term_rx: watch::Receiver<Option<u8>>) {
+    let interval = match inner.cfg.keepalive_interval {
+        Some(d) if !d.is_zero() => d,
+        _ => return,
+    };
+    let dead_after = inner.cfg.keepalive_dead_after;
+    send_ping(&inner);
+    loop {
+        tokio::select! {
+            _ = term_rx.changed() => break,
+            _ = tokio::time::sleep(interval) => {}
+        }
+        if term_rx.borrow_and_update().is_some() {
+            break;
+        }
+        if let Some(da) = dead_after {
+            if inner.peer_v2.load(Ordering::SeqCst) {
+                let last = inner.last_recv_ms.load(Ordering::SeqCst);
+                if now_ms(inner.epoch).saturating_sub(last) > da.as_millis() as u64 {
+                    debug!("tunnel keepalive: v2 peer silent > {da:?} — terminating session");
+                    inner.terminate(CloseReason::SESSION_SHUTDOWN);
+                    break;
+                }
+            }
+        }
+        let last = inner.last_send_ms.load(Ordering::SeqCst);
+        if now_ms(inner.epoch).saturating_sub(last) >= interval.as_millis() as u64 {
+            send_ping(&inner);
+        }
+    }
+}
+
+fn send_ping(inner: &Inner) {
+    let nonce = inner.ping_counter.fetch_add(1, Ordering::SeqCst);
+    let _ = inner
+        .ctrl_tx
+        .try_send(encode_frame(T_PING, 0, &nonce.to_be_bytes()));
+}
+
+/// 通道空闲回收（v2）：按模式检查 last_active，超时只拆该通道（CLOSE(0)，
+/// 对端读端表现为 EOF），会话与其余通道继续。Pending 通道由 open_timeout 管理，
+/// 不参与回收。无任何回收配置时本任务直接退出。
+async fn idle_reaper(inner: Arc<Inner>, mut term_rx: watch::Receiver<Option<u8>>) {
+    let tick = match (inner.cfg.idle_timeout, inner.cfg.udp_idle_timeout) {
+        (None, None) => return,
+        (a, b) => {
+            let min = [a, b].into_iter().flatten().min().unwrap();
+            (min / 4).max(Duration::from_millis(100))
+        }
+    };
+    loop {
+        tokio::select! {
+            _ = term_rx.changed() => break,
+            _ = tokio::time::sleep(tick) => {}
+        }
+        if term_rx.borrow_and_update().is_some() {
+            break;
+        }
+        let now = now_ms(inner.epoch);
+        let victims: Vec<(u32, Arc<AtomicBool>, Arc<FlowState>)> = {
+            let table = inner.table.lock().unwrap();
+            table
+                .iter()
+                .filter(|(_, e)| e.state == State::Active)
+                .filter(|(_, e)| {
+                    let limit = match e.mode {
+                        ChanMode::Stream => inner.cfg.idle_timeout,
+                        ChanMode::Datagram => inner.cfg.udp_idle_timeout,
+                    };
+                    match limit {
+                        Some(d) => {
+                            now.saturating_sub(e.flow.last_active_ms.load(Ordering::Relaxed))
+                                > d.as_millis() as u64
+                        }
+                        None => false,
+                    }
+                })
+                .map(|(ch, e)| (*ch, e.dead.clone(), e.flow.clone()))
+                .collect()
+        };
+        for (ch_id, dead, _flow) in victims {
+            debug!("mux channel {ch_id} idle — recycling (CLOSE normal)");
+            remove_entry(
+                &inner,
+                ch_id,
+                &dead,
+                Some(MuxInbound::Close(CloseReason::NORMAL)),
+            );
+            let _ = inner
+                .ctrl_tx
+                .try_send(encode_frame(T_CLOSE, ch_id, &[CloseReason::NORMAL]));
         }
     }
 }
@@ -1137,12 +1680,13 @@ enum ReadState {
     Reset(&'static str),
 }
 
-/// 单条 mux 通道：实现 tokio AsyncRead + AsyncWrite（§2.2）。
+/// 单条流式 mux 通道：实现 tokio AsyncRead + AsyncWrite（§2.2）。
 pub struct MuxStream {
     ch_id: u32,
     inner: Arc<Inner>,
     rx: mpsc::Receiver<MuxInbound>,
     dead: Arc<AtomicBool>,
+    flow: Arc<FlowState>,
     data: PollSender<Vec<u8>>,
     read_buf: Option<(Vec<u8>, usize)>,
     read_state: ReadState,
@@ -1157,12 +1701,21 @@ impl MuxStream {
         rx: mpsc::Receiver<MuxInbound>,
         dead: Arc<AtomicBool>,
     ) -> Self {
+        let flow = {
+            let table = inner.table.lock().unwrap();
+            table
+                .get(&ch_id)
+                .filter(|e| Arc::ptr_eq(&e.dead, &dead))
+                .map(|e| e.flow.clone())
+                .unwrap_or_else(FlowState::new)
+        };
         let data = PollSender::new(inner.data_tx.clone());
         Self {
             ch_id,
             inner,
             rx,
             dead,
+            flow,
             data,
             read_buf: None,
             read_state: ReadState::Running,
@@ -1171,7 +1724,7 @@ impl MuxStream {
         }
     }
 
-    /// 通道 ID（奇数；D8）。
+    /// 通道 ID（奇数 = Initiator 发起，偶数 = Responder 发起的 remote forward；D8）。
     pub fn ch_id(&self) -> u32 {
         self.ch_id
     }
@@ -1179,6 +1732,11 @@ impl MuxStream {
     /// 通道是否已被拆除（正常 EOF/CLOSE、停顿断流或会话终止）。
     pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::SeqCst)
+    }
+
+    /// 把消费量上报为对端窗口 credit（v2）。
+    fn credit(&self, n: usize) {
+        send_credit(&self.inner, self.ch_id, &self.flow, n);
     }
 }
 
@@ -1195,9 +1753,11 @@ impl AsyncRead for MuxStream {
                 let n = buf.remaining().min(data.len() - *off);
                 buf.put_slice(&data[*off..*off + n]);
                 *off += n;
-                if *off >= data.len() {
+                let done = *off >= data.len();
+                if done {
                     this.read_buf = None;
                 }
+                this.credit(n);
                 return Poll::Ready(Ok(()));
             }
             this.read_buf = None;
@@ -1233,6 +1793,7 @@ impl AsyncRead for MuxStream {
                         if n < bytes.len() {
                             this.read_buf = Some((bytes, n));
                         }
+                        this.credit(n);
                         return Poll::Ready(Ok(()));
                     }
                     MuxInbound::Eof => {
@@ -1296,8 +1857,15 @@ impl AsyncWrite for MuxStream {
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }
-        // 部分写（§2.2）：每次最多 max_data_frame 字节；容量等待注册 waker。
-        let n = buf.len().min(this.inner.cfg.max_data_frame);
+        // 部分写（§2.2）：每次最多 max_data_frame 字节；v2 对端再受逐通道窗口
+        // 约束（outstanding ≥ window_size 时挂起，credit 到达唤醒）。
+        //
+        // 顺序铁律：先 poll_reserve 再做窗口门控。反过来（先记 outstanding 再
+        // reserve）在 reserve 返回 Pending 时会留下幻影计数——重试时再次累加，
+        // 窗口被从未发出的字节永久占满（credit 只确认真实发出的数据）。
+        // 先 reserve 则 Pending 无副作用；Ready 持有许可后再查窗口，挂起不丢
+        // 许可（下次 poll_reserve 立即 Ready），credit 唤醒后照常 send_item。
+        let n0 = buf.len().min(this.inner.cfg.max_data_frame);
         match this.data.poll_reserve(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(_)) => Poll::Ready(Err(io::Error::new(
@@ -1305,6 +1873,21 @@ impl AsyncWrite for MuxStream {
                 "session writer stopped",
             ))),
             Poll::Ready(Ok(())) => {
+                let n = if this.inner.peer_v2.load(Ordering::SeqCst) {
+                    let window = this.inner.cfg.window_size as u64;
+                    let mut s = this.flow.send.lock().unwrap();
+                    let avail = window.saturating_sub(s.outstanding);
+                    if avail == 0 {
+                        s.waker = Some(cx.waker().clone());
+                        return Poll::Pending;
+                    }
+                    let n = n0.min(avail as usize);
+                    s.outstanding += n as u64;
+                    n
+                } else {
+                    n0
+                };
+                this.flow.touch(now_ms(this.inner.epoch));
                 let frame = encode_frame(T_DATA, this.ch_id, &buf[..n]);
                 match this.data.send_item(frame) {
                     Ok(()) => Poll::Ready(Ok(n)),
@@ -1355,6 +1938,123 @@ impl Drop for MuxStream {
     }
 }
 
+// ---------------------------------------------------------------- MuxDatagram
+
+/// 单条数据报 mux 通道（v2 UDP 会话映射）：每个 DATA 帧携带一个 UDP 数据报，
+/// 边界保留。0 长数据报在 wire 上不可表示（空 DATA 帧被丢弃，记录在案）。
+pub struct MuxDatagram {
+    ch_id: u32,
+    inner: Arc<Inner>,
+    rx: mpsc::Receiver<MuxInbound>,
+    dead: Arc<AtomicBool>,
+    flow: Arc<FlowState>,
+}
+
+impl MuxDatagram {
+    fn new(
+        ch_id: u32,
+        inner: Arc<Inner>,
+        rx: mpsc::Receiver<MuxInbound>,
+        dead: Arc<AtomicBool>,
+    ) -> Self {
+        let flow = {
+            let table = inner.table.lock().unwrap();
+            table
+                .get(&ch_id)
+                .filter(|e| Arc::ptr_eq(&e.dead, &dead))
+                .map(|e| e.flow.clone())
+                .unwrap_or_else(FlowState::new)
+        };
+        Self {
+            ch_id,
+            inner,
+            rx,
+            dead,
+            flow,
+        }
+    }
+
+    /// 通道 ID（奇偶规则同 MuxStream；D8）。
+    pub fn ch_id(&self) -> u32 {
+        self.ch_id
+    }
+
+    /// 通道是否已被拆除。
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::SeqCst)
+    }
+
+    /// 发送一个数据报。> MAX_DATA_FRAME 报 DatagramTooLarge（UDP 数据报上限
+    /// 65507 < 64KiB，正常 socket 不会触发）；窗口耗尽时等待 credit。
+    pub async fn send_datagram(&self, bytes: &[u8]) -> Result<(), MuxError> {
+        if bytes.len() > MAX_DATA_FRAME {
+            return Err(MuxError::DatagramTooLarge(bytes.len()));
+        }
+        if bytes.is_empty() {
+            return Ok(()); // 空 DATA 帧 wire 上不可表示；静默成功（对端等价于丢包）
+        }
+        if self.dead.load(Ordering::SeqCst) {
+            return Err(MuxError::ChannelClosed);
+        }
+        let window = self.inner.cfg.window_size as u64;
+        if self.inner.peer_v2.load(Ordering::SeqCst) {
+            let mut term_rx = self.inner.term.subscribe();
+            loop {
+                if self.dead.load(Ordering::SeqCst) {
+                    // 等窗口期间通道被对端/本地拆除（CLOSE/stall/回收）：
+                    // credit 永不再来，必须干净报错而不是等到会话结束。
+                    return Err(MuxError::ChannelClosed);
+                }
+                {
+                    let mut s = self.flow.send.lock().unwrap();
+                    if s.outstanding < window {
+                        s.outstanding += bytes.len() as u64;
+                        break;
+                    }
+                }
+                tokio::select! {
+                    _ = self.flow.wake.notified() => {}
+                    _ = term_rx.changed() => return Err(MuxError::SessionClosed),
+                }
+            }
+        }
+        self.flow.touch(now_ms(self.inner.epoch));
+        let frame = encode_frame(T_DATA, self.ch_id, bytes);
+        match self.inner.data_tx.send(frame).await {
+            Ok(()) => Ok(()),
+            Err(_) => Err(MuxError::SessionClosed),
+        }
+    }
+
+    /// 接收下一个数据报；None = 通道已拆（EOF/CLOSE/会话终止）。
+    pub async fn recv_datagram(&mut self) -> Option<Vec<u8>> {
+        match self.rx.recv().await {
+            Some(MuxInbound::Data(bytes)) => {
+                send_credit(&self.inner, self.ch_id, &self.flow, bytes.len());
+                self.flow.touch(now_ms(self.inner.epoch));
+                Some(bytes)
+            }
+            Some(MuxInbound::Eof) => None,
+            Some(MuxInbound::Close(CloseReason::NORMAL)) => None,
+            Some(MuxInbound::Close(_)) => None,
+            Some(MuxInbound::SessionDown) => None,
+            None => None,
+        }
+    }
+}
+
+impl Drop for MuxDatagram {
+    fn drop(&mut self) {
+        if self.dead.load(Ordering::SeqCst) {
+            return;
+        }
+        let close = encode_frame(T_CLOSE, self.ch_id, &[CloseReason::NORMAL]);
+        if self.inner.ctrl_tx.try_send(close.clone()).is_err() {
+            self.inner.defer_ctrl(close);
+        }
+    }
+}
+
 // ---------------------------------------------------------------- 单元测试（编解码）
 
 #[cfg(test)]
@@ -1363,7 +2063,7 @@ mod tests {
 
     #[test]
     fn codec_roundtrip_open() {
-        let target = DialTarget::new("127.0.0.1".parse().unwrap(), 3080);
+        let target = DialTarget::from_ip("127.0.0.1".parse().unwrap(), 3080);
         let f = encode_frame(T_OPEN, 1, &encode_open_payload(&target));
         assert_eq!(f.len(), HEADER_LEN + 1 + 9 + 2);
         let dec = decode_frame(&f).unwrap();
@@ -1379,7 +2079,7 @@ mod tests {
 
     #[test]
     fn codec_roundtrip_ipv6_target() {
-        let target = DialTarget::new("fe80::1".parse().unwrap(), 80);
+        let target = DialTarget::from_ip("fe80::1".parse().unwrap(), 80);
         let f = encode_frame(T_OPEN, 3, &encode_open_payload(&target));
         match decode_frame(&f).unwrap() {
             Frame::Open { ch_id, host, port } => {
@@ -1389,6 +2089,49 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn codec_roundtrip_dopen_and_v2_frames() {
+        let target = DialTarget::new("nas.local", 5353);
+        let f = encode_frame(T_DOPEN, 2, &encode_open_payload(&target));
+        assert_eq!(
+            decode_frame(&f).unwrap(),
+            Frame::DOpen {
+                ch_id: 2,
+                host: "nas.local".into(),
+                port: 5353
+            }
+        );
+
+        let f = encode_frame(T_PING, 0, &12345u64.to_be_bytes());
+        assert_eq!(decode_frame(&f).unwrap(), Frame::Ping { nonce: 12345 });
+        let f = encode_frame(T_PONG, 0, &12345u64.to_be_bytes());
+        assert_eq!(decode_frame(&f).unwrap(), Frame::Pong { nonce: 12345 });
+        let f = encode_frame(T_WINDOW, 7, &4096u32.to_be_bytes());
+        assert_eq!(
+            decode_frame(&f).unwrap(),
+            Frame::Window {
+                ch_id: 7,
+                delta: 4096
+            }
+        );
+    }
+
+    #[test]
+    fn v2_frame_shape_violations_are_structural() {
+        // PING 载荷不是 8 字节 nonce
+        let f = encode_frame(T_PING, 0, &[0; 4]);
+        assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
+        // WINDOW 载荷不是 4 字节
+        let f = encode_frame(T_WINDOW, 1, &[0; 8]);
+        assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
+        // WINDOW 打在会话级 ch 0
+        let f = encode_frame(T_WINDOW, 0, &1u32.to_be_bytes());
+        assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
+        // 未知类型仍结构违规
+        let f = encode_frame(0x7f, 1, &[1]);
+        assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
     }
 
     #[test]
@@ -1497,7 +2240,7 @@ mod tests {
         let f = encode_frame(T_CLOSE, 1, &[0, 1]);
         assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
         // OPEN host_len 与载荷长度不匹配
-        let mut p = encode_open_payload(&DialTarget::new("127.0.0.1".parse().unwrap(), 80));
+        let mut p = encode_open_payload(&DialTarget::from_ip("127.0.0.1".parse().unwrap(), 80));
         p[0] = 200;
         let f = encode_frame(T_OPEN, 1, &p);
         assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
@@ -1507,39 +2250,40 @@ mod tests {
     }
 
     #[test]
-    fn reserved_frame_types_decode_and_are_ignored_semantically() {
-        for t in [T_PING, T_PONG, T_WINDOW] {
-            let f = encode_frame(t, 0, &[0; 4]);
-            match decode_frame(&f).unwrap() {
-                Frame::Reserved { ftype, ch_id } => {
-                    assert_eq!(ftype, t);
-                    assert_eq!(ch_id, 0);
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn unknown_frame_type_is_structural() {
-        let f = encode_frame(0x7f, 1, &[1]);
-        assert!(matches!(decode_frame(&f), Err(MuxError::Protocol(_))));
-    }
-
-    #[test]
     fn target_validation_matches_bad_target_rules() {
-        let ok = |h: &str, p: u16| DialTarget::new(h.parse().unwrap(), p).validate();
+        let ok = |h: &str, p: u16| DialTarget::new(h, p).validate();
         assert!(ok("127.0.0.1", 3080));
         assert!(ok("192.168.1.7", 1));
         assert!(ok("::1", 80));
+        assert!(ok("nas.local", 80));
+        assert!(ok("My-NAS.Example.COM", 80)); // 构造时小写规范化
         assert!(!ok("127.0.0.1", 0)); // port=0
         assert!(!ok("0.0.0.0", 80)); // 未指定
         assert!(!ok("::", 80));
         assert!(!ok("224.0.0.1", 80)); // 组播
         assert!(!ok("ff02::1", 80));
         assert!(!ok("255.255.255.255", 80)); // 广播
-                                             // 方括号/zone 形式不是合法 IP 字面量，parse 即失败
+        assert!(!ok("", 80)); // 空
+        assert!(!ok("1.2.3.999", 80)); // 纯数字串冒充主机名
+        assert!(!ok("-bad.example", 80)); // 标签以 - 开头
+        assert!(!ok("bad..example", 80)); // 空标签
+        assert!(!ok("has space.example", 80)); // 空白
+        assert!(!ok("v6:zone", 80)); // 冒号（IPv6 必须走字面量路径）
+                                     // 方括号/zone 形式不是合法 IP 字面量，parse 即失败
         assert!("[::1]:80".parse::<IpAddr>().is_err());
         assert!("fe80::1%eth0".parse::<IpAddr>().is_err());
+    }
+
+    #[test]
+    fn dial_target_normalizes() {
+        assert_eq!(DialTarget::new("NAS.Local.", 80).host, "nas.local");
+        assert_eq!(
+            DialTarget::from_ip("::ffff:127.0.0.1".parse().unwrap(), 80).host,
+            "::ffff:127.0.0.1"
+        );
+        assert_eq!(
+            DialTarget::from_ip("::ffff:127.0.0.1".parse().unwrap(), 80).ip_literal(),
+            Some("::ffff:127.0.0.1".parse().unwrap())
+        );
     }
 }

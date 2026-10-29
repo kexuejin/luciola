@@ -737,15 +737,19 @@ pub struct LinkStats {
     pub frames_dequeued: u64,
 }
 
-/// 转发规则（T3 `enable_forward_endpoint`）：单 IP 上的端口区间，含端点。
+/// 转发规则（T3 `enable_forward_endpoint` / v2 `enable_remote_endpoint`）：
+/// 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ForwardRuleDto {
     pub host: String,
     pub port_from: u16,
     pub port_to: u16,
+    /// v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
+    pub udp: bool,
 }
 
-/// 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口。
+/// 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口 + 类别。
+/// `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ForwardStatusDto {
     pub active: bool,
@@ -754,6 +758,7 @@ pub struct ForwardStatusDto {
     pub channels_total: u64,
     pub dial_denied: u64,
     pub dial_failed: u64,
+    pub kind: String,
 }
 
 /// One authenticated encrypted channel (see `luciola::link::secure`).
@@ -925,22 +930,15 @@ impl SecureSession {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    // ---------------- T3：隧道链路转发（数据面不跨 FFI，D7） ----------------
+    // ---------------- T3/T4：隧道链路转发（数据面不跨 FFI，D7） ----------------
 
     /// 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+    /// `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
     /// `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
     /// 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
     /// "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
     pub fn start_local_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
-        let r = host
-            .parse::<std::net::IpAddr>()
-            .map_err(|_| {
-                TunnelError::InvalidTarget(format!(
-                    "非法转发目标 {host}:{port}（host 需为 IP 字面量，如 192.168.1.10）",
-                ))
-            })
-            .and_then(|ip| self.tunnel.start_local_forward(listen_port, ip, port));
-        self.tunnel_result(r)
+        self.tunnel_result(self.tunnel.start_local_forward(listen_port, host, port))
     }
 
     /// 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
@@ -948,27 +946,27 @@ impl SecureSession {
         self.tunnel_result(self.tunnel.stop_local_forward(listen_port))
     }
 
+    /// 注册 UDP 转发（v2 NAT 式会话映射；仅 connect()/Dial 角色）：
+    /// 本机 127.0.0.1:listen_port 的每个源地址映射一条数据报通道到对端
+    /// host:port；对端 endpoint 的 ACL 规则须 `udp=true` 放行。
+    /// 映射空闲超时自动回收（默认 60s）。
+    pub fn start_udp_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
+        self.tunnel_result(self.tunnel.start_udp_forward(listen_port, host, port))
+    }
+
+    /// 注销 UDP 转发。未注册返回 false。
+    pub fn stop_udp_forward(&self, listen_port: u16) -> bool {
+        self.tunnel_result(self.tunnel.stop_udp_forward(listen_port))
+    }
+
     /// 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
-    /// `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+    /// `port_from <= port_to`、tunnel_port 双栈冲突探测；规则主机为 IP 字面量
+    /// 或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。失败同上走 on_state。
     pub fn enable_forward_endpoint(&self, rules: Vec<ForwardRuleDto>) -> bool {
-        let mut parsed = Vec::with_capacity(rules.len());
-        for r in rules {
-            let host: std::net::IpAddr = match r.host.parse() {
-                Ok(h) => h,
-                Err(_) => {
-                    return self.tunnel_result(Err(TunnelError::InvalidRule(format!(
-                        "规则主机不是合法 IP：{}:{}-{}",
-                        r.host, r.port_from, r.port_to
-                    ))))
-                }
-            };
-            parsed.push(ForwardRule {
-                host,
-                port_from: r.port_from,
-                port_to: r.port_to,
-            });
+        match parse_rule_dtos(rules) {
+            Ok(parsed) => self.tunnel_result(self.tunnel.enable_forward_endpoint(parsed)),
+            Err(e) => self.tunnel_result(Err(e)),
         }
-        self.tunnel_result(self.tunnel.enable_forward_endpoint(parsed))
     }
 
     /// 关闭转发端点（幂等）。
@@ -976,13 +974,49 @@ impl SecureSession {
         self.tunnel_result(self.tunnel.disable_forward_endpoint())
     }
 
+    /// 注册 remote forward（v2 `-R`；仅 listen()/Responder 角色）：本机
+    /// 127.0.0.1:listen_port 的每条入站连接经隧道（偶数通道）转发到**对端机**
+    /// 上的 host:port。对端须 enable_remote_endpoint 放行该目标；对端为 v1 时
+    /// 通道建立失败（对端 mux 按违规终止，勿对旧版本启用）。
+    pub fn start_remote_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
+        self.tunnel_result(self.tunnel.start_remote_forward(listen_port, host, port))
+    }
+
+    /// 注销 remote forward。未注册返回 false。
+    pub fn stop_remote_forward(&self, listen_port: u16) -> bool {
+        self.tunnel_result(self.tunnel.stop_remote_forward(listen_port))
+    }
+
+    /// 启用/替换 remote endpoint ACL（v2；仅 connect()/Dial 角色）：放行
+    /// Responder 发起的通道并拨本机目标。规则同 enable_forward_endpoint；
+    /// 未启用 = 默认拒绝一切 remote forward 拨入。
+    pub fn enable_remote_endpoint(&self, rules: Vec<ForwardRuleDto>) -> bool {
+        match parse_rule_dtos(rules) {
+            Ok(parsed) => self.tunnel_result(self.tunnel.enable_remote_endpoint(parsed)),
+            Err(e) => self.tunnel_result(Err(e)),
+        }
+    }
+
+    /// 关闭 remote endpoint（幂等）。
+    pub fn disable_remote_endpoint(&self) -> bool {
+        self.tunnel_result(self.tunnel.disable_remote_endpoint())
+    }
+
     /// 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
     pub fn set_tunnel_port(&self, port: u16) -> bool {
         self.tunnel_result(self.tunnel.set_tunnel_port(port))
     }
 
+    /// 隧道 mux keepalive（v2）：`interval_ms=0` 关闭；dead_after_ms 会被
+    /// clamp 到 ≥ interval_ms。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+    /// 改动随下一次隧道链路重建生效。
+    pub fn set_tunnel_keepalive(&self, interval_ms: u64, dead_after_ms: u64) {
+        self.tunnel.set_keepalive(interval_ms, dead_after_ms);
+    }
+
     /// 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
-    /// 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+    /// 历史折叠计数、类别（local / udp_local / remote_endpoint / endpoint / remote）。
+    /// 注册过任何转发/端点后即有行，重建期间 active=false。
     pub fn forward_stats(&self) -> Vec<ForwardStatusDto> {
         self.tunnel
             .stats()
@@ -994,6 +1028,7 @@ impl SecureSession {
                 channels_total: s.status.channels_total,
                 dial_denied: s.status.dial_denied,
                 dial_failed: s.status.dial_failed,
+                kind: s.kind.as_str().to_string(),
             })
             .collect()
     }
@@ -1020,6 +1055,27 @@ impl TunnelReporter for TunnelToListener {
     fn report(&self, kind: &str, detail: String) {
         self.0.on_state(kind.to_string(), Some(detail));
     }
+}
+
+/// DTO → 核心规则：主机为 IP 字面量或合法主机名（v2），端口区间正序。
+/// 校验失败返回 InvalidRule（调用方走 on_state 上报）。
+fn parse_rule_dtos(dtos: Vec<ForwardRuleDto>) -> Result<Vec<ForwardRule>, TunnelError> {
+    let mut parsed = Vec::with_capacity(dtos.len());
+    for r in dtos {
+        let host = luciola_tunnel::forward::normalize_rule_host_text(&r.host).ok_or_else(|| {
+            TunnelError::InvalidRule(format!(
+                "规则主机既不是合法 IP 也不是合法主机名：{}:{}-{}",
+                r.host, r.port_from, r.port_to
+            ))
+        })?;
+        parsed.push(ForwardRule {
+            host,
+            port_from: r.port_from,
+            port_to: r.port_to,
+            udp: r.udp,
+        });
+    }
+    Ok(parsed)
 }
 
 impl SecureSession {

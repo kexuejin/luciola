@@ -296,6 +296,11 @@ public interface SecureSessionInterface {
     public fun `disableForwardEndpoint`(): kotlin.Boolean
     
     /**
+     * 关闭 remote endpoint（幂等）。
+     */
+    public fun `disableRemoteEndpoint`(): kotlin.Boolean
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
@@ -304,13 +309,22 @@ public interface SecureSessionInterface {
     
     /**
      * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
-     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；规则主机为 IP 字面量
+     * 或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。失败同上走 on_state。
      */
     public fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean
     
     /**
+     * 启用/替换 remote endpoint ACL（v2；仅 connect()/Dial 角色）：放行
+     * Responder 发起的通道并拨本机目标。规则同 enable_forward_endpoint；
+     * 未启用 = 默认拒绝一切 remote forward 拨入。
+     */
+    public fun `enableRemoteEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean
+    
+    /**
      * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
-     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     * 历史折叠计数、类别（local / udp_local / remote_endpoint / endpoint / remote）。
+     * 注册过任何转发/端点后即有行，重建期间 active=false。
      */
     public fun `forwardStats`(): List<ForwardStatusDto>
     
@@ -342,17 +356,41 @@ public interface SecureSessionInterface {
     public fun `setRetryPolicy`(`minMs`: kotlin.ULong, `maxMs`: kotlin.ULong, `jitterPct`: kotlin.ULong)
     
     /**
+     * 隧道 mux keepalive（v2）：`interval_ms=0` 关闭；dead_after_ms 会被
+     * clamp 到 ≥ interval_ms。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+     * 改动随下一次隧道链路重建生效。
+     */
+    public fun `setTunnelKeepalive`(`intervalMs`: kotlin.ULong, `deadAfterMs`: kotlin.ULong)
+    
+    /**
      * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
      */
     public fun `setTunnelPort`(`port`: kotlin.UShort): kotlin.Boolean
     
     /**
      * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
      * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
      * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
      * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
      */
     public fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注册 remote forward（v2 `-R`；仅 listen()/Responder 角色）：本机
+     * 127.0.0.1:listen_port 的每条入站连接经隧道（偶数通道）转发到**对端机**
+     * 上的 host:port。对端须 enable_remote_endpoint 放行该目标；对端为 v1 时
+     * 通道建立失败（对端 mux 按违规终止，勿对旧版本启用）。
+     */
+    public fun `startRemoteForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注册 UDP 转发（v2 NAT 式会话映射；仅 connect()/Dial 角色）：
+     * 本机 127.0.0.1:listen_port 的每个源地址映射一条数据报通道到对端
+     * host:port；对端 endpoint 的 ACL 规则须 `udp=true` 放行。
+     * 映射空闲超时自动回收（默认 60s）。
+     */
+    public fun `startUdpForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
     
     /**
      * Link health counters (sent/received frames, connections, retries).
@@ -363,6 +401,16 @@ public interface SecureSessionInterface {
      * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
      */
     public fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注销 remote forward。未注册返回 false。
+     */
+    public fun `stopRemoteForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注销 UDP 转发。未注册返回 false。
+     */
+    public fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
     
     public companion object
 }
@@ -403,6 +451,11 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
     public override fun `disableForwardEndpoint`(): kotlin.Boolean
     
     /**
+     * 关闭 remote endpoint（幂等）。
+     */
+    public override fun `disableRemoteEndpoint`(): kotlin.Boolean
+    
+    /**
      * Close the channel; the peer sees the socket close. (Named
      * `disconnect` because the generated Disposable interface already owns
      * `close`.)
@@ -411,13 +464,22 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
     
     /**
      * 启用/替换服务端转发端点（仅 listen()/Responder 角色）：规则非空、
-     * `port_from <= port_to`、tunnel_port 双栈冲突探测；失败同上走 on_state。
+     * `port_from <= port_to`、tunnel_port 双栈冲突探测；规则主机为 IP 字面量
+     * 或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。失败同上走 on_state。
      */
     public override fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean
     
     /**
+     * 启用/替换 remote endpoint ACL（v2；仅 connect()/Dial 角色）：放行
+     * Responder 发起的通道并拨本机目标。规则同 enable_forward_endpoint；
+     * 未启用 = 默认拒绝一切 remote forward 拨入。
+     */
+    public override fun `enableRemoteEndpoint`(`rules`: List<ForwardRuleDto>): kotlin.Boolean
+    
+    /**
      * 快照全部转发状态：active（隧道已建立且 Guard 存活）、实际监听端口、
-     * 历史折叠计数。注册过任何转发/端点后即有行，重建期间 active=false。
+     * 历史折叠计数、类别（local / udp_local / remote_endpoint / endpoint / remote）。
+     * 注册过任何转发/端点后即有行，重建期间 active=false。
      */
     public override fun `forwardStats`(): List<ForwardStatusDto>
     
@@ -449,17 +511,41 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
     public override fun `setRetryPolicy`(`minMs`: kotlin.ULong, `maxMs`: kotlin.ULong, `jitterPct`: kotlin.ULong)
     
     /**
+     * 隧道 mux keepalive（v2）：`interval_ms=0` 关闭；dead_after_ms 会被
+     * clamp 到 ≥ interval_ms。仅对证明过 v2 的对端执行判死（v1 对端永不误杀）。
+     * 改动随下一次隧道链路重建生效。
+     */
+    public override fun `setTunnelKeepalive`(`intervalMs`: kotlin.ULong, `deadAfterMs`: kotlin.ULong)
+    
+    /**
      * 覆盖隧道端口（默认 = secure 端口 + 1；0 = 恢复默认）。改动触发链路重建。
      */
     public override fun `setTunnelPort`(`port`: kotlin.UShort): kotlin.Boolean
     
     /**
      * 注册本地监听端口，经隧道转发到对端 `host:port`（仅 connect()/Dial 角色）。
+     * `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
      * `listen_port=0` → 系统分配，实端口见 [`Self::forward_stats`]。
      * 同步完成目标校验与端口冲突探测：失败返回 false 并 on_state(
      * "error", "forward_bind_failed: …" / 校验信息)。懒建立：首个注册后才建隧道。
      */
     public override fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注册 remote forward（v2 `-R`；仅 listen()/Responder 角色）：本机
+     * 127.0.0.1:listen_port 的每条入站连接经隧道（偶数通道）转发到**对端机**
+     * 上的 host:port。对端须 enable_remote_endpoint 放行该目标；对端为 v1 时
+     * 通道建立失败（对端 mux 按违规终止，勿对旧版本启用）。
+     */
+    public override fun `startRemoteForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注册 UDP 转发（v2 NAT 式会话映射；仅 connect()/Dial 角色）：
+     * 本机 127.0.0.1:listen_port 的每个源地址映射一条数据报通道到对端
+     * host:port；对端 endpoint 的 ACL 规则须 `udp=true` 放行。
+     * 映射空闲超时自动回收（默认 60s）。
+     */
+    public override fun `startUdpForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.Boolean
     
     /**
      * Link health counters (sent/received frames, connections, retries).
@@ -470,6 +556,16 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
      * 注销本地转发（停止 Guard + 折叠计数）。未注册返回 false。
      */
     public override fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注销 remote forward。未注册返回 false。
+     */
+    public override fun `stopRemoteForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * 注销 UDP 转发。未注册返回 false。
+     */
+    public override fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
     
 
     
@@ -658,13 +754,18 @@ public data class DiscoveredPeer (
 
 
 /**
- * 转发规则（T3 `enable_forward_endpoint`）：单 IP 上的端口区间，含端点。
+ * 转发规则（T3 `enable_forward_endpoint` / v2 `enable_remote_endpoint`）：
+ * 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
  */
 
 public data class ForwardRuleDto (
     var `host`: kotlin.String, 
     var `portFrom`: kotlin.UShort, 
-    var `portTo`: kotlin.UShort
+    var `portTo`: kotlin.UShort, 
+    /**
+     * v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
+     */
+    var `udp`: kotlin.Boolean
 ) {
     public companion object
 }
@@ -672,7 +773,8 @@ public data class ForwardRuleDto (
 
 
 /**
- * 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口。
+ * 一条转发状态（T3 `forward_stats`）：历史折叠累计 + 实际监听端口 + 类别。
+ * `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
  */
 
 public data class ForwardStatusDto (
@@ -681,7 +783,8 @@ public data class ForwardStatusDto (
     var `channelsOpen`: kotlin.ULong, 
     var `channelsTotal`: kotlin.ULong, 
     var `dialDenied`: kotlin.ULong, 
-    var `dialFailed`: kotlin.ULong
+    var `dialFailed`: kotlin.ULong, 
+    var `kind`: kotlin.String
 ) {
     public companion object
 }

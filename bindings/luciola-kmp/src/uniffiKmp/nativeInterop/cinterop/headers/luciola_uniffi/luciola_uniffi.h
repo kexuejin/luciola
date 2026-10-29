@@ -214,9 +214,13 @@ void uniffi_luciola_uniffi_fn_method_securesession_connect(void * ptr, RustBuffe
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_disable_forward_endpoint(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
+int8_t uniffi_luciola_uniffi_fn_method_securesession_disable_remote_endpoint(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
 void uniffi_luciola_uniffi_fn_method_securesession_disconnect(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_enable_forward_endpoint(void * ptr, RustBuffer rules, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securesession_enable_remote_endpoint(void * ptr, RustBuffer rules, UniffiRustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_luciola_uniffi_fn_method_securesession_forward_stats(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -230,13 +234,23 @@ void uniffi_luciola_uniffi_fn_method_securesession_set_keepalive(void * ptr, int
 );
 void uniffi_luciola_uniffi_fn_method_securesession_set_retry_policy(void * ptr, int64_t minMs, int64_t maxMs, int64_t jitterPct, UniffiRustCallStatus *_Nonnull out_status
 );
+void uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_keepalive(void * ptr, int64_t intervalMs, int64_t deadAfterMs, UniffiRustCallStatus *_Nonnull out_status
+);
 int8_t uniffi_luciola_uniffi_fn_method_securesession_set_tunnel_port(void * ptr, int16_t port, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_start_local_forward(void * ptr, int16_t listenPort, RustBuffer host, int16_t port, UniffiRustCallStatus *_Nonnull out_status
 );
+int8_t uniffi_luciola_uniffi_fn_method_securesession_start_remote_forward(void * ptr, int16_t listenPort, RustBuffer host, int16_t port, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securesession_start_udp_forward(void * ptr, int16_t listenPort, RustBuffer host, int16_t port, UniffiRustCallStatus *_Nonnull out_status
+);
 RustBuffer uniffi_luciola_uniffi_fn_method_securesession_stats(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_stop_local_forward(void * ptr, int16_t listenPort, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securesession_stop_remote_forward(void * ptr, int16_t listenPort, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securesession_stop_udp_forward(void * ptr, int16_t listenPort, UniffiRustCallStatus *_Nonnull out_status
 );
 void * uniffi_luciola_uniffi_fn_clone_truststore(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -508,10 +522,16 @@ int16_t uniffi_luciola_uniffi_checksum_method_securesession_connect(void
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_disable_remote_endpoint(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_disconnect(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_enable_forward_endpoint(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_enable_remote_endpoint(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_forward_stats(void
@@ -532,16 +552,31 @@ int16_t uniffi_luciola_uniffi_checksum_method_securesession_set_keepalive(void
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_set_retry_policy(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_keepalive(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_set_tunnel_port(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_start_local_forward(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_start_remote_forward(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_start_udp_forward(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_stats(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_stop_local_forward(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_stop_remote_forward(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_truststore_entries(void

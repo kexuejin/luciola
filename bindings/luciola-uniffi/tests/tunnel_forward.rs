@@ -200,6 +200,7 @@ fn local_forward_e2e_roundtrip_and_stats() {
             host: "127.0.0.1".into(),
             port_from: 1,
             port_to: u16::MAX,
+            udp: false,
         }]),
         "启用转发端点应成功: {:?}",
         p.listen_ev.events(),
@@ -305,6 +306,7 @@ fn endpoint_acl_denies_counted_not_forwarded() {
         host: "10.99.99.99".into(),
         port_from: 1,
         port_to: u16::MAX,
+        udp: false,
     };
     assert!(
         p.listen.enable_forward_endpoint(vec![deny]),
@@ -356,6 +358,7 @@ fn wrong_role_no_base_and_invalid_target_rejected_synchronously() {
         host: "10.0.0.1".into(),
         port_from: 1,
         port_to: 2,
+        udp: false,
     }]);
     assert!(!r, "Dial 角色不该能启用端点");
     assert_eq!(
@@ -380,11 +383,12 @@ fn wrong_role_no_base_and_invalid_target_rejected_synchronously() {
         "未配置基址不该能注册",
     );
 
-    // 非法目标 host → InvalidTarget。
+    // 非法目标 host → InvalidTarget（v2：纯数字串既非 IP 也非合法主机名；
+    // "not-an-ip" 这类合法主机名字符串现在会被接受，解析在对端做）。
     let before = p.dial_ev.count("error");
     let r = p
         .dial
-        .start_local_forward(free_port(), "not-an-ip".into(), 9);
+        .start_local_forward(free_port(), "1.2.3.999".into(), 9);
     assert!(!r);
     assert_eq!(p.dial_ev.count("error"), before + 1);
     assert!(p.dial_ev.has_detail_prefix("error", "invalid target"));
@@ -394,6 +398,7 @@ fn wrong_role_no_base_and_invalid_target_rejected_synchronously() {
         host: "10.0.0.1".into(),
         port_from: 90,
         port_to: 80,
+        udp: false,
     }]);
     assert!(!r, "起止端口倒置应被拒");
 }
@@ -413,6 +418,7 @@ fn stop_releases_port_and_disconnect_pauses_tunnel() {
             host: "127.0.0.1".into(),
             port_from: 1,
             port_to: u16::MAX,
+            udp: false,
         }]),
         "启用转发端点应成功: {:?}",
         p.listen_ev.events(),
@@ -461,4 +467,218 @@ fn stop_releases_port_and_disconnect_pauses_tunnel() {
         15_000,
     );
     assert!(refused, "暂停后本地端口应拒绝连接");
+}
+
+// ---------------------------------------------------------------- T4 (v2) 用例
+
+/// UDP 回显服务：模拟「对端内网」的 UDP 目标。
+fn spawn_udp_echo() -> u16 {
+    let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = s.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 65536];
+        while let Ok((n, src)) = s.recv_from(&mut buf) {
+            let _ = s.send_to(&buf[..n], src);
+        }
+    });
+    port
+}
+
+/// UDP 转发 e2e（v2 NAT 式会话映射）：本机 UDP socket → 隧道 → 对端 UDP 回显。
+#[test]
+fn udp_forward_e2e_roundtrip() {
+    let p = setup_pair();
+    let upstream = spawn_udp_echo();
+    let l = free_port();
+
+    // 对端 endpoint 放行 UDP 拨号（udp=true 规则）
+    assert!(
+        p.listen.enable_forward_endpoint(vec![ForwardRuleDto {
+            host: "127.0.0.1".into(),
+            port_from: 1,
+            port_to: u16::MAX,
+            udp: true,
+        }]),
+        "启用含 UDP 的端点应成功: {:?}",
+        p.listen_ev.events(),
+    );
+    assert!(
+        p.dial.start_udp_forward(l, "127.0.0.1".into(), upstream),
+        "注册 UDP 转发应成功: {:?}",
+        p.dial_ev.events(),
+    );
+
+    let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    // 短读超时：懒建立期首包会撞端口未绑定（ICMP 静默丢），靠 wait_until 重试。
+    s.set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .unwrap();
+    let ok = wait_until(
+        || {
+            let _ = s.send_to(b"udp-e2e", ("127.0.0.1", l));
+            let mut buf = [0u8; 16];
+            s.recv_from(&mut buf)
+                .is_ok_and(|(n, _)| &buf[..n] == b"udp-e2e")
+        },
+        30_000,
+    );
+    assert!(
+        ok,
+        "经隧道的 UDP 回环应成功: dial={:?} listen={:?}",
+        p.dial.forward_stats(),
+        p.listen.forward_stats()
+    );
+    assert_eq!(p.dial_ev.count("error"), 0, "happy path 不该有 error");
+}
+
+/// Remote forward（v2 `-R`）e2e：Listen 侧监听本地端口，连接经隧道（偶数通道）
+/// 由 Dial 侧拨其本地目标；Dial 侧未启用 remote endpoint 时被默认拒绝。
+#[test]
+fn remote_forward_e2e_and_default_deny() {
+    let p = setup_pair();
+    let upstream = spawn_echo();
+    let l = free_port();
+
+    // 隧道是双向懒建立：Dial 侧也得有工作才建链。给一个指向死端口的哑转发
+    //（无人连接它），只为让隧道建立、remote forward 监听得以绑定。
+    let dummy = (free_port(), free_port());
+    assert!(p
+        .dial
+        .start_local_forward(dummy.0, "127.0.0.1".into(), dummy.1));
+
+    // 先不给 Dial 侧 remote endpoint：Listen 侧 remote forward 建立成功，
+    // 但拨入被默认拒绝 → 连接被关闭而非回显。
+    assert!(p
+        .listen
+        .start_remote_forward(l, "127.0.0.1".into(), upstream));
+    let denied = wait_until(
+        || {
+            let addr: std::net::SocketAddr = format!("127.0.0.1:{l}").parse().unwrap();
+            match std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)) {
+                Ok(mut s) => {
+                    // 读超时必须 > open_timeout(5s)：只有"对端主动关闭"（open 超时
+                    // 补发 CLOSE(2) 后本地连接关闭）才算拒绝；连接尚活（read 超时）
+                    // 返回 false 交给 wait_until 重试。
+                    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(8)));
+                    let _ = s.write_all(b"x");
+                    let mut b = [0u8; 1];
+                    match s.read_exact(&mut b) {
+                        Ok(_) => false, // 竟然有回显：拒绝失效
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => false,
+                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => false,
+                        Err(_) => true, // 对端关闭 = 拒绝
+                    }
+                }
+                Err(_) => false, // 惰性建立期：端口可能尚未绑定
+            }
+        },
+        60_000,
+    );
+    assert!(denied, "未启用 remote endpoint 时拨入必须被拒绝");
+
+    // Dial 侧放行 → 同端口回显成功（偶数通道全链路打通）
+    assert!(p.dial.enable_remote_endpoint(vec![ForwardRuleDto {
+        host: "127.0.0.1".into(),
+        port_from: 1,
+        port_to: u16::MAX,
+        udp: false,
+    }]));
+    let ok = wait_until(|| tcp_roundtrip(l, b"remote-e2e"), 30_000);
+    assert!(
+        ok,
+        "remote forward 回环应成功: {:?}",
+        p.listen.forward_stats()
+    );
+    assert_eq!(p.dial_ev.count("error"), 0);
+    assert_eq!(p.listen_ev.count("error"), 0);
+
+    // 状态行：Listen 侧 remote 行 + Dial 侧 remote_endpoint 行，类别正确
+    assert!(
+        p.listen
+            .forward_stats()
+            .iter()
+            .any(|s| s.listen_port == l && s.kind == "remote" && s.active),
+        "remote 行: {:?}",
+        p.listen.forward_stats(),
+    );
+    assert!(
+        p.dial
+            .forward_stats()
+            .iter()
+            .any(|s| s.kind == "remote_endpoint" && s.active),
+        "remote_endpoint 行: {:?}",
+        p.dial.forward_stats(),
+    );
+
+    assert!(p.listen.stop_remote_forward(l), "stop remote 应成功");
+    assert!(!p.listen.stop_remote_forward(l), "重复 stop 应失败");
+    assert!(p.dial.stop_local_forward(dummy.0), "清理哑转发");
+}
+
+/// v2 控制面杂项：set_tunnel_keepalive 可调、主机名目标/规则被接受、
+/// stats 行 kind 字段覆盖 local/endpoint。
+#[test]
+fn v2_control_surface_misc() {
+    let p = setup_pair();
+    let upstream = spawn_echo();
+    let l = free_port();
+
+    // keepalive 调整不报错（下一次链路重建生效）
+    p.dial.set_tunnel_keepalive(5_000, 15_000);
+    p.listen.set_tunnel_keepalive(0, 0); // 0 = 关闭
+
+    // 主机名目标 + 主机名规则（v2 放宽 IP-only 限制）
+    assert!(
+        p.listen.enable_forward_endpoint(vec![ForwardRuleDto {
+            host: "localhost".into(),
+            port_from: 1,
+            port_to: u16::MAX,
+            udp: false,
+        }]),
+        "主机名规则应被接受: {:?}",
+        p.listen_ev.events(),
+    );
+    assert!(
+        p.dial.start_local_forward(l, "localhost".into(), upstream),
+        "主机名目标应被接受: {:?}",
+        p.dial_ev.events(),
+    );
+    // localhost 解析钉扎 v4 → 与 127.0.0.1 上游互通
+    let ok = wait_until(|| tcp_roundtrip(l, b"hostname-e2e"), 30_000);
+    assert!(ok, "主机名目标回环应成功: {:?}", p.dial.forward_stats());
+
+    // 非法主机名目标同步拒绝
+    assert!(
+        !p.dial
+            .start_local_forward(free_port(), "1.2.3.999".into(), 80),
+        "纯数字串主机名应被拒"
+    );
+    assert!(p.dial_ev.has_detail_prefix("error", "invalid target"));
+
+    // kind 字段：dial 侧 local 行、listen 侧 endpoint 行
+    assert!(
+        p.dial
+            .forward_stats()
+            .iter()
+            .any(|s| s.listen_port == l && s.kind == "local"),
+        "local 行: {:?}",
+        p.dial.forward_stats(),
+    );
+    assert!(
+        p.listen
+            .forward_stats()
+            .iter()
+            .any(|s| s.kind == "endpoint"),
+        "endpoint 行: {:?}",
+        p.listen.forward_stats(),
+    );
+}
+
+/// set_tunnel_port(0)（恢复推导）必须同步成功 —— iOS 原生测试曾在此报 false，
+/// 本用例在 Rust 侧钉住契约。
+#[test]
+fn set_tunnel_port_zero_succeeds() {
+    let s = SecureSession::new(vec![9u8; 32]);
+    assert!(s.set_tunnel_port(0), "set_tunnel_port(0) must be Ok");
+    assert!(s.set_tunnel_port(32123), "explicit override must be Ok");
+    assert!(s.set_tunnel_port(0), "reset must be Ok");
 }

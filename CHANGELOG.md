@@ -12,22 +12,99 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.7.0** (workspace
-> `Cargo.toml` and the KMP `version`), but the registries lag far behind. Verified
-> 2026-10-28: crates.io `luciola` peaks at **0.3.1**; Maven Central
-> `io.github.kexuejin:luciola` peaks at **0.4.2**; `@luciola/core` is **not published to
-> npm**; `luciola-transfer` and `luciola-tunnel` are **not on crates.io at all**. Until a
-> release catches up, take the Kotlin artifact from `mavenLocal()` after running
-> `scripts/publish-maven-local.sh`, and the Rust crates from a git/path dependency — do
-> not paste a version number from the entries below into a build file expecting it to
-> resolve. See [Unreleased](#unreleased) for the full gap.
+> **Published-versus-repo version note.** The repository is at **0.8.0** (workspace
+> `Cargo.toml` and the KMP `version`). Verified 2026-10-29 after publishing:
+> crates.io carries the **0.8.0** line for `luciola-ip`/`luciola-proto`/`luciola-net`/
+> `luciola`/`luciola-transfer`/`luciola-tunnel`/`luciola-cli`; Maven Central carries
+> **`io.github.kexuejin:luciola:0.8.0`** (AAR with the embedded arm64 `.so`, JVM jar,
+> iOS klibs); `@luciola/core` **remains unpublished on npm** — for Node, build
+> `bindings/luciola-node` from source.
 
 ---
 
-## [Unreleased]
+## [0.8.0] - 2026-10-29
 
-Nothing in this section is in a released artifact. Items marked *(not in the tree yet)*
-are planned, not done — they are listed so the intent is public before the code is.
+Tunnel v2 (the full T4 scope, wire-compatible with v1 peers). Published on
+2026-10-29 and verified: crates.io carries all seven crates at **0.8.0**;
+Maven Central carries **`io.github.kexuejin:luciola:0.8.0`** plus the platform
+companions (`luciola-android`/`luciola-jvm`/`luciola-iosarm64`/
+`luciola-iossimulatorarm64`); `@luciola/core` (npm) remains unpublished.
+Breaking for KMP/Node consumers: see the markers below.
+
+### Added — tunnel v2 (the full T4 scope, wire-compatible with v1 peers)
+
+- **Tunnel link keepalive** (`luciola-tunnel` mux) — probe + periodic `PING(nonce)`
+  frames answered by `PONG` automatically; receiving any PING/PONG/WINDOW proves the
+  peer is v2 (`peer_is_v2()`). A proven-v2 peer silent beyond `keepalive_dead_after`
+  (default 45s) terminates the session so the supervisor rebuilds it; a v1 peer is
+  **never** killed by silence (R7 boundary kept). Adjustable via the new
+  `set_tunnel_keepalive(intervalMs, deadAfterMs)` on uniffi/Node (0 disables).
+- **Per-channel WINDOW flow control** (yamux-style credits, frame type `0x08`) — the
+  receiver reports consumed bytes at `window_size/2` thresholds (credits take the
+  reliable deferred-ctrl path; losing one would deadlock the sender), the sender
+  parks `poll_write`/`send_datagram` when `window_size` (default 256 KiB, sanitized
+  to ≥ `max_data_frame`) is outstanding. Enforcement starts only after the peer
+  proves v2; v1 peers keep the v1 behavior (bounded queues + `stall_hard_timeout`),
+  which for v2 peers eliminates the §1.4 cross-channel stall.
+- **Remote forward (`-R`)** — the mux Responder may now open channels (even IDs,
+  D8's v2 relaxation), gated on `peer_v2` proof (an unproven peer sending even
+  frames is still a D9 violation, so mixed-version stays a clean failure). Control
+  plane: `start_remote_forward`/`stop_remote_forward` (Listen side: bind
+  `127.0.0.1:<listen>`, forward each connection through the tunnel to the peer's
+  target) and `enable_remote_endpoint`/`disable_remote_endpoint` (Dial side: ACL
+  for inbound remote opens, **deny-by-default**).
+- **UDP session mapping** — new datagram channels (`T_DOPEN 0x09`, payload identical
+  to OPEN; each DATA frame carries exactly one UDP datagram, boundaries preserved;
+  zero-length datagrams are not representable on the wire and are dropped silently)
+  and `start_udp_forward`/`stop_udp_forward` (Dial side: NAT-style mapping, one
+  channel per source address, idle-recycled). Endpoint ACL rules gain `udp: bool` —
+  `true` admits UDP dials too, `false` is TCP-only (v1 semantics).
+- **Hostname dial targets** — `DialTarget.host` is now `String` (IP literal or
+  RFC-1123-style hostname; the OPEN host field was already UTF-8 text, so the wire
+  is unchanged). Structural validation stays in the mux core (bad_target for
+  garbage); resolution happens on the dialing side with **session-scoped pinning**
+  (one lookup per hostname per endpoint, anti-rebinding; IPv4 preferred among
+  results). ACL rules accept hostnames, matched case-insensitively; IP rules and
+  hostname targets never cross-match (no resolution before authorization).
+- **Channel idle recycling** — `MuxConfig.idle_timeout` (stream channels, default
+  off — an idle SSH-like stream must not die) and `udp_idle_timeout` (datagram
+  channels, default 60s — NAT mappings must expire). The reaper tears down only
+  Active channels (`CLOSE(normal)`; the peer's read side sees EOF), the session
+  and all other channels keep flowing.
+- **CLI** — `forward serve --remote-forward LISTEN=TARGET` / `--allow-udp`,
+  `forward dial --remote-allow` / `--udp LISTEN=TARGET`; `--target`/`--allow`
+  accept hostnames.
+- **`ForwardStatusDto.kind`** (uniffi/Node `kind`) — each stats row is labeled
+  `"local" | "udp_local" | "remote_endpoint" | "endpoint" | "remote"`. KMP/Swift
+  bindings regenerated in the same change; the artifact version stays at the
+  unpublished 0.7.0, so no registry-facing bump.
+
+**Breaking (0.x, minor):** `ForwardRuleDto`/`JsForwardRule` gained a required
+`udp` field and `ForwardStatusDto`/`JsForwardStatus` a required `kind` field;
+`DialTarget.host` changed from `IpAddr` to `String` (use `DialTarget::from_ip`);
+`MuxError::WrongRole` was removed (Responder-side `open()` is now valid) and
+`ModeMismatch`/`DatagramTooLarge`/`UnsupportedByPeer` added. The tunnel wire
+format stays `ver=0x01` and is interoperable in both directions with the 0.7.0 v1
+peers (with the documented remote-forward/UDP capability gaps).
+
+### Added — KMP iOS runtime verification (tests + build hardening)
+
+- **`iosTest` source set** (`bindings/luciola-kmp/src/iosTest/`) — the first tests
+  that *execute* the Kotlin/Native iOS path instead of merely compiling it:
+  binding smoke via cinterop against `libluciola_uniffi.a`, `IosNetworkMonitor`
+  over Network.framework, tunnel control-plane contracts (role/invalid-target/
+  empty-rules rejections, `setTunnelPort`/`setTunnelKeepalive`), and a full
+  loopback e2e (message link → tunnel → local TCP forward → byte-exact echo).
+  Run with `./gradlew :luciola:iosSimulatorArm64Test` (requires the
+  `aarch64-apple-ios-sim` static lib and an Xcode simulator). 4/4 passing.
+- **Build hardening** — the native test binary never linked the current
+  `libluciola_uniffi.a`: Gradle's up-to-date check does not track the static lib
+  (opaque linker flags; the cinterop klib only sees headers), so after a Rust
+  rebuild the tests silently ran the old engine — the same "old .so in the
+  artifact" trap AGENTS.md §3 warns about, now on the test side. The `.a` files
+  are registered as inputs of the iOS test link tasks; a stale-link failure mode
+  (misaligned record ABI → `junk data left in buffer` /恒 false) is documented in
+  `build.gradle.kts`.
 
 ### Added — platform entry points
 
@@ -40,9 +117,9 @@ are planned, not done — they are listed so the intent is public before the cod
   path monitor via the C `nw_path_monitor_*` API (the ObjC `NWPathMonitor` class is
   Swift-only and unreachable from Kotlin/Native cinterop). The first path update is
   swallowed as a baseline, matching `AndroidNetworkMonitor`. Compiles for
-  iosArm64/iosSimulatorArm64 (CI `kmp-ios` job); a device/simulator **runtime of this
-  Kotlin path has not been verified** — "compiles into the klib" is not "works on a
-  phone".
+  iosArm64/iosSimulatorArm64 (CI `kmp-ios` job) and now **runtime-verified on the
+  iOS simulator** (`iosSimulatorArm64Test` boots the monitor and asserts a live
+  path report); a physical-device run is still outstanding.
 
 ### Changed (repository) — landed in this unreleased batch
 

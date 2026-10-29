@@ -20,7 +20,8 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
 | 17878 | UDP 双栈 | 设备发现(多播);保留给「单引擎设备」,同机第二个产品自选其他端口 |
 | `secure_port` | TCP | 消息链路:`listen(p)` / `connect(addrs, p, ...)` 每次调用传参 |
 | `tunnel_port` | TCP 双栈,仅 Responder | 转发端点 accept;默认 = `secure_port + 1`,`set_tunnel_port(port)` 覆盖(`0` = 恢复推导);**惰性绑定**——`enable_forward_endpoint` 首次启用才占端口,绑定失败经事件报 `forward_bind_failed: ` |
-| `listen_port` | TCP,绑 `127.0.0.1` | 发起端本地转发监听:`0` = 系统分配(stats 行给实际端口,`stop_local_forward` 接受该值);冲突同步返回 `false` 并报 `forward_bind_failed: ` |
+| `listen_port`(TCP) | TCP,绑 `127.0.0.1` | 发起端本地转发 / 响应端 remote forward 监听:`0` = 系统分配(stats 行给实际端口,`stop_*_forward` 接受该值);冲突同步返回 `false` 并报 `forward_bind_failed: ` |
+| `listen_port`(UDP) | UDP,绑 `127.0.0.1` | 发起端 UDP 转发监听(T4):同上;每个源地址一条 NAT 式映射,空闲 60s 自动回收(`MuxConfig::udp_idle_timeout`) |
 
 ## 2. 生命周期(移动端)
 
@@ -138,3 +139,37 @@ connectionsEstablished / reconnectAttempts`——驱动 UI 健康指示与排障
 安全信道为自研组合(标准原语,SIGMA 式),**未经外部审计**——上线携带
 敏感数据前请按 `SECURITY.md` 的流程安排评审;发现帧本身不认证,Profile
 字段一律当展示数据处理,信任判断只认 TrustStore + 安全信道。
+
+## 12. 隧道转发控制面(T3/T4)
+
+隧道是**独立于消息链路**的第二条加密链路(`tunnel_port`),数据面(转发字节流)
+全程在 Rust/内核内,FFI 只暴露控制面。五个面的 API(uniffi / Node 同名同义):
+
+| 面 | 角色 | uniffi 方法 | Node 方法 |
+| :-- | :-- | :-- | :-- |
+| 本地 TCP 转发 | Dial | `start_local_forward` / `stop_local_forward` | `startLocalForward` / `stopLocalForward` |
+| UDP 转发(T4,NAT 式) | Dial | `start_udp_forward` / `stop_udp_forward` | `startUdpForward` / `stopUdpForward` |
+| remote endpoint ACL(T4) | Dial | `enable_remote_endpoint` / `disable_remote_endpoint` | `enableRemoteEndpoint` / `disableRemoteEndpoint` |
+| 转发端点 ACL | Listen | `enable_forward_endpoint` / `disable_forward_endpoint` | `enableForwardEndpoint` / `disableForwardEndpoint` |
+| remote forward(T4,`-R`) | Listen | `start_remote_forward` / `stop_remote_forward` | `startRemoteForward` / `stopRemoteForward` |
+
+规则与语义(三端一致):
+
+- **ACL 默认拒绝**:端点规则表为空/未启用 = 全拒。规则主机为 IP 字面量或
+  主机名;`udp=true` 的规则同时放行 UDP 拨号(TCP 拨号也放行),`udp=false`
+  仅 TCP(v1 语义)。拒绝回 `OPEN_ACK(1)`,**永不拨号、永不解析**。
+- **主机名目标(T4)**:`start_local_forward` / 规则里的主机名由**对端**解析,
+  并按会话钉扎(同一隧道会话内同一主机名只解析一次,防 rebinding)。多地址
+  结果优先取 IPv4。
+- **remote forward(T4)**:响应端把本机 `127.0.0.1:listen` 的连接经隧道转发到
+  **对端机**上的目标——方向与本地转发相反。发起端必须 `enable_remote_endpoint`
+  放行目标(默认拒绝);**发起端是旧版本(v1)时不要启用** remote forward
+  (对端 mux 会按协议违规终止会话)。
+- **`forward_stats()`**:每条注册一行,`kind` ∈ {"local", "udp_local",
+  "remote_endpoint", "endpoint", "remote"};断链重建期间 `active=false`,
+  计数(含 `dial_denied`——安全模型最该被看见的数字)跨重建折叠累计。
+- **隧道 keepalive(T4)**:`set_tunnel_keepalive(intervalMs, deadAfterMs)`
+  (默认 15s/45s;`intervalMs=0` 关闭)。对 v2 对端,静默超过
+  `deadAfterMs` 即判死重建;**对 v1 对端永不判死**(旧版不回 PONG),避免误杀。
+- 转发连接**不跨重连存活**(浏览器/WS 自动重试);懒建立:注册任意转发/
+  端点后才占 `tunnel_port`。

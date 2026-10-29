@@ -748,15 +748,15 @@ async fn invalid_target_rejected_locally_without_wire() {
         let mut raw = s;
 
         assert!(matches!(
-            i.open(DialTarget::new(ip("0.0.0.0"), 80)).await,
+            i.open(DialTarget::from_ip(ip("0.0.0.0"), 80)).await,
             Err(MuxError::InvalidTarget(_))
         ));
         assert!(matches!(
-            i.open(DialTarget::new(ip("224.0.0.1"), 80)).await,
+            i.open(DialTarget::from_ip(ip("224.0.0.1"), 80)).await,
             Err(MuxError::InvalidTarget(_))
         ));
         assert!(matches!(
-            i.open(DialTarget::new(ip("255.255.255.255"), 80)).await,
+            i.open(DialTarget::from_ip(ip("255.255.255.255"), 80)).await,
             Err(MuxError::InvalidTarget(_))
         ));
         assert!(matches!(
@@ -775,7 +775,9 @@ async fn invalid_target_rejected_locally_without_wire() {
     .expect("test timed out");
 }
 
-/// responder 线上 bad target：非 IP 主机 / unspecified / 重复 ch_id -> OPEN_ACK(4)，会话存活。
+/// responder 线上 bad target：非法主机名 / unspecified / 广播 / 组播 / 重复 ch_id
+/// -> OPEN_ACK(4)，会话存活。（v2：合法主机名在 mux 层是合法目标，交给策略层
+/// 解析；只有结构非法的才在此层 ACK(4)。）
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn responder_bad_target_and_duplicate_acks_4() {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -784,7 +786,7 @@ async fn responder_bad_target_and_duplicate_acks_4() {
         let r = MuxSession::start(s, Role::Responder, fast_cfg());
 
         for (ch, host) in [
-            (1u32, "example.com"),
+            (1u32, "1.2.3.999"), // 纯数字串，IP/主机名都不是
             (3, "0.0.0.0"),
             (5, "255.255.255.255"),
             (7, "224.0.0.1"),

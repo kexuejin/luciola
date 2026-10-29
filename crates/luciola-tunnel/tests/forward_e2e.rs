@@ -132,9 +132,10 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
 
 fn rule_for(addr: SocketAddr) -> ForwardRule {
     ForwardRule {
-        host: addr.ip(),
+        host: addr.ip().to_string(),
         port_from: addr.port(),
         port_to: addr.port(),
+        udp: false,
     }
 }
 
@@ -154,7 +155,7 @@ async fn eight_concurrent_connections_large_interleaved_transfer() {
             i,
             LocalForwardConfig {
                 listen_port: 0,
-                target: DialTarget::new(up_addr.ip(), up_addr.port()),
+                target: DialTarget::from_ip(up_addr.ip(), up_addr.port()),
             },
         )
         .expect("local forward");
@@ -204,7 +205,7 @@ async fn stalled_channel_does_not_block_others() {
             i.clone(),
             LocalForwardConfig {
                 listen_port: 0,
-                target: DialTarget::new(bh_addr.ip(), bh_addr.port()),
+                target: DialTarget::from_ip(bh_addr.ip(), bh_addr.port()),
             },
         )
         .expect("fwd blackhole");
@@ -212,7 +213,7 @@ async fn stalled_channel_does_not_block_others() {
             i.clone(),
             LocalForwardConfig {
                 listen_port: 0,
-                target: DialTarget::new(echo_addr.ip(), echo_addr.port()),
+                target: DialTarget::from_ip(echo_addr.ip(), echo_addr.port()),
             },
         )
         .expect("fwd echo");
@@ -275,7 +276,10 @@ async fn acl_deny_counts_and_never_dials() {
 
         // ① 直接 OPEN forbidden：initiator 收到明确的 OPEN_ACK(1)。
         let err = match i
-            .open(DialTarget::new(forbidden_addr.ip(), forbidden_addr.port()))
+            .open(DialTarget::from_ip(
+                forbidden_addr.ip(),
+                forbidden_addr.port(),
+            ))
             .await
         {
             Err(e) => e,
@@ -298,7 +302,7 @@ async fn acl_deny_counts_and_never_dials() {
             i.clone(),
             LocalForwardConfig {
                 listen_port: 0,
-                target: DialTarget::new(forbidden_addr.ip(), forbidden_addr.port()),
+                target: DialTarget::from_ip(forbidden_addr.ip(), forbidden_addr.port()),
             },
         )
         .expect("fwd forbidden");
@@ -316,7 +320,7 @@ async fn acl_deny_counts_and_never_dials() {
             i.clone(),
             LocalForwardConfig {
                 listen_port: 0,
-                target: DialTarget::new(echo_addr.ip(), echo_addr.port()),
+                target: DialTarget::from_ip(echo_addr.ip(), echo_addr.port()),
             },
         )
         .expect("fwd echo");
@@ -348,7 +352,7 @@ async fn dial_failure_counts_and_acks_2() {
         )
         .expect("endpoint");
 
-        let err = match i.open(DialTarget::new(dead.ip(), dead.port())).await {
+        let err = match i.open(DialTarget::from_ip(dead.ip(), dead.port())).await {
             Err(e) => e,
             Ok(_) => panic!("open dead port must fail"),
         };
@@ -392,7 +396,7 @@ async fn session_disconnect_fails_fast_and_stops_forward() {
             i.clone(),
             LocalForwardConfig {
                 listen_port: 0,
-                target: DialTarget::new(echo_addr.ip(), echo_addr.port()),
+                target: DialTarget::from_ip(echo_addr.ip(), echo_addr.port()),
             },
         )
         .expect("fwd");

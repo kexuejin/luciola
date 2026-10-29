@@ -36,6 +36,24 @@ Before shipping products that carry secrets:
 - Ephemeral X25519 secrets and HKDF output are zeroized on drop; signing keys
   zeroize via ed25519-dalek's `zeroize` feature.
 
+## Tunnel data plane posture (luciola-tunnel)
+
+The mux rides on top of `SecureStream` and adds no cryptography of its own; its
+security claims are access-control ones, and they are deny-by-default:
+
+- Forward-endpoint ACLs are empty-by-default (every OPEN rejected, never dialed,
+  never resolved); ACL denial leaks no policy detail (`OPEN_ACK(1)` carries no
+  detail). Remote-forward endpoints on the initiator side must be enabled
+  explicitly (`enable_remote_endpoint`) — inbound opens are rejected otherwise.
+- Local and remote-forward listeners bind loopback only (`127.0.0.1`).
+- Hostname dial targets are resolved **after** the ACL passes and pinned per
+  session (anti-rebinding: one lookup per hostname per endpoint lifetime); IP
+  ACL rules and hostname targets never cross-match.
+- The mux v2 features (WINDOW flow control, remote forward, datagram channels)
+  are gated on v2-peer proof (inbound PING/PONG/WINDOW); a v1 peer sees them
+  as ignored reserved frames or clean terminal rejections, never as a change
+  of its trust surface.
+
 ## Reporting
 
 Email the repository owner; do not open public issues for vulnerabilities.

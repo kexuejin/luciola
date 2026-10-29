@@ -552,15 +552,18 @@ pub struct JsLinkStats {
     pub reconnect_attempts: i64,
 }
 
-/// T3 转发 ACL 规则（主机必须是 IP 字面量，与 uniffi ForwardRuleDto 同构）。
+/// T3/T4 转发 ACL 规则（主机为 IP 字面量或主机名，与 uniffi ForwardRuleDto 同构）。
 #[napi(object)]
 pub struct JsForwardRule {
     pub host: String,
     pub port_from: u16,
     pub port_to: u16,
+    /// v2：true = 本规则同时放行 UDP 数据报拨号（DOPEN）；false 仅 TCP（v1 语义）。
+    pub udp: bool,
 }
 
-/// T3 转发状态行（计数沿用 JS 侧 i64 惯例，与 uniffi ForwardStatusDto 同义）。
+/// T3/T4 转发状态行（计数沿用 JS 侧 i64 惯例，与 uniffi ForwardStatusDto 同义）。
+/// `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
 #[napi(object)]
 pub struct JsForwardStatus {
     pub active: bool,
@@ -569,6 +572,7 @@ pub struct JsForwardStatus {
     pub channels_total: i64,
     pub dial_denied: i64,
     pub dial_failed: i64,
+    pub kind: String,
 }
 
 #[derive(Clone)]
@@ -750,16 +754,22 @@ impl SecureChannel {
     /// 端口冲突等同步失败：返回 false 并经 onEvent 报 "error"
     ///（detail 前缀 forward_bind_failed: ）。
     #[napi]
+    /// `host` 为 IP 字面量或主机名（v2：主机名由对端解析并按会话钉扎）。
     pub fn start_local_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
-        let ip: std::net::IpAddr = match host.parse() {
-            Ok(ip) => ip,
-            Err(_) => {
-                return self.tunnel_result(Err(TunnelError::InvalidTarget(format!(
-                    "非法转发目标 {host}:{port}，必须是 IP 字面量"
-                ))));
-            }
-        };
-        self.tunnel_result(self.tunnel.start_local_forward(listen_port, ip, port))
+        self.tunnel_result(self.tunnel.start_local_forward(listen_port, host, port))
+    }
+
+    /// T4 UDP 转发（发起端，NAT 式会话映射）：本机 127.0.0.1:listenPort 的每个
+    /// 源地址映射一条数据报通道到对端 host:port；对端 ACL 规则须 udp=true 放行。
+    #[napi]
+    pub fn start_udp_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
+        self.tunnel_result(self.tunnel.start_udp_forward(listen_port, host, port))
+    }
+
+    /// T4 注销 UDP 转发。未注册返回 false。
+    #[napi]
+    pub fn stop_udp_forward(&self, listen_port: u16) -> bool {
+        self.tunnel_result(self.tunnel.stop_udp_forward(listen_port))
     }
 
     /// T3 停止一个本地转发并释放端口；再次停止同一端口返回 false。
@@ -772,24 +782,49 @@ impl SecureChannel {
     /// 空 rules = 全拒绝；返回 false 并经 onEvent 报 "error"（前缀
     /// invalid forward rule: / forward_bind_failed: ）。
     #[napi]
+    /// 规则主机为 IP 字面量或主机名；`udp=true` 的规则同时放行 DOPEN（UDP 拨号）。
     pub fn enable_forward_endpoint(&self, rules: Vec<JsForwardRule>) -> bool {
-        let mut parsed = Vec::with_capacity(rules.len());
-        for r in &rules {
-            match r.host.parse::<std::net::IpAddr>() {
-                Ok(host) => parsed.push(ForwardRule {
-                    host,
-                    port_from: r.port_from,
-                    port_to: r.port_to,
-                }),
-                Err(_) => {
-                    return self.tunnel_result(Err(TunnelError::InvalidRule(format!(
-                        "规则主机不是合法 IP：{}:{}-{}",
-                        r.host, r.port_from, r.port_to
-                    ))));
-                }
-            }
+        match parse_rule_objs(rules) {
+            Ok(parsed) => self.tunnel_result(self.tunnel.enable_forward_endpoint(parsed)),
+            Err(e) => self.tunnel_result(Err(e)),
         }
-        self.tunnel_result(self.tunnel.enable_forward_endpoint(parsed))
+    }
+
+    /// T4 remote endpoint ACL（发起端）：放行响应端 remote forward（-R）拨入的
+    /// 本机目标；未启用 = 默认拒绝。
+    #[napi]
+    pub fn enable_remote_endpoint(&self, rules: Vec<JsForwardRule>) -> bool {
+        match parse_rule_objs(rules) {
+            Ok(parsed) => self.tunnel_result(self.tunnel.enable_remote_endpoint(parsed)),
+            Err(e) => self.tunnel_result(Err(e)),
+        }
+    }
+
+    /// T4 关闭 remote endpoint（幂等）。
+    #[napi]
+    pub fn disable_remote_endpoint(&self) -> bool {
+        self.tunnel_result(self.tunnel.disable_remote_endpoint())
+    }
+
+    /// T4 remote forward（响应端，`-R`）：本机 127.0.0.1:listenPort 的每条入站
+    /// 连接经隧道（偶数通道）转发到对端机上的 host:port；对端须启用
+    /// remote endpoint 放行目标。
+    #[napi]
+    pub fn start_remote_forward(&self, listen_port: u16, host: String, port: u16) -> bool {
+        self.tunnel_result(self.tunnel.start_remote_forward(listen_port, host, port))
+    }
+
+    /// T4 注销 remote forward。未注册返回 false。
+    #[napi]
+    pub fn stop_remote_forward(&self, listen_port: u16) -> bool {
+        self.tunnel_result(self.tunnel.stop_remote_forward(listen_port))
+    }
+
+    /// T4 隧道 mux keepalive：intervalMs=0 关闭；随下一次隧道链路重建生效。
+    #[napi]
+    pub fn set_tunnel_keepalive(&self, interval_ms: f64, dead_after_ms: f64) {
+        self.tunnel
+            .set_keepalive(interval_ms as u64, dead_after_ms as u64);
     }
 
     /// T3 撤下端点（隧道保持，仅停 accept 与转发）。
@@ -818,9 +853,30 @@ impl SecureChannel {
                 channels_total: s.status.channels_total as i64,
                 dial_denied: s.status.dial_denied as i64,
                 dial_failed: s.status.dial_failed as i64,
+                kind: s.kind.as_str().to_string(),
             })
             .collect()
     }
+}
+
+/// DTO → 核心规则：主机为 IP 字面量或合法主机名（v2），端口区间正序。
+fn parse_rule_objs(objs: Vec<JsForwardRule>) -> std::result::Result<Vec<ForwardRule>, TunnelError> {
+    let mut parsed = Vec::with_capacity(objs.len());
+    for r in objs {
+        let host = luciola_tunnel::forward::normalize_rule_host_text(&r.host).ok_or_else(|| {
+            TunnelError::InvalidRule(format!(
+                "规则主机既不是合法 IP 也不是合法主机名：{}:{}-{}",
+                r.host, r.port_from, r.port_to
+            ))
+        })?;
+        parsed.push(ForwardRule {
+            host,
+            port_from: r.port_from,
+            port_to: r.port_to,
+            udp: r.udp,
+        });
+    }
+    Ok(parsed)
 }
 
 impl SecureChannel {

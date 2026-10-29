@@ -30,6 +30,6 @@ dependencyResolutionManagement {
 rootProject.name = "luciola-android-demo"
 include(":app")
 // Dev wiring: consume the library as an included project. Released consumers
-// use mavenCentral() with: implementation("io.github.kexuejin:luciola:0.3.0")
+// use mavenCentral() with: implementation("io.github.kexuejin:luciola:0.8.0")
 include(":luciola")
 project(":luciola").projectDir = file("../../bindings/luciola-kmp")

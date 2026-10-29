@@ -56,7 +56,7 @@ pub async fn mux_pair() -> (MuxSession, MuxSession) {
 }
 
 pub fn target(port: u16) -> DialTarget {
-    DialTarget::new("127.0.0.1".parse::<IpAddr>().expect("ip"), port)
+    DialTarget::from_ip("127.0.0.1".parse::<IpAddr>().expect("ip"), port)
 }
 
 pub fn ip(host: &str) -> IpAddr {
@@ -65,13 +65,19 @@ pub fn ip(host: &str) -> IpAddr {
 
 // ---------------------------------------------------------------- raw 侧帧收发
 
-pub async fn raw_recv(stream: &mut SecureStream) -> Frame {
+/// 收下一帧（含 keepalive 噪声）。v2 会话会周期性发 PING——协议语义测试
+/// 基本都该用 [`raw_recv`]（自动跳过），只有 keepalive 测试用本函数。
+pub async fn raw_recv_any(stream: &mut SecureStream) -> Frame {
     let mut buf = Vec::new();
     tokio::time::timeout(Duration::from_secs(5), stream.recv(&mut buf))
         .await
         .expect("raw recv timed out")
         .expect("raw recv failed");
     decode_frame(&buf).expect("undecodable frame")
+}
+
+fn is_keepalive_noise(f: &Frame) -> bool {
+    matches!(f, Frame::Ping { .. } | Frame::Pong { .. })
 }
 
 pub async fn raw_send(stream: &mut SecureStream, ftype: u8, ch_id: u32, payload: &[u8]) {
@@ -85,13 +91,35 @@ pub async fn raw_send_bytes(stream: &mut SecureStream, bytes: &[u8]) {
     stream.send(bytes).await.expect("raw send failed");
 }
 
-/// 限时等一帧：None = 窗口内没有任何帧（用于"不该有帧"的断言）。
+/// 收下一个协议帧（跳过 PING/PONG keepalive 噪声）。
+pub async fn raw_recv(stream: &mut SecureStream) -> Frame {
+    loop {
+        let f = raw_recv_any(stream).await;
+        if !is_keepalive_noise(&f) {
+            return f;
+        }
+    }
+}
+
+/// 限时等一个协议帧：None = 窗口内没有非 keepalive 帧（用于"不该有帧"的断言）。
 pub async fn raw_recv_within(stream: &mut SecureStream, wait: Duration) -> Option<Frame> {
-    let mut buf = Vec::new();
-    match tokio::time::timeout(wait, stream.recv(&mut buf)).await {
-        Err(_) => None,
-        Ok(Err(e)) => panic!("raw peer closed connection unexpectedly: {e}"),
-        Ok(Ok(())) => Some(decode_frame(&buf).expect("undecodable frame")),
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        let mut buf = Vec::new();
+        match tokio::time::timeout(left, stream.recv(&mut buf)).await {
+            Err(_) => return None,
+            Ok(Err(e)) => panic!("raw peer closed connection unexpectedly: {e}"),
+            Ok(Ok(())) => {
+                let frame = decode_frame(&buf).expect("undecodable frame");
+                if !is_keepalive_noise(&frame) {
+                    return Some(frame);
+                }
+            }
+        }
     }
 }
 

@@ -5,12 +5,12 @@ use luciola::{DiscoveryConfig, DiscoveryEngine, PeerEvent};
 use luciola_net::NetworkDetector;
 use luciola_proto::Profile;
 use luciola_tunnel::{
-    start_forward_endpoint, start_local_forward, DialTarget, ForwardAcl, ForwardRule,
-    LocalForwardConfig, MuxConfig, MuxSession, Role,
+    start_forward_endpoint, start_local_forward, start_remote_forward, start_udp_forward,
+    DialTarget, ForwardAcl, ForwardRule, LocalForwardConfig, MuxConfig, MuxSession, Role,
+    UdpForwardConfig,
 };
 use qrcode::render::unicode;
 use qrcode::QrCode;
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(unix)]
@@ -100,9 +100,17 @@ enum ForwardCommands {
         /// 对端公钥 pin（32 字节原文 hex；"forward pin --seed" 可推导）。缺省即拒绝，无 TOFU
         #[arg(long)]
         pin_peer: String,
-        /// 允许拨号的目标白名单（可多次）：IP:PORT 或 IP:FROM-TO；缺省全拒绝
+        /// 允许拨号的目标白名单（可多次）：IP/主机名:PORT 或 :FROM-TO；缺省全拒绝
         #[arg(long = "allow", required = true)]
         allow: Vec<String>,
+        /// 同时放行 UDP 拨号（DOPEN）的白名单（可多次），格式同 --allow
+        #[arg(long = "allow-udp")]
+        allow_udp: Vec<String>,
+        /// Remote forward（v2 `-R`）：本机 127.0.0.1:LISTEN 的连接经隧道转发到
+        /// 对端机上的 TARGET（可多次），格式 LISTEN=IP/主机名:PORT。
+        /// 对端须以 --remote-allow 放行对应目标。
+        #[arg(long = "remote-forward")]
+        remote_forward: Vec<String>,
     },
     /// Initiator：本机 127.0.0.1:listen → 对端隧道 → target
     Dial {
@@ -112,7 +120,7 @@ enum ForwardCommands {
         /// 对端隧道地址 host:port
         #[arg(long)]
         connect: String,
-        /// 经隧道到达的目标地址 IP:PORT（对端机上）
+        /// 经隧道到达的目标地址 IP/主机名:PORT（对端机上，主机名由对端解析并钉扎）
         #[arg(long)]
         target: String,
         /// 本端身份种子（hex，32 字节）
@@ -121,6 +129,14 @@ enum ForwardCommands {
         /// 对端公钥 pin（32 字节原文 hex；"forward pin --seed" 可推导）
         #[arg(long)]
         pin_peer: String,
+        /// 放行对端 remote forward（-R）拨入的本地目标白名单（可多次），
+        /// 格式同 --allow；缺省 = 拒绝一切 remote forward 拨入
+        #[arg(long = "remote-allow")]
+        remote_allow: Vec<String>,
+        /// UDP 转发（v2 NAT 式映射，可多次）：本机 127.0.0.1:LISTEN 的 UDP 数据报
+        /// 经隧道到对端 TARGET，格式 LISTEN=IP/主机名:PORT；对端须 --allow-udp 放行
+        #[arg(long = "udp")]
+        udp: Vec<String>,
     },
     /// 从身份种子推导公钥 / 指纹 / 短码（供对端 --pin-peer 与配对展示）
     Pin {
@@ -363,14 +379,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 seed,
                 pin_peer,
                 allow,
-            } => forward_serve(tunnel_port, &seed, &pin_peer, allow).await?,
+                allow_udp,
+                remote_forward,
+            } => {
+                forward_serve(
+                    tunnel_port,
+                    &seed,
+                    &pin_peer,
+                    allow,
+                    allow_udp,
+                    remote_forward,
+                )
+                .await?
+            }
             ForwardCommands::Dial {
                 listen,
                 connect,
                 target,
                 seed,
                 pin_peer,
-            } => forward_dial(listen, &connect, &target, &seed, &pin_peer).await?,
+                remote_allow,
+                udp,
+            } => {
+                forward_dial(
+                    listen,
+                    &connect,
+                    &target,
+                    &seed,
+                    &pin_peer,
+                    remote_allow,
+                    udp,
+                )
+                .await?
+            }
             ForwardCommands::Pin { seed } => {
                 let id = luciola::trust::identity_from_seed(&parse_seed(&seed)?);
                 println!("public_key={}", encode_hex(&id.public_key));
@@ -560,15 +601,26 @@ fn parse_host_port(s: &str) -> Result<(String, u16), String> {
     Ok((h.to_string(), port))
 }
 
-/// `IP:PORT` → [DialTarget]（§1.2 合法性在解析阶段即检查）。
+/// `IP/主机名:PORT` → [DialTarget]（§1.2 合法性在解析阶段即检查；主机名由
+/// 拨号侧解析并按会话钉扎，v2）。
 fn parse_target(s: &str) -> Result<DialTarget, String> {
     let (host, port) = parse_host_port(s)?;
-    let ip: IpAddr = host.parse().map_err(|_| format!("非法 IP：{s}"))?;
-    let t = DialTarget::new(ip, port);
+    let t = DialTarget::new(host, port);
     if !t.validate() {
-        return Err(format!("非法目标（port=0 / 未指定 / 组播 / 广播）：{s}"));
+        return Err(format!(
+            "非法目标（port=0 / 未指定 / 组播 / 广播 / 非法主机名）：{s}"
+        ));
     }
     Ok(t)
+}
+
+/// `LISTEN=TARGET`（如 `9090=127.0.0.1:8080`）→ (listen_port, target)。
+fn parse_listen_target(s: &str) -> Result<(u16, DialTarget), String> {
+    let (listen, target) = s
+        .split_once('=')
+        .ok_or_else(|| format!("必须是 LISTEN=TARGET 形式（如 9090=127.0.0.1:8080）：{s}"))?;
+    let listen: u16 = listen.parse().map_err(|_| format!("非法监听端口：{s}"))?;
+    Ok((listen, parse_target(target)?))
 }
 
 /// T2 responder 侧（r4 §2.3 链路引导契约）：
@@ -580,14 +632,25 @@ async fn forward_serve(
     seed_hex: &str,
     pin_peer: &str,
     allow: Vec<String>,
+    allow_udp: Vec<String>,
+    remote_forward: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let seed = parse_seed(seed_hex)?;
     let pin = parse_pin(pin_peer)?;
-    let rules = allow
+    let mut rules = allow
         .iter()
         .map(|s| ForwardRule::parse(s))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("非法 --allow 规则：{e}"))?;
+    for s in &allow_udp {
+        let mut r = ForwardRule::parse(s).map_err(|e| format!("非法 --allow-udp 规则：{e}"))?;
+        r.udp = true;
+        rules.push(r);
+    }
+    let mut remotes = Vec::new();
+    for s in &remote_forward {
+        remotes.push(parse_listen_target(s).map_err(|e| format!("非法 --remote-forward：{e}"))?);
+    }
     let acl = ForwardAcl::new(rules);
 
     let listener = match bind_dual_stack_listener(tunnel_port).await {
@@ -600,10 +663,8 @@ async fn forward_serve(
     // 本端公钥公示：对端把它填进自己的 --pin-peer（改种子后须同步）。
     let local_pub = encode_hex(&luciola::trust::identity_from_seed(&seed).public_key);
     println!(
-        "forward_serving tunnel_port={} local_pub={} allow={:?}",
+        "forward_serving tunnel_port={} local_pub={local_pub} allow={allow:?} allow_udp={allow_udp:?} remote_forward={remote_forward:?}",
         listener.local_addr()?.port(),
-        local_pub,
-        allow
     );
 
     let mut backoff = Duration::from_millis(500);
@@ -624,6 +685,24 @@ async fn forward_serve(
                     MuxConfig::default(),
                 ));
                 let endpoint = start_forward_endpoint(session.clone(), acl.clone())?;
+                // v2 remote forward（-R）：Responder 主动向对端发起偶数通道
+                //（对端证明 v2 后可用；对端须 --remote-allow 放行目标）。
+                let mut remote_guards = Vec::new();
+                for (listen, target) in &remotes {
+                    match start_remote_forward(
+                        session.clone(),
+                        LocalForwardConfig {
+                            listen_port: *listen,
+                            target: target.clone(),
+                        },
+                    ) {
+                        Ok(g) => remote_guards.push(g),
+                        Err(e) => {
+                            eprintln!("forward_bind_failed: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
                 println!("link_up mux_session_ready");
                 let reason = tokio::select! {
                     r = session.wait_closed() => Some(r),
@@ -631,6 +710,9 @@ async fn forward_serve(
                 };
                 let st = endpoint.status();
                 endpoint.stop().await;
+                for g in &remote_guards {
+                    g.stop().await;
+                }
                 match reason {
                     None => {
                         session.shutdown();
@@ -665,11 +747,26 @@ async fn forward_dial(
     target: &str,
     seed_hex: &str,
     pin_peer: &str,
+    remote_allow: Vec<String>,
+    udp: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (host, tunnel_port) = parse_host_port(connect)?;
     let target = parse_target(target)?;
     let seed = parse_seed(seed_hex)?;
     let pin = parse_pin(pin_peer)?;
+    let remote_acl = ForwardAcl::new(
+        remote_allow
+            .iter()
+            .map(|s| ForwardRule::parse(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("非法 --remote-allow 规则：{e}"))?,
+    );
+    let mut udps = Vec::new();
+    for s in &udp {
+        let (listen, target) =
+            parse_listen_target(s).map_err(|e| format!("非法 --udp 转发：{e}"))?;
+        udps.push((listen, target));
+    }
     let addrs = vec![host];
     println!(
         "local_pub={}",
@@ -690,7 +787,7 @@ async fn forward_dial(
                     session.clone(),
                     LocalForwardConfig {
                         listen_port: listen,
-                        target,
+                        target: target.clone(),
                     },
                 ) {
                     Ok(g) => g,
@@ -699,9 +796,43 @@ async fn forward_dial(
                         std::process::exit(1);
                     }
                 };
+                // v2：接受对端 remote forward（-R）的拨入（缺省 = 全拒，deny-by-default）
+                let remote_endpoint = if !remote_acl.rules.is_empty() {
+                    match start_forward_endpoint(session.clone(), remote_acl.clone()) {
+                        Ok(g) => Some(g),
+                        Err(e) => {
+                            eprintln!("remote endpoint failed: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    None
+                };
+                // v2：UDP 转发（NAT 式映射；对端须 --allow-udp 放行目标）
+                let mut udp_guards = Vec::new();
+                for (udp_listen, udp_target) in &udps {
+                    match start_udp_forward(
+                        session.clone(),
+                        UdpForwardConfig {
+                            listen_port: *udp_listen,
+                            target: udp_target.clone(),
+                        },
+                    ) {
+                        Ok(g) => udp_guards.push(g),
+                        Err(e) => {
+                            eprintln!("forward_bind_failed: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
                 println!(
-                    "forward_ready listen={} target={target}",
-                    guard.local_addr()
+                    "forward_ready listen={} target={target} udp={}",
+                    guard.local_addr(),
+                    udp_guards
+                        .iter()
+                        .map(|g| g.local_addr().port().to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
                 );
 
                 let peer_closed = tokio::select! {
@@ -715,6 +846,12 @@ async fn forward_dial(
                 };
                 let st = guard.status();
                 guard.stop().await;
+                if let Some(g) = &remote_endpoint {
+                    g.stop().await;
+                }
+                for g in &udp_guards {
+                    g.stop().await;
+                }
                 if peer_closed {
                     // 对端计划内关闭 → 优雅退出，不重建。
                     println!("link_closed_by_peer → graceful exit status={st:?}");
