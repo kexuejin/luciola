@@ -197,6 +197,46 @@ pub fn calculate_subnet_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Option<Ipv
     Some(broadcast_ip)
 }
 
+/// Collect directed subnet broadcasts from a snapshot of interfaces.
+///
+/// Split out from [`NetworkDetector::subnet_broadcast_addresses`] so the filtering
+/// rules can be tested against synthetic interface tables instead of whatever the
+/// machine running the tests happens to have plugged in.
+pub fn broadcasts_for(interfaces: &[NetworkInterface], include_virtual: bool) -> Vec<String> {
+    let mut broadcasts = Vec::new();
+
+    for itf in interfaces {
+        if !include_virtual && is_virtual_interface_name(&itf.name) {
+            continue;
+        }
+
+        for addr in &itf.addr {
+            if let Addr::V4(v4) = addr {
+                let ip = v4.ip;
+                if ip.is_loopback() || is_proxy_tun_address(&ip.to_string()) {
+                    continue;
+                }
+
+                // Prefer existing broadcast if given by OS, otherwise calculate from netmask
+                let bcast = v4
+                    .broadcast
+                    .or_else(|| v4.netmask.and_then(|mask| calculate_subnet_broadcast(ip, mask)));
+
+                if let Some(b) = bcast {
+                    if !b.is_loopback() && b != ip && b != Ipv4Addr::new(255, 255, 255, 255) {
+                        let s = b.to_string();
+                        if !broadcasts.contains(&s) {
+                            broadcasts.push(s);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    broadcasts
+}
+
 /// Scored candidate address for local peering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScoredAddress {
@@ -215,7 +255,8 @@ impl NetworkDetector {
         NetworkInterface::show().map_err(|e| NetError::QueryFailed(e.to_string()))
     }
 
-    /// Calculate targeted subnet broadcast addresses for all physical and virtual interfaces.
+    /// Calculate targeted subnet broadcast addresses for the interfaces a peer
+    /// could actually be reached on.
     ///
     /// ## Why this defeats proxy TUN mode:
     ///
@@ -226,40 +267,23 @@ impl NetworkDetector {
     /// In contrast, `192.168.2.255` matches the direct `/24` connected route (prefix length 24 is
     /// much more specific than `/1`), forcing the OS kernel to route packets directly out of the
     /// physical Wi-Fi/Ethernet NIC.
+    ///
+    /// Virtual adapters (`docker0`, `utun*`, `vEthernet`, `tailscale0`, ...) are skipped: their
+    /// broadcasts reach a bridge or a tunnel, never a phone on the same Wi-Fi. If filtering leaves
+    /// nothing — a container, or a host whose only uplink is a virtual switch — the unfiltered set
+    /// is used instead, because a noisy target list still discovers peers and an empty one does not.
     pub fn subnet_broadcast_addresses() -> Vec<String> {
-        let mut broadcasts = Vec::new();
         let interfaces = match Self::get_interfaces() {
             Ok(itfs) => itfs,
-            Err(_) => return broadcasts,
+            Err(_) => return Vec::new(),
         };
 
-        for itf in interfaces {
-            for addr in itf.addr {
-                if let Addr::V4(v4) = addr {
-                    let ip = v4.ip;
-                    if ip.is_loopback() || is_proxy_tun_address(&ip.to_string()) {
-                        continue;
-                    }
-
-                    // Prefer existing broadcast if given by OS, otherwise calculate from netmask
-                    let bcast = v4.broadcast.or_else(|| {
-                        v4.netmask
-                            .and_then(|mask| calculate_subnet_broadcast(ip, mask))
-                    });
-
-                    if let Some(b) = bcast {
-                        if !b.is_loopback() && b != ip && b != Ipv4Addr::new(255, 255, 255, 255) {
-                            let s = b.to_string();
-                            if !broadcasts.contains(&s) {
-                                broadcasts.push(s);
-                            }
-                        }
-                    }
-                }
-            }
+        let physical = broadcasts_for(&interfaces, false);
+        if physical.is_empty() {
+            broadcasts_for(&interfaces, true)
+        } else {
+            physical
         }
-
-        broadcasts
     }
 
     /// Local candidate addresses:
@@ -639,6 +663,72 @@ pub fn multicast_scope_interfaces() -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use network_interface::V4IfAddr;
+
+    fn iface(name: &str, ip: &str, netmask: &str) -> NetworkInterface {
+        NetworkInterface {
+            name: name.to_string(),
+            addr: vec![Addr::V4(V4IfAddr {
+                ip: ip.parse().unwrap(),
+                broadcast: None,
+                netmask: Some(netmask.parse().unwrap()),
+            })],
+            mac_addr: None,
+            index: 1,
+            internal: false,
+        }
+    }
+
+    #[test]
+    fn physical_lan_yields_a_directed_broadcast() {
+        let table = vec![iface("en0", "192.168.1.20", "255.255.255.0")];
+        assert_eq!(broadcasts_for(&table, false), vec!["192.168.1.255"]);
+    }
+
+    #[test]
+    fn virtual_adapters_are_skipped_when_a_physical_one_exists() {
+        let table = vec![
+            iface("en0", "192.168.1.20", "255.255.255.0"),
+            iface("docker0", "172.17.0.1", "255.255.0.0"),
+            iface("utun3", "10.8.0.2", "255.255.255.0"),
+            iface("vEthernet (WSL)", "172.30.192.1", "255.255.240.0"),
+            iface("tailscale0", "100.64.0.1", "255.192.0.0"),
+        ];
+        // 172.17.255.255 / 10.8.0.255 / 172.30.207.255 / 100.127.255.255 all
+        // reach a bridge or a tunnel, never a phone on the same Wi-Fi.
+        assert_eq!(broadcasts_for(&table, false), vec!["192.168.1.255"]);
+    }
+
+    #[test]
+    fn the_unfiltered_set_is_still_available_as_a_fallback() {
+        let table = vec![
+            iface("docker0", "172.17.0.1", "255.255.0.0"),
+            iface("utun3", "10.8.0.2", "255.255.255.0"),
+        ];
+        assert!(broadcasts_for(&table, false).is_empty());
+        assert_eq!(
+            broadcasts_for(&table, true),
+            vec!["172.17.255.255", "10.8.0.255"]
+        );
+    }
+
+    #[test]
+    fn fake_ip_ranges_and_point_to_point_links_are_dropped() {
+        let table = vec![
+            iface("utun0", "198.18.0.1", "255.255.0.0"), // Clash fake-ip
+            iface("en7", "10.1.2.3", "255.255.255.255"), // /32 uplink
+        ];
+        assert!(broadcasts_for(&table, true).is_empty());
+    }
+
+    #[test]
+    fn duplicates_collapse() {
+        let table = vec![
+            iface("en0", "192.168.1.20", "255.255.255.0"),
+            iface("en1", "192.168.1.21", "255.255.255.0"),
+        ];
+        assert_eq!(broadcasts_for(&table, false), vec!["192.168.1.255"]);
+    }
 
     #[test]
     fn test_is_link_local_ipv6() {
