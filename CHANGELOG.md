@@ -19,20 +19,14 @@ primary one is cited.
 > - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
 >   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
 >   `0.8.2` from the registry API.
-> - **Maven Central — accepted, not yet readable.** The bundle
+> - **Maven Central — published and verified.** The bundle
 >   (`io.github.kexuejin:luciola*:0.8.2`, AAR with the embedded arm64 `.so`, JVM jar,
->   iOS klibs) was uploaded and accepted (deployment
->   `860b5d98-4362-4aa1-b03a-6593cbddcc29`, HTTP 201) but sat in `PUBLISHING` for
->   30+ minutes without reaching `repo1`. Until it does, treat 0.8.2 as **not
->   installable from Maven Central** and check:
->
->   ```
->   curl -s -o /dev/null -w '%{http_code}\n' \
->     https://repo1.maven.org/maven2/io/github/kexuejin/luciola-android/0.8.2/luciola-android-0.8.2.pom
->   ```
->
->   `200` means it landed; `404` means it has not. The previous release (0.8.0)
->   completed in minutes, so a stall is an exception, not the norm.
+>   iOS klibs) was accepted (deployment `860b5d98-4362-4aa1-b03a-6593cbddcc29`) and
+>   took far longer than usual to leave `PUBLISHING` — roughly 45 minutes against a
+>   couple of minutes for 0.8.0. It did complete: `repo1` answers 200 for the
+>   `luciola-android` pom, the aar and the `luciola` pom, and
+>   `maven-metadata.xml` reports `latest=0.8.2`. Nothing needed to be re-uploaded;
+>   the wait was on Sonatype's side.
 > - **iOS — published.** `LuciolaUniFFI-0.8.2.zip` (xcframework for device and
 >   simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256` are release
 >   assets on tag `v0.8.2`.
