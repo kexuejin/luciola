@@ -13,22 +13,40 @@ change, taken from the repository history; where one change needed several commi
 primary one is cited.
 
 > **Published-versus-repo version note.** The repository is at **0.8.2** (workspace
-> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`) and **0.8.2 is not
-> published yet**. The registries carry the **0.8.0** line, verified 2026-10-29 after
-> publishing: crates.io carries **0.8.0** for `luciola-ip`/`luciola-proto`/`luciola-net`/
-> `luciola`/`luciola-transfer`/`luciola-tunnel`/`luciola-cli`; Maven Central carries
-> **`io.github.kexuejin:luciola:0.8.0`** (AAR with the embedded arm64 `.so`, JVM jar,
-> iOS klibs); `@luciola/core` **remains unpublished on npm** — for Node, build
-> `bindings/luciola-node` from source.
+> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Publishing
+> status, checked 2026-10-30 rather than assumed:
 >
-> A consumer that needs 0.8.2 before it is published must pin the **git commit**, not a
-> version number: `{ git = "https://github.com/kexuejin/luciola", rev = "<sha>" }`.
-> Naming an unpublished version in a dependency is how a consumer repo ends up with
-> `path = "../../luciola/..."` and stops being buildable from a clean clone.
+> - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
+>   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
+>   `0.8.2` from the registry API.
+> - **Maven Central — accepted, not yet readable.** The bundle
+>   (`io.github.kexuejin:luciola*:0.8.2`, AAR with the embedded arm64 `.so`, JVM jar,
+>   iOS klibs) was uploaded and accepted (deployment
+>   `860b5d98-4362-4aa1-b03a-6593cbddcc29`, HTTP 201) but sat in `PUBLISHING` for
+>   30+ minutes without reaching `repo1`. Until it does, treat 0.8.2 as **not
+>   installable from Maven Central** and check:
+>
+>   ```
+>   curl -s -o /dev/null -w '%{http_code}\n' \
+>     https://repo1.maven.org/maven2/io/github/kexuejin/luciola-android/0.8.2/luciola-android-0.8.2.pom
+>   ```
+>
+>   `200` means it landed; `404` means it has not. The previous release (0.8.0)
+>   completed in minutes, so a stall is an exception, not the norm.
+> - **iOS — published.** `LuciolaUniFFI-0.8.2.zip` (xcframework for device and
+>   simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256` are release
+>   assets on tag `v0.8.2`.
+> - `@luciola/core` **remains unpublished on npm** — for Node, build
+>   `bindings/luciola-node` from source.
+>
+> A consumer that needs an engine change that is not released yet must pin the **git
+> commit**, not a version number: `{ git = "https://github.com/kexuejin/luciola", rev =
+> "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
+> up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
 ---
 
-## [Unreleased] — relay session crypto for luciola-relay 0.3.0
+## [0.8.2] — 2026-10-30
 
 ### Added
 
@@ -51,6 +69,19 @@ primary one is cited.
 - KMP binding version bumped to **0.8.2** (0.8.1 was republished with new
   bindings; the bump forces Gradle to see the change). The AAR was rebuilt and
   published to mavenLocal; the xcframework was rebuilt with the same surface.
+
+### Fixed
+
+- The Swift bindings were never regenerated for the eight `relay_*` exports
+  (the KMP bindings were, in `04af23a`). The shipped xcframework therefore
+  exposed symbols the Swift layer had no declaration for — invisible at link
+  time because nothing referenced them, which is the shape of failure this
+  repository keeps paying for. Regenerated (`8f7b9ce`); the change is purely
+  additive (a `FfiConverterUInt32` and the eight functions).
+- `scripts/publish-central.sh` wiped its staging directory with `rm -rf`, which
+  tripped bulk-delete guards and, more importantly, hid why the wipe mattered:
+  a leftover `0.8.0` in the bundle makes the upload fail on "already published".
+  It now moves the directory aside instead (`b3b176b`).
 
 ---
 
