@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand = "0.8"
 sha2 = "0.10"
 ed25519-dalek = { version = "2.1", features = ["rand_core", "zeroize"] }
-x25519-dalek = "2.0"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 hkdf = "0.12"
 aes-gcm = "0.10"
 percent-encoding = "2.3"

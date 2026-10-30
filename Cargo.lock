@@ -776,6 +776,7 @@ dependencies = [
  "luciola-tunnel",
  "qrcode",
  "rand",
+ "thiserror",
  "tokio",
  "uniffi",
 ]
