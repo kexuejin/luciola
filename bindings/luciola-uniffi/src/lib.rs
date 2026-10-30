@@ -744,13 +744,17 @@ pub fn relay_signed_handshake_payload(
     node_id: String,
     ephemeral_public: Option<Vec<u8>>,
 ) -> String {
-    let eph: Option<[u8; 32]> = ephemeral_public.map(|v| v.try_into().expect("ephemeral public key must be 32 bytes"));
+    let eph: Option<[u8; 32]> =
+        ephemeral_public.map(|v| v.try_into().expect("ephemeral public key must be 32 bytes"));
     luciola::relay_crypto::signed_handshake_payload(timestamp_ms, &node_id, eph.as_ref())
 }
 
 /// SHA-256 over both raw handshake byte strings, initiator first.
 #[uniffi::export]
-pub fn relay_transcript_hash(initiator_handshake: Vec<u8>, responder_handshake: Vec<u8>) -> Vec<u8> {
+pub fn relay_transcript_hash(
+    initiator_handshake: Vec<u8>,
+    responder_handshake: Vec<u8>,
+) -> Vec<u8> {
     luciola::relay_crypto::transcript_hash(&initiator_handshake, &responder_handshake).to_vec()
 }
 
@@ -765,9 +769,15 @@ pub fn relay_session_keys(
     is_initiator: bool,
 ) -> RelaySessionKeys {
     let keys = luciola::relay_crypto::session_keys(
-        (&ephemeral_secret[..]).try_into().expect("ephemeral secret must be 32 bytes"),
-        (&peer_ephemeral_public[..]).try_into().expect("peer ephemeral public key must be 32 bytes"),
-        (&transcript[..]).try_into().expect("transcript hash must be 32 bytes"),
+        (&ephemeral_secret[..])
+            .try_into()
+            .expect("ephemeral secret must be 32 bytes"),
+        (&peer_ephemeral_public[..])
+            .try_into()
+            .expect("peer ephemeral public key must be 32 bytes"),
+        (&transcript[..])
+            .try_into()
+            .expect("transcript hash must be 32 bytes"),
         &initiator_fingerprint,
         &responder_fingerprint,
         is_initiator,
@@ -801,10 +811,13 @@ pub enum RelayCryptoError {
 
 /// Open one relay frame payload. Throws on tampering or a key/seq mismatch.
 #[uniffi::export]
-pub fn relay_aead_open(key: Vec<u8>, seq: u64, aad: Vec<u8>, ciphertext: Vec<u8>) -> Result<Vec<u8>, RelayCryptoError> {
-    let key: [u8; 32] = key
-        .try_into()
-        .map_err(|_| RelayCryptoError::BadKeyLength)?;
+pub fn relay_aead_open(
+    key: Vec<u8>,
+    seq: u64,
+    aad: Vec<u8>,
+    ciphertext: Vec<u8>,
+) -> Result<Vec<u8>, RelayCryptoError> {
+    let key: [u8; 32] = key.try_into().map_err(|_| RelayCryptoError::BadKeyLength)?;
     luciola::relay_crypto::aead_open(&key, seq, &aad, &ciphertext)
         .map_err(|_| RelayCryptoError::AeadOpenFailed)
 }
@@ -814,7 +827,6 @@ pub fn relay_aead_open(key: Vec<u8>, seq: u64, aad: Vec<u8>, ciphertext: Vec<u8>
 pub fn relay_hkdf_sha256(ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, out_len: u32) -> Vec<u8> {
     luciola::relay_crypto::hkdf_sha256(&ikm, &salt, &info, out_len as usize)
 }
-
 
 // ---------------------------------------------------------------------------
 // Secure link session exports

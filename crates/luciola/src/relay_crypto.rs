@@ -206,12 +206,7 @@ pub fn aead_open_raw(
 
 /// Seal one frame payload. `aad` is the raw 12-byte frame header as it goes
 /// on the wire; the ciphertext embeds the 16-byte GCM tag.
-pub fn aead_seal(
-    key: &[u8; AEAD_KEY_LEN],
-    seq: u64,
-    aad: &[u8],
-    plaintext: &[u8],
-) -> Vec<u8> {
+pub fn aead_seal(key: &[u8; AEAD_KEY_LEN], seq: u64, aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     aead_seal_raw(key, &frame_nonce(seq), aad, plaintext)
 }
 
@@ -254,25 +249,14 @@ mod tests {
             "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
         );
 
-        let (_, a_recv) = session_keys(
-            &alice_sk,
-            &bob_pk,
-            &[0u8; 32],
-            "fp_i",
-            "fp_r",
-            true,
-        )
-        .unwrap();
-        let (b_send, _) = session_keys(
-            &bob_sk,
-            &alice_pk,
-            &[0u8; 32],
-            "fp_i",
-            "fp_r",
-            false,
-        )
-        .unwrap();
-        assert_eq!(a_recv, b_send, "initiator recv key must equal responder send key");
+        let (_, a_recv) =
+            session_keys(&alice_sk, &bob_pk, &[0u8; 32], "fp_i", "fp_r", true).unwrap();
+        let (b_send, _) =
+            session_keys(&bob_sk, &alice_pk, &[0u8; 32], "fp_i", "fp_r", false).unwrap();
+        assert_eq!(
+            a_recv, b_send,
+            "initiator recv key must equal responder send key"
+        );
     }
 
     /// RFC 5869 Test Case 1 (SHA-256).
@@ -318,7 +302,13 @@ mod tests {
             0xbe, 0xef, 0xab, 0xad, 0xda, 0xd2,
         ];
         let ct = cipher
-            .encrypt(&aes_gcm::Nonce::from(iv), Payload { msg: plaintext, aad })
+            .encrypt(
+                &aes_gcm::Nonce::from(iv),
+                Payload {
+                    msg: plaintext,
+                    aad,
+                },
+            )
             .unwrap();
         assert_eq!(
             hex(&ct),
@@ -376,4 +366,3 @@ mod tests {
         assert_eq!(ephemeral_public(&secret), public);
     }
 }
-

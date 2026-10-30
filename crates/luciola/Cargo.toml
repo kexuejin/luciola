@@ -7,10 +7,10 @@ repository.workspace = true
 description = "Lightweight, resilient LAN peer discovery and interface intelligence engine"
 
 [dependencies]
-luciola-ip = { path = "../luciola-ip", version = "0.8.0" }
-luciola-net = { path = "../luciola-net", version = "0.8.0" }
-luciola-proto = { path = "../luciola-proto", version = "0.8.0" }
-luciola-transfer = { path = "../luciola-transfer", version = "0.8.0", optional = true }
+luciola-ip = { path = "../luciola-ip", version = "0.8.2" }
+luciola-net = { path = "../luciola-net", version = "0.8.2" }
+luciola-proto = { path = "../luciola-proto", version = "0.8.2" }
+luciola-transfer = { path = "../luciola-transfer", version = "0.8.2", optional = true }
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -31,5 +31,5 @@ default = ["transfer"]
 transfer = ["dep:luciola-transfer"]
 
 [dev-dependencies]
-luciola-net = { path = "../luciola-net", version = "0.8.0" }
+luciola-net = { path = "../luciola-net", version = "0.8.2" }
 network-interface = "2.0"

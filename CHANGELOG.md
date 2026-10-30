@@ -12,13 +12,19 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.8.0** (workspace
-> `Cargo.toml` and the KMP `version`). Verified 2026-10-29 after publishing:
-> crates.io carries the **0.8.0** line for `luciola-ip`/`luciola-proto`/`luciola-net`/
+> **Published-versus-repo version note.** The repository is at **0.8.2** (workspace
+> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`) and **0.8.2 is not
+> published yet**. The registries carry the **0.8.0** line, verified 2026-10-29 after
+> publishing: crates.io carries **0.8.0** for `luciola-ip`/`luciola-proto`/`luciola-net`/
 > `luciola`/`luciola-transfer`/`luciola-tunnel`/`luciola-cli`; Maven Central carries
 > **`io.github.kexuejin:luciola:0.8.0`** (AAR with the embedded arm64 `.so`, JVM jar,
 > iOS klibs); `@luciola/core` **remains unpublished on npm** — for Node, build
 > `bindings/luciola-node` from source.
+>
+> A consumer that needs 0.8.2 before it is published must pin the **git commit**, not a
+> version number: `{ git = "https://github.com/kexuejin/luciola", rev = "<sha>" }`.
+> Naming an unpublished version in a dependency is how a consumer repo ends up with
+> `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
 ---
 

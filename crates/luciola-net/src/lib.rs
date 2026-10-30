@@ -218,9 +218,10 @@ pub fn broadcasts_for(interfaces: &[NetworkInterface], include_virtual: bool) ->
                 }
 
                 // Prefer existing broadcast if given by OS, otherwise calculate from netmask
-                let bcast = v4
-                    .broadcast
-                    .or_else(|| v4.netmask.and_then(|mask| calculate_subnet_broadcast(ip, mask)));
+                let bcast = v4.broadcast.or_else(|| {
+                    v4.netmask
+                        .and_then(|mask| calculate_subnet_broadcast(ip, mask))
+                });
 
                 if let Some(b) = bcast {
                     if !b.is_loopback() && b != ip && b != Ipv4Addr::new(255, 255, 255, 255) {

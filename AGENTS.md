@@ -225,6 +225,13 @@ shell rather than the API they should target.
 
 ## 9. Release checklist
 
+0. **Push, then tag, then publish.** `git push origin main`, `git tag -a vX.Y.Z`,
+   `git push --tags`. Verify with `git rev-list --count origin/main..HEAD` → must be `0`.
+   A version published from a working copy that was never pushed cannot be rebuilt by
+   anyone — including you, on another machine — and a consumer that needs it has no
+   source to point at, so it falls back to `path = "../../luciola/..."` and the whole
+   consumer repo stops being buildable from a clean clone. This is how 0.8.0 and 0.8.2
+   both reached the registries while `main` on GitHub was four commits behind.
 1. Bump all four version homes (§4) and grep for stale path-dep requirements.
 2. Regenerate every binding surface (§3); confirm the generated nativeMain uses cinterop.
 3. Run the full local gate (§2).
@@ -233,8 +240,12 @@ shell rather than the API they should target.
 5. Verify the artifact is readable from the registry afterwards (§4 curl checks), then
    update README/CHANGELOG to the **verified** number, not the intended one.
 
-Two rules the release path has already broken once — both repaired in-tree; keep them
+Three rules the release path has already broken once — all repaired in-tree; keep them
 repaired:
+- **Nothing is published from an unpushed working copy.** 0.8.0 and 0.8.2 both reached
+  crates.io and Maven Central while `origin/main` sat four commits behind, which made
+  `kexuejin/luciola-relay` unbuildable from a clean clone (it had to fall back to
+  `path = "../../luciola/..."`). Step 0 exists because of this.
 - A new workspace crate must be added to the workspace **and** to the ordered list in
   `scripts/publish-crates.sh` in the same commit. `luciola-transfer` and
   `luciola-tunnel` were missing from that list once and shipped unpublished; the list
