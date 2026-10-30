@@ -11,7 +11,17 @@ source "$HOME/.luciola/central.env"
 [ -f "$HOME/.luciola/signing-key.asc" ] || { echo "missing ~/.luciola/signing-key.asc" >&2; exit 1; }
 
 echo "==> [1/4] Signed publish to staging dir..."
-rm -rf bindings/luciola-kmp/build/repoLocal   # only the new version may enter the bundle
+# Only the new version may enter the bundle. This used to be `rm -rf`, which
+# (a) trips bulk-delete guards on a populated staging dir and (b) hides the
+# reason it mattered: a leftover 0.8.0 in the bundle makes the upload fail on
+# "already published". Move it aside instead — same effect, reversible.
+# It must stay on the same filesystem: the build tree can live on an external
+# volume, and `mv` across devices is a copy+delete that fails with EXDEV.
+if [ -e bindings/luciola-kmp/build/repoLocal ]; then
+  ASIDE="bindings/luciola-kmp/build/repoLocal.old-$(date +%Y%m%d%H%M%S)"
+  mv bindings/luciola-kmp/build/repoLocal "$ASIDE"
+  echo "    previous staging dir moved to $ASIDE"
+fi
 ESC_KEY=$(awk '{printf "%s\\n", $0}' "$HOME/.luciola/signing-key.asc")
 (cd examples/android-demo && ./gradlew :luciola:publishAllPublicationsToLocalRepository \
   --no-daemon -q -PsigningKey="$ESC_KEY" -PsigningPassword="")
