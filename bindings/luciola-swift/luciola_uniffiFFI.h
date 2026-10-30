@@ -617,6 +617,47 @@ RustBuffer uniffi_luciola_uniffi_fn_func_parse_pairing_uri(RustBuffer uri, RustC
 RustBuffer uniffi_luciola_uniffi_fn_func_race_connect(RustBuffer addresses, uint16_t port, RustBuffer attempt_timeout_ms, RustBuffer stagger_ms, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_AEAD_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_AEAD_OPEN
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_aead_open(RustBuffer key, uint64_t seq, RustBuffer aad, RustBuffer ciphertext, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_AEAD_SEAL
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_AEAD_SEAL
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_aead_seal(RustBuffer key, uint64_t seq, RustBuffer aad, RustBuffer plaintext, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_EPHEMERAL_KEYPAIR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_EPHEMERAL_KEYPAIR
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_ephemeral_keypair(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_EPHEMERAL_PUBLIC
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_EPHEMERAL_PUBLIC
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_ephemeral_public(RustBuffer secret, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_HKDF_SHA256
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_HKDF_SHA256
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_hkdf_sha256(RustBuffer ikm, RustBuffer salt, RustBuffer info, uint32_t out_len, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_SESSION_KEYS
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_SESSION_KEYS
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_session_keys(RustBuffer ephemeral_secret, RustBuffer peer_ephemeral_public, RustBuffer transcript, RustBuffer initiator_fingerprint, RustBuffer responder_fingerprint, int8_t is_initiator, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_SIGNED_HANDSHAKE_PAYLOAD
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_SIGNED_HANDSHAKE_PAYLOAD
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_signed_handshake_payload(uint64_t timestamp_ms, RustBuffer node_id, RustBuffer ephemeral_public, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_TRANSCRIPT_HASH
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RELAY_TRANSCRIPT_HASH
+RustBuffer uniffi_luciola_uniffi_fn_func_relay_transcript_hash(RustBuffer initiator_handshake, RustBuffer responder_handshake, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RENDER_QR_ASCII
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_RENDER_QR_ASCII
 RustBuffer uniffi_luciola_uniffi_fn_func_render_qr_ascii(RustBuffer content, RustCallStatus *_Nonnull out_status
@@ -1017,6 +1058,54 @@ uint16_t uniffi_luciola_uniffi_checksum_func_parse_pairing_uri(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RACE_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RACE_CONNECT
 uint16_t uniffi_luciola_uniffi_checksum_func_race_connect(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_AEAD_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_AEAD_OPEN
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_aead_open(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_AEAD_SEAL
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_AEAD_SEAL
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_aead_seal(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_EPHEMERAL_KEYPAIR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_EPHEMERAL_KEYPAIR
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_ephemeral_keypair(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_EPHEMERAL_PUBLIC
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_EPHEMERAL_PUBLIC
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_ephemeral_public(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_HKDF_SHA256
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_HKDF_SHA256
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_hkdf_sha256(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_SESSION_KEYS
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_SESSION_KEYS
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_session_keys(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_SIGNED_HANDSHAKE_PAYLOAD
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_SIGNED_HANDSHAKE_PAYLOAD
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_signed_handshake_payload(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_TRANSCRIPT_HASH
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_RELAY_TRANSCRIPT_HASH
+uint16_t uniffi_luciola_uniffi_checksum_func_relay_transcript_hash(void
     
 );
 #endif

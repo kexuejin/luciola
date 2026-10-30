@@ -422,6 +422,22 @@ fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -2576,6 +2592,158 @@ public func FfiConverterTypeRaceOutcome_lower(_ value: RaceOutcome) -> RustBuffe
 }
 
 
+public struct RelayEphemeralKeyPair {
+    public var secret: Data
+    public var `public`: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(secret: Data, `public`: Data) {
+        self.secret = secret
+        self.`public` = `public`
+    }
+}
+
+#if compiler(>=6)
+extension RelayEphemeralKeyPair: Sendable {}
+#endif
+
+
+extension RelayEphemeralKeyPair: Equatable, Hashable {
+    public static func ==(lhs: RelayEphemeralKeyPair, rhs: RelayEphemeralKeyPair) -> Bool {
+        if lhs.secret != rhs.secret {
+            return false
+        }
+        if lhs.`public` != rhs.`public` {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(secret)
+        hasher.combine(`public`)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRelayEphemeralKeyPair: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RelayEphemeralKeyPair {
+        return
+            try RelayEphemeralKeyPair(
+                secret: FfiConverterData.read(from: &buf), 
+                public: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RelayEphemeralKeyPair, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.secret, into: &buf)
+        FfiConverterData.write(value.`public`, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayEphemeralKeyPair_lift(_ buf: RustBuffer) throws -> RelayEphemeralKeyPair {
+    return try FfiConverterTypeRelayEphemeralKeyPair.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayEphemeralKeyPair_lower(_ value: RelayEphemeralKeyPair) -> RustBuffer {
+    return FfiConverterTypeRelayEphemeralKeyPair.lower(value)
+}
+
+
+public struct RelaySessionKeys {
+    /**
+     * Key for frames THIS device sends.
+     */
+    public var sendKey: Data
+    /**
+     * Key for frames the peer sends.
+     */
+    public var recvKey: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Key for frames THIS device sends.
+         */sendKey: Data, 
+        /**
+         * Key for frames the peer sends.
+         */recvKey: Data) {
+        self.sendKey = sendKey
+        self.recvKey = recvKey
+    }
+}
+
+#if compiler(>=6)
+extension RelaySessionKeys: Sendable {}
+#endif
+
+
+extension RelaySessionKeys: Equatable, Hashable {
+    public static func ==(lhs: RelaySessionKeys, rhs: RelaySessionKeys) -> Bool {
+        if lhs.sendKey != rhs.sendKey {
+            return false
+        }
+        if lhs.recvKey != rhs.recvKey {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sendKey)
+        hasher.combine(recvKey)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRelaySessionKeys: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RelaySessionKeys {
+        return
+            try RelaySessionKeys(
+                sendKey: FfiConverterData.read(from: &buf), 
+                recvKey: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RelaySessionKeys, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.sendKey, into: &buf)
+        FfiConverterData.write(value.recvKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelaySessionKeys_lift(_ buf: RustBuffer) throws -> RelaySessionKeys {
+    return try FfiConverterTypeRelaySessionKeys.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelaySessionKeys_lower(_ value: RelaySessionKeys) -> RustBuffer {
+    return FfiConverterTypeRelaySessionKeys.lower(value)
+}
+
+
 /**
  * A paired device entry.
  */
@@ -2861,6 +3029,87 @@ public func FfiConverterTypeDialStatus_lower(_ value: DialStatus) -> RustBuffer 
 extension DialStatus: Equatable, Hashable {}
 
 
+
+
+
+
+
+/**
+ * Errors surfaced by the relay crypto exports.
+ */
+public enum RelayCryptoError: Swift.Error {
+
+    
+    
+    case AeadOpenFailed
+    case BadKeyLength
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRelayCryptoError: FfiConverterRustBuffer {
+    typealias SwiftType = RelayCryptoError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RelayCryptoError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .AeadOpenFailed
+        case 2: return .BadKeyLength
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RelayCryptoError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case .AeadOpenFailed:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .BadKeyLength:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayCryptoError_lift(_ buf: RustBuffer) throws -> RelayCryptoError {
+    return try FfiConverterTypeRelayCryptoError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRelayCryptoError_lower(_ value: RelayCryptoError) -> RustBuffer {
+    return FfiConverterTypeRelayCryptoError.lower(value)
+}
+
+
+extension RelayCryptoError: Equatable, Hashable {}
+
+
+
+
+extension RelayCryptoError: Foundation.LocalizedError {
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+}
 
 
 
@@ -3837,6 +4086,105 @@ public func raceConnect(addresses: [String], port: UInt16, attemptTimeoutMs: UIn
 })
 }
 /**
+ * Open one relay frame payload. Throws on tampering or a key/seq mismatch.
+ */
+public func relayAeadOpen(key: Data, seq: UInt64, aad: Data, ciphertext: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeRelayCryptoError_lift) {
+    uniffi_luciola_uniffi_fn_func_relay_aead_open(
+        FfiConverterData.lower(key),
+        FfiConverterUInt64.lower(seq),
+        FfiConverterData.lower(aad),
+        FfiConverterData.lower(ciphertext),$0
+    )
+})
+}
+/**
+ * Seal one relay frame payload (AES-256-GCM, AAD = the 12-byte frame header).
+ */
+public func relayAeadSeal(key: Data, seq: UInt64, aad: Data, plaintext: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_aead_seal(
+        FfiConverterData.lower(key),
+        FfiConverterUInt64.lower(seq),
+        FfiConverterData.lower(aad),
+        FfiConverterData.lower(plaintext),$0
+    )
+})
+}
+/**
+ * Fresh X25519 ephemeral key pair for one relay session.
+ */
+public func relayEphemeralKeypair() -> RelayEphemeralKeyPair  {
+    return try!  FfiConverterTypeRelayEphemeralKeyPair_lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_ephemeral_keypair($0
+    )
+})
+}
+/**
+ * Public key for a (serialized) ephemeral secret.
+ */
+public func relayEphemeralPublic(secret: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_ephemeral_public(
+        FfiConverterData.lower(secret),$0
+    )
+})
+}
+/**
+ * Raw HKDF-SHA256, exported for the cross-language wire vectors.
+ */
+public func relayHkdfSha256(ikm: Data, salt: Data, info: Data, outLen: UInt32) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_hkdf_sha256(
+        FfiConverterData.lower(ikm),
+        FfiConverterData.lower(salt),
+        FfiConverterData.lower(info),
+        FfiConverterUInt32.lower(outLen),$0
+    )
+})
+}
+/**
+ * Derive the two directional traffic keys for one relay session.
+ */
+public func relaySessionKeys(ephemeralSecret: Data, peerEphemeralPublic: Data, transcript: Data, initiatorFingerprint: String, responderFingerprint: String, isInitiator: Bool) -> RelaySessionKeys  {
+    return try!  FfiConverterTypeRelaySessionKeys_lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_session_keys(
+        FfiConverterData.lower(ephemeralSecret),
+        FfiConverterData.lower(peerEphemeralPublic),
+        FfiConverterData.lower(transcript),
+        FfiConverterString.lower(initiatorFingerprint),
+        FfiConverterString.lower(responderFingerprint),
+        FfiConverterBool.lower(isInitiator),$0
+    )
+})
+}
+/**
+ * The byte string the Ed25519 handshake signature covers.
+ *
+ * Pass `ephemeral_public` only when the handshake carries the X25519
+ * ephemeral key; legacy peers sign `"{timestamp_ms}:{node_id}"`.
+ */
+public func relaySignedHandshakePayload(timestampMs: UInt64, nodeId: String, ephemeralPublic: Data?) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_signed_handshake_payload(
+        FfiConverterUInt64.lower(timestampMs),
+        FfiConverterString.lower(nodeId),
+        FfiConverterOptionData.lower(ephemeralPublic),$0
+    )
+})
+}
+/**
+ * SHA-256 over both raw handshake byte strings, initiator first.
+ */
+public func relayTranscriptHash(initiatorHandshake: Data, responderHandshake: Data) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_relay_transcript_hash(
+        FfiConverterData.lower(initiatorHandshake),
+        FfiConverterData.lower(responderHandshake),$0
+    )
+})
+}
+/**
  * Render a compact terminal QR code for a given URL or text content.
  *
  * In dark terminals, swaps dark and light colors so that white background border
@@ -3954,6 +4302,30 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_race_connect() != 26451) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_aead_open() != 49296) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_aead_seal() != 36240) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_ephemeral_keypair() != 39083) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_ephemeral_public() != 33732) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_hkdf_sha256() != 38170) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_session_keys() != 3342) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_signed_handshake_payload() != 25663) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_relay_transcript_hash() != 110) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_render_qr_ascii() != 34654) {
