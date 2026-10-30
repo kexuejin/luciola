@@ -107,6 +107,8 @@ public object NoPointer
 
 
 
+
+
 /**
  * Active P2P discovery session backed by the Luciola UDP broadcast engine.
  *
@@ -865,6 +867,62 @@ public data class RaceOutcome (
 
 
 
+
+public data class RelayEphemeralKeyPair (
+    var `secret`: kotlin.ByteArray, 
+    var `public_`: kotlin.ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+
+        other as RelayEphemeralKeyPair
+        if (!`secret`.contentEquals(other.`secret`)) return false
+        if (!`public_`.contentEquals(other.`public_`)) return false
+
+        return true
+    }
+    override fun hashCode(): Int {
+        var result = `secret`.contentHashCode()
+        result = 31 * result + `public_`.contentHashCode()
+        return result
+    }
+    public companion object
+}
+
+
+
+
+public data class RelaySessionKeys (
+    /**
+     * Key for frames THIS device sends.
+     */
+    var `sendKey`: kotlin.ByteArray, 
+    /**
+     * Key for frames the peer sends.
+     */
+    var `recvKey`: kotlin.ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+
+        other as RelaySessionKeys
+        if (!`sendKey`.contentEquals(other.`sendKey`)) return false
+        if (!`recvKey`.contentEquals(other.`recvKey`)) return false
+
+        return true
+    }
+    override fun hashCode(): Int {
+        var result = `sendKey`.contentHashCode()
+        result = 31 * result + `recvKey`.contentHashCode()
+        return result
+    }
+    public companion object
+}
+
+
+
 /**
  * A paired device entry.
  */
@@ -939,6 +997,29 @@ public enum class DialStatus {
 }
 
 
+
+
+
+
+
+/**
+ * Errors surfaced by the relay crypto exports.
+ */
+public sealed class RelayCryptoException: kotlin.Exception() {
+    
+    public class AeadOpenFailed(
+    ) : RelayCryptoException() {
+        override val message: String
+            get() = ""
+    }
+    
+    public class BadKeyLength(
+    ) : RelayCryptoException() {
+        override val message: String
+            get() = ""
+    }
+    
+}
 
 
 
@@ -1118,6 +1199,50 @@ public expect fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo?
  * connect wins, the rest are cancelled. Blocking; call off the UI thread.
  */
 public expect fun `raceConnect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `attemptTimeoutMs`: kotlin.ULong?, `staggerMs`: kotlin.ULong?): RaceOutcome
+
+/**
+ * Open one relay frame payload. Throws on tampering or a key/seq mismatch.
+ */
+@Throws(RelayCryptoException::class)
+public expect fun `relayAeadOpen`(`key`: kotlin.ByteArray, `seq`: kotlin.ULong, `aad`: kotlin.ByteArray, `ciphertext`: kotlin.ByteArray): kotlin.ByteArray
+
+/**
+ * Seal one relay frame payload (AES-256-GCM, AAD = the 12-byte frame header).
+ */
+public expect fun `relayAeadSeal`(`key`: kotlin.ByteArray, `seq`: kotlin.ULong, `aad`: kotlin.ByteArray, `plaintext`: kotlin.ByteArray): kotlin.ByteArray
+
+/**
+ * Fresh X25519 ephemeral key pair for one relay session.
+ */
+public expect fun `relayEphemeralKeypair`(): RelayEphemeralKeyPair
+
+/**
+ * Public key for a (serialized) ephemeral secret.
+ */
+public expect fun `relayEphemeralPublic`(`secret`: kotlin.ByteArray): kotlin.ByteArray
+
+/**
+ * Raw HKDF-SHA256, exported for the cross-language wire vectors.
+ */
+public expect fun `relayHkdfSha256`(`ikm`: kotlin.ByteArray, `salt`: kotlin.ByteArray, `info`: kotlin.ByteArray, `outLen`: kotlin.UInt): kotlin.ByteArray
+
+/**
+ * Derive the two directional traffic keys for one relay session.
+ */
+public expect fun `relaySessionKeys`(`ephemeralSecret`: kotlin.ByteArray, `peerEphemeralPublic`: kotlin.ByteArray, `transcript`: kotlin.ByteArray, `initiatorFingerprint`: kotlin.String, `responderFingerprint`: kotlin.String, `isInitiator`: kotlin.Boolean): RelaySessionKeys
+
+/**
+ * The byte string the Ed25519 handshake signature covers.
+ *
+ * Pass `ephemeral_public` only when the handshake carries the X25519
+ * ephemeral key; legacy peers sign `"{timestamp_ms}:{node_id}"`.
+ */
+public expect fun `relaySignedHandshakePayload`(`timestampMs`: kotlin.ULong, `nodeId`: kotlin.String, `ephemeralPublic`: kotlin.ByteArray?): kotlin.String
+
+/**
+ * SHA-256 over both raw handshake byte strings, initiator first.
+ */
+public expect fun `relayTranscriptHash`(`initiatorHandshake`: kotlin.ByteArray, `responderHandshake`: kotlin.ByteArray): kotlin.ByteArray
 
 /**
  * Render a compact terminal QR code for a given URL or text content.

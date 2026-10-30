@@ -22,6 +22,32 @@ primary one is cited.
 
 ---
 
+## [Unreleased] — relay session crypto for luciola-relay 0.3.0
+
+### Added
+
+- `crates/luciola/src/relay_crypto.rs` — canonical implementation of the
+  luciola-relay `frame_aead_v3` session crypto: X25519 ephemeral key agreement
+  (RFC 7748 vectors), HKDF-SHA256 key schedule bound to the relay handshake
+  transcript, and per-frame AES-256-GCM with `nonce = 0000… ‖ u64be(seq)` and
+  the raw 12-byte frame header as AAD. iOS re-implements the same steps on
+  CryptoKit; all three implementations are pinned by
+  `luciola-relay/core/tests/fixtures/wire/cases.json` (cross-language vectors).
+- `bindings/luciola-uniffi` exports for the above (`relay_ephemeral_keypair`,
+  `relay_session_keys`, `relay_aead_seal/open`, `relay_hkdf_sha256`,
+  `relay_transcript_hash`, `relay_signed_handshake_payload`), plus the
+  regenerated KMP bindings (gobley) so Android consumes the canonical Rust code.
+
+### Changed
+
+- `x25519-dalek` now enables the `static_secrets` feature (the relay key
+  schedule must rebuild a secret from serialized bytes for the vector tests).
+- KMP binding version bumped to **0.8.2** (0.8.1 was republished with new
+  bindings; the bump forces Gradle to see the change). The AAR was rebuilt and
+  published to mavenLocal; the xcframework was rebuilt with the same surface.
+
+---
+
 ## [0.8.0] - 2026-10-29
 
 Tunnel v2 (the full T4 scope, wire-compatible with v1 peers). Published on

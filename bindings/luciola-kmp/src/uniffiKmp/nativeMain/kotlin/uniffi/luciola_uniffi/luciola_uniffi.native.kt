@@ -1476,6 +1476,22 @@ internal val UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByValue.`un
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 internal object UniffiLib {
     init {
             uniffiCallbackInterfaceOnPeerDiscovered.register(this)
@@ -2002,6 +2018,94 @@ internal object UniffiLib {
         `staggerMs`,
         uniffiCallStatus,
     )
+    fun uniffi_luciola_uniffi_fn_func_relay_aead_open(
+        `key`: RustBufferByValue,
+        `seq`: Long,
+        `aad`: RustBufferByValue,
+        `ciphertext`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_aead_open(
+        `key`,
+        `seq`,
+        `aad`,
+        `ciphertext`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_aead_seal(
+        `key`: RustBufferByValue,
+        `seq`: Long,
+        `aad`: RustBufferByValue,
+        `plaintext`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_aead_seal(
+        `key`,
+        `seq`,
+        `aad`,
+        `plaintext`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_ephemeral_keypair(
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_ephemeral_keypair(
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_ephemeral_public(
+        `secret`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_ephemeral_public(
+        `secret`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_hkdf_sha256(
+        `ikm`: RustBufferByValue,
+        `salt`: RustBufferByValue,
+        `info`: RustBufferByValue,
+        `outLen`: Int,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_hkdf_sha256(
+        `ikm`,
+        `salt`,
+        `info`,
+        `outLen`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_session_keys(
+        `ephemeralSecret`: RustBufferByValue,
+        `peerEphemeralPublic`: RustBufferByValue,
+        `transcript`: RustBufferByValue,
+        `initiatorFingerprint`: RustBufferByValue,
+        `responderFingerprint`: RustBufferByValue,
+        `isInitiator`: Byte,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_session_keys(
+        `ephemeralSecret`,
+        `peerEphemeralPublic`,
+        `transcript`,
+        `initiatorFingerprint`,
+        `responderFingerprint`,
+        `isInitiator`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_signed_handshake_payload(
+        `timestampMs`: Long,
+        `nodeId`: RustBufferByValue,
+        `ephemeralPublic`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_signed_handshake_payload(
+        `timestampMs`,
+        `nodeId`,
+        `ephemeralPublic`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_relay_transcript_hash(
+        `initiatorHandshake`: RustBufferByValue,
+        `responderHandshake`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_relay_transcript_hash(
+        `initiatorHandshake`,
+        `responderHandshake`,
+        uniffiCallStatus,
+    )
     fun uniffi_luciola_uniffi_fn_func_render_qr_ascii(
         `content`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
@@ -2455,6 +2559,30 @@ internal object UniffiLib {
     fun uniffi_luciola_uniffi_checksum_func_race_connect(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_race_connect(
     )
+    fun uniffi_luciola_uniffi_checksum_func_relay_aead_open(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_aead_open(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_aead_seal(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_aead_seal(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_ephemeral_keypair(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_ephemeral_keypair(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_ephemeral_public(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_ephemeral_public(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_hkdf_sha256(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_hkdf_sha256(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_session_keys(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_session_keys(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_signed_handshake_payload(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_signed_handshake_payload(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_relay_transcript_hash(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_relay_transcript_hash(
+    )
     fun uniffi_luciola_uniffi_checksum_func_render_qr_ascii(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_render_qr_ascii(
     )
@@ -2704,6 +2832,27 @@ public object FfiConverterUShort: FfiConverter<UShort, Short> {
 
     override fun write(value: UShort, buf: ByteBuffer) {
         buf.putShort(value.toShort())
+    }
+}
+
+
+public object FfiConverterUInt: FfiConverter<UInt, Int> {
+    override fun lift(value: Int): UInt {
+        return value.toUInt()
+    }
+
+    override fun read(buf: ByteBuffer): UInt {
+        return lift(buf.getInt())
+    }
+
+    override fun lower(value: UInt): Int {
+        return value.toInt()
+    }
+
+    override fun allocationSize(value: UInt): ULong = 4UL
+
+    override fun write(value: UInt, buf: ByteBuffer) {
+        buf.putInt(value.toInt())
     }
 }
 
@@ -4134,6 +4283,50 @@ public object FfiConverterTypeRaceOutcome: FfiConverterRustBuffer<RaceOutcome> {
 
 
 
+public object FfiConverterTypeRelayEphemeralKeyPair: FfiConverterRustBuffer<RelayEphemeralKeyPair> {
+    override fun read(buf: ByteBuffer): RelayEphemeralKeyPair {
+        return RelayEphemeralKeyPair(
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RelayEphemeralKeyPair): ULong = (
+            FfiConverterByteArray.allocationSize(value.`secret`) +
+            FfiConverterByteArray.allocationSize(value.`public_`)
+    )
+
+    override fun write(value: RelayEphemeralKeyPair, buf: ByteBuffer) {
+        FfiConverterByteArray.write(value.`secret`, buf)
+        FfiConverterByteArray.write(value.`public_`, buf)
+    }
+}
+
+
+
+
+public object FfiConverterTypeRelaySessionKeys: FfiConverterRustBuffer<RelaySessionKeys> {
+    override fun read(buf: ByteBuffer): RelaySessionKeys {
+        return RelaySessionKeys(
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RelaySessionKeys): ULong = (
+            FfiConverterByteArray.allocationSize(value.`sendKey`) +
+            FfiConverterByteArray.allocationSize(value.`recvKey`)
+    )
+
+    override fun write(value: RelaySessionKeys, buf: ByteBuffer) {
+        FfiConverterByteArray.write(value.`sendKey`, buf)
+        FfiConverterByteArray.write(value.`recvKey`, buf)
+    }
+}
+
+
+
+
 public object FfiConverterTypeTrustedDeviceInfo: FfiConverterRustBuffer<TrustedDeviceInfo> {
     override fun read(buf: ByteBuffer): TrustedDeviceInfo {
         return TrustedDeviceInfo(
@@ -4198,6 +4391,49 @@ public object FfiConverterTypeDialStatus: FfiConverterRustBuffer<DialStatus> {
 
     override fun write(value: DialStatus, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+public object RelayCryptoExceptionErrorHandler : UniffiRustCallStatusErrorHandler<RelayCryptoException> {
+    override fun lift(errorBuf: RustBufferByValue): RelayCryptoException = FfiConverterTypeRelayCryptoError.lift(errorBuf)
+}
+
+public object FfiConverterTypeRelayCryptoError : FfiConverterRustBuffer<RelayCryptoException> {
+    override fun read(buf: ByteBuffer): RelayCryptoException {
+        return when (buf.getInt()) {
+            1 -> RelayCryptoException.AeadOpenFailed()
+            2 -> RelayCryptoException.BadKeyLength()
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RelayCryptoException): ULong {
+        return when (value) {
+            is RelayCryptoException.AeadOpenFailed -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is RelayCryptoException.BadKeyLength -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RelayCryptoException, buf: ByteBuffer) {
+        when (value) {
+            is RelayCryptoException.AeadOpenFailed -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RelayCryptoException.BadKeyLength -> {
+                buf.putInt(2)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 }
 
@@ -5090,6 +5326,122 @@ public actual fun `raceConnect`(`addresses`: List<kotlin.String>, `port`: kotlin
             FfiConverterUShort.lower(`port`),
             FfiConverterOptionalULong.lower(`attemptTimeoutMs`),
             FfiConverterOptionalULong.lower(`staggerMs`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Open one relay frame payload. Throws on tampering or a key/seq mismatch.
+ */
+@Throws(RelayCryptoException::class)
+public actual fun `relayAeadOpen`(`key`: kotlin.ByteArray, `seq`: kotlin.ULong, `aad`: kotlin.ByteArray, `ciphertext`: kotlin.ByteArray): kotlin.ByteArray {
+    return FfiConverterByteArray.lift(uniffiRustCallWithError(RelayCryptoExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_aead_open(
+            FfiConverterByteArray.lower(`key`),
+            FfiConverterULong.lower(`seq`),
+            FfiConverterByteArray.lower(`aad`),
+            FfiConverterByteArray.lower(`ciphertext`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Seal one relay frame payload (AES-256-GCM, AAD = the 12-byte frame header).
+ */
+public actual fun `relayAeadSeal`(`key`: kotlin.ByteArray, `seq`: kotlin.ULong, `aad`: kotlin.ByteArray, `plaintext`: kotlin.ByteArray): kotlin.ByteArray {
+    return FfiConverterByteArray.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_aead_seal(
+            FfiConverterByteArray.lower(`key`),
+            FfiConverterULong.lower(`seq`),
+            FfiConverterByteArray.lower(`aad`),
+            FfiConverterByteArray.lower(`plaintext`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Fresh X25519 ephemeral key pair for one relay session.
+ */
+public actual fun `relayEphemeralKeypair`(): RelayEphemeralKeyPair {
+    return FfiConverterTypeRelayEphemeralKeyPair.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_ephemeral_keypair(
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Public key for a (serialized) ephemeral secret.
+ */
+public actual fun `relayEphemeralPublic`(`secret`: kotlin.ByteArray): kotlin.ByteArray {
+    return FfiConverterByteArray.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_ephemeral_public(
+            FfiConverterByteArray.lower(`secret`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Raw HKDF-SHA256, exported for the cross-language wire vectors.
+ */
+public actual fun `relayHkdfSha256`(`ikm`: kotlin.ByteArray, `salt`: kotlin.ByteArray, `info`: kotlin.ByteArray, `outLen`: kotlin.UInt): kotlin.ByteArray {
+    return FfiConverterByteArray.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_hkdf_sha256(
+            FfiConverterByteArray.lower(`ikm`),
+            FfiConverterByteArray.lower(`salt`),
+            FfiConverterByteArray.lower(`info`),
+            FfiConverterUInt.lower(`outLen`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Derive the two directional traffic keys for one relay session.
+ */
+public actual fun `relaySessionKeys`(`ephemeralSecret`: kotlin.ByteArray, `peerEphemeralPublic`: kotlin.ByteArray, `transcript`: kotlin.ByteArray, `initiatorFingerprint`: kotlin.String, `responderFingerprint`: kotlin.String, `isInitiator`: kotlin.Boolean): RelaySessionKeys {
+    return FfiConverterTypeRelaySessionKeys.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_session_keys(
+            FfiConverterByteArray.lower(`ephemeralSecret`),
+            FfiConverterByteArray.lower(`peerEphemeralPublic`),
+            FfiConverterByteArray.lower(`transcript`),
+            FfiConverterString.lower(`initiatorFingerprint`),
+            FfiConverterString.lower(`responderFingerprint`),
+            FfiConverterBoolean.lower(`isInitiator`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * The byte string the Ed25519 handshake signature covers.
+ *
+ * Pass `ephemeral_public` only when the handshake carries the X25519
+ * ephemeral key; legacy peers sign `"{timestamp_ms}:{node_id}"`.
+ */
+public actual fun `relaySignedHandshakePayload`(`timestampMs`: kotlin.ULong, `nodeId`: kotlin.String, `ephemeralPublic`: kotlin.ByteArray?): kotlin.String {
+    return FfiConverterString.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_signed_handshake_payload(
+            FfiConverterULong.lower(`timestampMs`),
+            FfiConverterString.lower(`nodeId`),
+            FfiConverterOptionalByteArray.lower(`ephemeralPublic`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * SHA-256 over both raw handshake byte strings, initiator first.
+ */
+public actual fun `relayTranscriptHash`(`initiatorHandshake`: kotlin.ByteArray, `responderHandshake`: kotlin.ByteArray): kotlin.ByteArray {
+    return FfiConverterByteArray.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_relay_transcript_hash(
+            FfiConverterByteArray.lower(`initiatorHandshake`),
+            FfiConverterByteArray.lower(`responderHandshake`),
             uniffiRustCallStatus,
         )
     })

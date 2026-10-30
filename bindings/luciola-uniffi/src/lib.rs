@@ -692,6 +692,131 @@ pub fn verify_message(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>)
 }
 
 // ---------------------------------------------------------------------------
+// Relay session crypto exports (luciola-relay "frame_aead_v3")
+// ---------------------------------------------------------------------------
+//
+// The relay wire protocol negotiates per-frame AES-256-GCM with X25519
+// ephemeral keys inside its own JSON handshake. Android shares the canonical
+// Rust implementation through these exports; iOS re-implements the same
+// steps on CryptoKit and `core/tests/fixtures/wire/cases.json` pins both to
+// identical vectors. See luciola::relay_crypto for the protocol details.
+
+#[derive(uniffi::Record)]
+pub struct RelayEphemeralKeyPair {
+    pub secret: Vec<u8>,
+    pub public: Vec<u8>,
+}
+
+#[derive(uniffi::Record)]
+pub struct RelaySessionKeys {
+    /// Key for frames THIS device sends.
+    pub send_key: Vec<u8>,
+    /// Key for frames the peer sends.
+    pub recv_key: Vec<u8>,
+}
+
+/// Fresh X25519 ephemeral key pair for one relay session.
+#[uniffi::export]
+pub fn relay_ephemeral_keypair() -> RelayEphemeralKeyPair {
+    let (secret, public) = luciola::relay_crypto::ephemeral_keypair();
+    RelayEphemeralKeyPair {
+        secret: secret.to_vec(),
+        public: public.to_vec(),
+    }
+}
+
+/// Public key for a (serialized) ephemeral secret.
+#[uniffi::export]
+pub fn relay_ephemeral_public(secret: Vec<u8>) -> Vec<u8> {
+    let secret: [u8; 32] = secret
+        .try_into()
+        .expect("ephemeral secret must be 32 bytes");
+    luciola::relay_crypto::ephemeral_public(&secret).to_vec()
+}
+
+/// The byte string the Ed25519 handshake signature covers.
+///
+/// Pass `ephemeral_public` only when the handshake carries the X25519
+/// ephemeral key; legacy peers sign `"{timestamp_ms}:{node_id}"`.
+#[uniffi::export]
+pub fn relay_signed_handshake_payload(
+    timestamp_ms: u64,
+    node_id: String,
+    ephemeral_public: Option<Vec<u8>>,
+) -> String {
+    let eph: Option<[u8; 32]> = ephemeral_public.map(|v| v.try_into().expect("ephemeral public key must be 32 bytes"));
+    luciola::relay_crypto::signed_handshake_payload(timestamp_ms, &node_id, eph.as_ref())
+}
+
+/// SHA-256 over both raw handshake byte strings, initiator first.
+#[uniffi::export]
+pub fn relay_transcript_hash(initiator_handshake: Vec<u8>, responder_handshake: Vec<u8>) -> Vec<u8> {
+    luciola::relay_crypto::transcript_hash(&initiator_handshake, &responder_handshake).to_vec()
+}
+
+/// Derive the two directional traffic keys for one relay session.
+#[uniffi::export]
+pub fn relay_session_keys(
+    ephemeral_secret: Vec<u8>,
+    peer_ephemeral_public: Vec<u8>,
+    transcript: Vec<u8>,
+    initiator_fingerprint: String,
+    responder_fingerprint: String,
+    is_initiator: bool,
+) -> RelaySessionKeys {
+    let keys = luciola::relay_crypto::session_keys(
+        (&ephemeral_secret[..]).try_into().expect("ephemeral secret must be 32 bytes"),
+        (&peer_ephemeral_public[..]).try_into().expect("peer ephemeral public key must be 32 bytes"),
+        (&transcript[..]).try_into().expect("transcript hash must be 32 bytes"),
+        &initiator_fingerprint,
+        &responder_fingerprint,
+        is_initiator,
+    )
+    .expect("session key derivation failed");
+    RelaySessionKeys {
+        send_key: keys.0.to_vec(),
+        recv_key: keys.1.to_vec(),
+    }
+}
+
+/// Seal one relay frame payload (AES-256-GCM, AAD = the 12-byte frame header).
+#[uniffi::export]
+pub fn relay_aead_seal(key: Vec<u8>, seq: u64, aad: Vec<u8>, plaintext: Vec<u8>) -> Vec<u8> {
+    luciola::relay_crypto::aead_seal(
+        (&key[..]).try_into().expect("AEAD key must be 32 bytes"),
+        seq,
+        &aad,
+        &plaintext,
+    )
+}
+
+/// Errors surfaced by the relay crypto exports.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum RelayCryptoError {
+    #[error("AEAD open failed: frame tampered with, or the wrong key/seq")]
+    AeadOpenFailed,
+    #[error("AEAD key must be 32 bytes")]
+    BadKeyLength,
+}
+
+/// Open one relay frame payload. Throws on tampering or a key/seq mismatch.
+#[uniffi::export]
+pub fn relay_aead_open(key: Vec<u8>, seq: u64, aad: Vec<u8>, ciphertext: Vec<u8>) -> Result<Vec<u8>, RelayCryptoError> {
+    let key: [u8; 32] = key
+        .try_into()
+        .map_err(|_| RelayCryptoError::BadKeyLength)?;
+    luciola::relay_crypto::aead_open(&key, seq, &aad, &ciphertext)
+        .map_err(|_| RelayCryptoError::AeadOpenFailed)
+}
+
+/// Raw HKDF-SHA256, exported for the cross-language wire vectors.
+#[uniffi::export]
+pub fn relay_hkdf_sha256(ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, out_len: u32) -> Vec<u8> {
+    luciola::relay_crypto::hkdf_sha256(&ikm, &salt, &info, out_len as usize)
+}
+
+
+// ---------------------------------------------------------------------------
 // Secure link session exports
 // ---------------------------------------------------------------------------
 
