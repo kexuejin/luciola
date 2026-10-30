@@ -54,6 +54,18 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      # cinterop links against the staticlib, not against source: without these
+      # two builds the task fails with
+      #   Could not find 'libluciola_uniffi.a' binary in .../<triple>/release
+      # The path is resolved by nativeRoot() in bindings/luciola-kmp/build.gradle.kts,
+      # which falls back to the in-repo ./target on a runner.
+      - name: Cross-compile uniffi static libs for iOS
+        run: |
+          cargo build -p luciola-uniffi --release --target aarch64-apple-ios
+          cargo build -p luciola-uniffi --release --target aarch64-apple-ios-sim
       - name: Compile iOS targets
         working-directory: examples/android-demo
         run: ./gradlew :luciola:compileKotlinIosArm64 :luciola:compileKotlinIosSimulatorArm64 --no-daemon
