@@ -218,6 +218,17 @@ pub struct DiscoveryConfig {
     pub presence_interval: Duration,
     pub offline_after: Duration,
     pub manual_peers: Vec<(String, u16)>,
+    /// When the requested `listen_port` is taken, bind an ephemeral port
+    /// instead of failing. Off by default.
+    ///
+    /// A silent fallback is how two products end up sharing one broadcast
+    /// mesh: the loser still announces to the well-known port, the winner
+    /// hears it, the two exchange profiles and then dial each other's channel
+    /// ports — measured on 2026-11-02 with Firefly and Tidings in the same
+    /// `17878/17879` range. Callers that really must stay up without the
+    /// well-known port opt in here and surface `local_port()` (announce and
+    /// receive then use different ports, so discovery is degraded).
+    pub allow_ephemeral_fallback: bool,
 }
 
 impl Default for DiscoveryConfig {
@@ -247,7 +258,32 @@ impl Default for DiscoveryConfig {
             presence_interval: Duration::from_secs(5),
             offline_after: Duration::from_secs(90),
             manual_peers: Vec::new(),
+            allow_ephemeral_fallback: false,
         }
+    }
+}
+
+/// Bind the discovery UDP socket, honouring the explicit fallback policy.
+///
+/// Off by default: a silent fallback is how two processes end up sharing one
+/// broadcast mesh (the loser keeps announcing into the winner's port). The
+/// caller sees `CoreError::BindFailed` instead, so the host can show a real
+/// "port occupied" error and pick another product port.
+fn bind_discovery_udp(
+    listen_port: u16,
+    allow_ephemeral_fallback: bool,
+) -> Result<std::net::UdpSocket, CoreError> {
+    let bind_addr = SocketAddr::from(([0, 0, 0, 0], listen_port));
+    match std::net::UdpSocket::bind(bind_addr) {
+        Ok(socket) => Ok(socket),
+        Err(err) if allow_ephemeral_fallback => {
+            warn!(
+                "discovery port {listen_port} is unavailable ({err}); continuing on an ephemeral                  port because allow_ephemeral_fallback is set — broadcast discovery is degraded                  and this node will keep announcing into whichever process owns {listen_port}"
+            );
+            std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+                .map_err(|fallback_err| CoreError::BindFailed(listen_port, fallback_err))
+        }
+        Err(err) => Err(CoreError::BindFailed(listen_port, err)),
     }
 }
 
@@ -265,16 +301,7 @@ pub struct DiscoveryEngine {
 impl DiscoveryEngine {
     /// Bind UDP socket and initialize discovery engine.
     pub async fn bind(config: DiscoveryConfig) -> Result<Arc<Self>, CoreError> {
-        let bind_addr = SocketAddr::from(([0, 0, 0, 0], config.listen_port));
-        let std_socket = match std::net::UdpSocket::bind(bind_addr) {
-            Ok(s) => s,
-            Err(_e) => {
-                // Try fallback to random port if default is occupied
-                let fallback_addr = SocketAddr::from(([0, 0, 0, 0], 0));
-                std::net::UdpSocket::bind(fallback_addr)
-                    .map_err(|e2| CoreError::BindFailed(config.listen_port, e2))?
-            }
-        };
+        let std_socket = bind_discovery_udp(config.listen_port, config.allow_ephemeral_fallback)?;
 
         std_socket.set_broadcast(true)?;
         std_socket.set_nonblocking(true)?;
@@ -305,15 +332,10 @@ impl DiscoveryEngine {
     /// Self-healing mechanism: Rebind and rebuild the UDP socket if network changed or stalled.
     pub async fn restart_socket(&self) -> Result<(), CoreError> {
         tracing::warn!("Network stalled or socket died, rebuilding UDP discovery socket...");
-        let bind_addr = SocketAddr::from(([0, 0, 0, 0], self.config.listen_port));
-        let std_socket = match std::net::UdpSocket::bind(bind_addr) {
-            Ok(s) => s,
-            Err(_) => {
-                let fallback_addr = SocketAddr::from(([0, 0, 0, 0], 0));
-                std::net::UdpSocket::bind(fallback_addr)
-                    .map_err(|e| CoreError::BindFailed(self.config.listen_port, e))?
-            }
-        };
+        let std_socket = bind_discovery_udp(
+            self.config.listen_port,
+            self.config.allow_ephemeral_fallback,
+        )?;
 
         std_socket.set_broadcast(true)?;
         std_socket.set_nonblocking(true)?;

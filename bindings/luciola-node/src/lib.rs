@@ -329,50 +329,75 @@ impl DiscoverySession {
                     ..Default::default()
                 };
 
-                if let Ok(engine) = luciola::DiscoveryEngine::bind(config).await {
-                    let mut events = engine.subscribe();
-                    engine.clone().spawn();
-                    engine.announce().await;
+                let engine = match luciola::DiscoveryEngine::bind(config).await {
+                    Ok(candidate) => {
+                        let actual = candidate.local_port().await.unwrap_or(0);
+                        if port != 0 && actual != port {
+                            // Only reachable with an explicit fallback opt-in;
+                            // the documented JS contract is "bind_failed when
+                            // the port is occupied", never a silent move.
+                            tsfn.call(
+                                DiscoveryEvent::Error(
+                                    "bind_failed".to_string(),
+                                    format!("discovery port {port} landed on {actual}"),
+                                ),
+                                ThreadsafeFunctionCallMode::NonBlocking,
+                            );
+                            return;
+                        }
+                        candidate
+                    }
+                    Err(e) => {
+                        tsfn.call(
+                            DiscoveryEvent::Error("bind_failed".to_string(), format!("{e}")),
+                            ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                        return;
+                    }
+                };
 
-                    loop {
-                        tokio::select! {
-                            _ = &mut shutdown_rx => {
-                                engine.announce_exit().await;
-                                break;
-                            }
-                            Ok(event) = events.recv() => {
-                                let conv = |p: luciola::PeerRecord| {
-                                    let device = p.device.map(|d| JsDeviceMeta {
-                                        device_type: d.device_type.as_str().to_string(),
-                                        icon: d.device_type.icon().to_string(),
-                                        os: d.os,
-                                        arch: d.arch,
-                                        model: d.model,
-                                        hostname: d.hostname,
-                                        device_id: d.device_id,
-                                    });
-                                    JsPeerRecord {
-                                        node_id: p.node_id,
-                                        name: p.name,
-                                        ip: p.ip,
-                                        udp_port: p.udp_port as u32,
-                                        tcp_port: p.tcp_port as u32,
-                                        device,
-                                        device_id: p.device_id,
-                                        product: p.product,
-                                        extra: p.extra,
-                                    }
-                                };
-                                match event {
-                                    luciola::PeerEvent::Found(p) => {
-                                        tsfn.call(DiscoveryEvent::Found(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
-                                    }
-                                    luciola::PeerEvent::Updated(p) => {
-                                        tsfn.call(DiscoveryEvent::Updated(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
-                                    }
-                                    luciola::PeerEvent::Lost(id) => {
-                                        tsfn.call(DiscoveryEvent::Lost(id), ThreadsafeFunctionCallMode::NonBlocking);
-                                    }
+                let mut events = engine.subscribe();
+                engine.clone().spawn();
+                engine.announce().await;
+
+                loop {
+                    tokio::select! {
+                        _ = &mut shutdown_rx => {
+                            engine.announce_exit().await;
+                            break;
+                        }
+                        Ok(event) = events.recv() => {
+                            let conv = |p: luciola::PeerRecord| {
+                                let device = p.device.map(|d| JsDeviceMeta {
+                                    device_type: d.device_type.as_str().to_string(),
+                                    icon: d.device_type.icon().to_string(),
+                                    os: d.os,
+                                    arch: d.arch,
+                                    model: d.model,
+                                    hostname: d.hostname,
+                                    device_id: d.device_id,
+                                });
+                                JsPeerRecord {
+                                    node_id: p.node_id,
+                                    name: p.name,
+                                    ip: p.ip,
+                                    udp_port: p.udp_port as u32,
+                                    tcp_port: p.tcp_port as u32,
+                                    device,
+                                    device_id: p.device_id,
+                                    product: p.product,
+                                    extra: p.extra,
+                                }
+                            };
+                            match event {
+                                luciola::PeerEvent::Found(p) => {
+                                    tsfn.call(DiscoveryEvent::Found(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
+                                }
+                                luciola::PeerEvent::Updated(p) => {
+                                    tsfn.call(DiscoveryEvent::Updated(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
+                                }
+                                luciola::PeerEvent::Lost(id) => {
+                                    tsfn.call(DiscoveryEvent::Lost(id), ThreadsafeFunctionCallMode::NonBlocking);
                                 }
                             }
                         }

@@ -372,19 +372,29 @@ impl DiscoverySession {
                     // A restart may race the previous socket releasing the port;
                     // retry instead of silently falling back to an ephemeral
                     // port where broadcast discovery cannot work.
+                    //
+                    // `DiscoveryEngine::bind` itself refuses to fall back unless
+                    // the config opts in, so an occupied port is a real error
+                    // here. The requested==0 (system-assigned) case is the only
+                    // one where the bound port may legitimately differ.
                     let mut engine = None;
                     // 5s total: a restart must out-wait the previous engine
                     // thread's socket teardown (exit announce + drop) or the
                     // session silently ends up on an ephemeral port.
                     for _ in 0..25 {
-                        match DiscoveryEngine::bind(config.clone()).await {
-                            Ok(e) => {
+                        if let Ok(candidate) = DiscoveryEngine::bind(config.clone()).await {
+                            let actual = candidate.local_port().await.unwrap_or(0);
+                            if port == 0 || actual == port {
                                 *bound.lock().unwrap() = true;
-                                engine = Some(e);
+                                engine = Some(candidate);
                                 break;
                             }
-                            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+                            // Defensive: a caller opted into fallback and the
+                            // engine landed elsewhere; this session promises
+                            // the well-known port, so retry.
+                            drop(candidate);
                         }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
                     let Some(engine) = engine else {
                         *bound.lock().unwrap() = false;
