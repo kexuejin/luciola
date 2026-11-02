@@ -72,22 +72,52 @@ fn wait_until(pred: impl Fn() -> bool, ms: u64) -> bool {
     }
 }
 
-/// 单个空闲端口。**保留 ±1 邻域**：tunnel 默认端口 = secure + 1，并行测试的
-/// 其它临时端口分配不许落进邻位（否则 tunnel 绑定时 Address already in use，
-/// 全量跑必撞、单跑恒绿的典型来源）。
+/// Ports handed out in this test process plus their ±1 neighbours.
+///
+/// The tunnel port is `secure + 1` and both the secure listener and the tunnel
+/// bind wildcard addresses, so a neighbour check must probe `0.0.0.0` / `[::]`
+/// (a loopback probe succeeds while another test's wildcard tunnel listener
+/// holds the port on macOS) and the reservation must be process-wide (two
+/// tests otherwise claim adjacent pairs in the window between check and bind).
+/// Both defects made this binary red on a busy machine while every test passed
+/// when run alone.
+fn reserved_ports() -> &'static std::sync::Mutex<std::collections::HashSet<u16>> {
+    static PORTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u16>>> =
+        std::sync::OnceLock::new();
+    PORTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn wildcard_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
+        && std::net::TcpListener::bind(("::", port)).is_ok()
+}
+
+/// Reserve `p..=p+span` and return `p`. Fails the caller's loop only when the
+/// kernel handed us a neighbour of an already reserved block.
+fn reserve_port_block(span: u16) -> Option<u16> {
+    let probe = std::net::TcpListener::bind("0.0.0.0:0").ok()?;
+    let p = probe.local_addr().ok()?.port();
+    drop(probe);
+    if p <= span || p >= u16::MAX - span {
+        return None;
+    }
+    let mut reserved = reserved_ports().lock().unwrap();
+    for port in (p - span)..=(p + span) {
+        if reserved.contains(&port) || !wildcard_free(port) {
+            return None;
+        }
+    }
+    for port in (p - span)..=(p + span) {
+        reserved.insert(port);
+    }
+    Some(p)
+}
+
+/// 单个空闲端口（并保留 ±1 邻域，见 [reserved_ports]）。
 fn free_port() -> u16 {
     loop {
-        let a = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let p = a.local_addr().unwrap().port();
-        let ok = p > 0
-            && p < u16::MAX
-            && std::net::TcpListener::bind(("127.0.0.1", p + 1)).is_ok()
-            && std::net::TcpListener::bind(("::1", p + 1)).is_ok()
-            && std::net::TcpListener::bind(("127.0.0.1", p - 1)).is_ok()
-            && std::net::TcpListener::bind(("::1", p - 1)).is_ok();
-        drop(a);
-        if ok {
-            return p;
+        if let Some(port) = reserve_port_block(1) {
+            return port;
         }
     }
 }
@@ -95,17 +125,8 @@ fn free_port() -> u16 {
 /// 连续空闲端口对 (p, p+1)：tunnel 默认端口 = secure + 1。
 fn free_port_pair() -> (u16, u16) {
     loop {
-        let a = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let p = a.local_addr().unwrap().port();
-        if p == u16::MAX {
-            continue;
-        }
-        let ok = std::net::TcpListener::bind(("127.0.0.1", p + 1)).is_ok()
-            && std::net::TcpListener::bind(("::1", p + 1)).is_ok()
-            && std::net::TcpListener::bind(("::1", p)).is_ok();
-        drop(a);
-        if ok {
-            return (p, p + 1);
+        if let Some(port) = reserve_port_block(2) {
+            return (port, port + 1);
         }
     }
 }
