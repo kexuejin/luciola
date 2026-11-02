@@ -15,6 +15,19 @@
   products must treat profile fields as untrusted display data and gate all
   data-plane access behind the trust store + secure channel.
 
+## Denial-of-service posture
+
+- Secure-channel handshake reads are time-bounded: 5 s on the listening side
+  (`DEFAULT_HANDSHAKE_TIMEOUT`) and 10 s on the dialling side
+  (`DEFAULT_DIAL_HANDSHAKE_TIMEOUT`). A client that opens a TCP connection and
+  sends nothing is dropped and the accept slot is released; without the bound,
+  any host able to reach the port could deny service to the legitimate peer
+  (measured 2026-11-02: a foreign app held the single slot until it exited).
+- Discovery is unauthenticated by design, and a requested port that cannot be
+  bound is a hard error rather than a silent move to an ephemeral port: the
+  loser of a port race no longer announces into the winner's socket, which had
+  let two products join one broadcast mesh and dial each other.
+
 ## Status: pre-audit
 
 The handshake is built from vetted primitives (RustCrypto: ed25519-dalek,

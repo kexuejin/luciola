@@ -42,6 +42,24 @@ const SIG_LEN: usize = 64;
 /// Largest plaintext frame accepted (guards against length-field DoS).
 pub const MAX_FRAME_LEN: u32 = 8 * 1024 * 1024;
 
+/// How long the LISTENING side waits for the initiator's first flight.
+///
+/// Without this a client that connects and then sends nothing (a different
+/// protocol, a stuck build, a scanner) held the accept slot forever: the
+/// listener serves one session at a time, so the legitimate peer queued in
+/// the kernel backlog never got in (2026-11-02, Firefly dialling a Tidings
+/// port with its own wire format). Five seconds is far above a LAN handshake
+/// and short enough that the next peer gets the slot.
+pub const DEFAULT_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the DIALING side waits for the responder's flight.
+///
+/// Longer than `DEFAULT_HANDSHAKE_TIMEOUT` on purpose: a dialer may sit in the
+/// listener's backlog while the listener is recycling a stale session, so it
+/// must out-wait the server-side timeout instead of giving up at the same
+/// instant (that would turn a recoverable queue into a reconnect storm).
+pub const DEFAULT_DIAL_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// single read chunk (each read is a cancellation point)
 const READ_CHUNK: usize = 64 * 1024;
 
@@ -344,7 +362,13 @@ pub async fn connect_secure(
     pinned_peer_public_key: &[u8],
 ) -> Result<SecureStream, LinkError> {
     let socket = crate::link::dial(address, port).await?;
-    secure_handshake_client(socket, identity_seed, pinned_peer_public_key).await
+    handshake_client_timed(
+        socket,
+        identity_seed,
+        pinned_peer_public_key,
+        DEFAULT_DIAL_HANDSHAKE_TIMEOUT,
+    )
+    .await
 }
 
 /// Race-dial every candidate address (Happy Eyeballs) and run the client
@@ -361,7 +385,35 @@ pub async fn connect_secure_raced(
             "no candidate address reachable".into(),
         ));
     };
-    secure_handshake_client(socket, identity_seed, pinned_peer_public_key).await
+    handshake_client_timed(
+        socket,
+        identity_seed,
+        pinned_peer_public_key,
+        DEFAULT_DIAL_HANDSHAKE_TIMEOUT,
+    )
+    .await
+}
+
+/// Client handshake bounded by a timeout: drops the socket on expiry, so a
+/// dialer waiting behind a busy listener fails visibly and retries instead of
+/// hanging as "connecting" forever.
+pub async fn handshake_client_timed(
+    socket: TcpStream,
+    identity_seed: &[u8],
+    pinned_peer_public_key: &[u8],
+    handshake_timeout: std::time::Duration,
+) -> Result<SecureStream, LinkError> {
+    match tokio::time::timeout(
+        handshake_timeout,
+        secure_handshake_client(socket, identity_seed, pinned_peer_public_key),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(LinkError::Handshake(format!(
+            "handshake timed out after {handshake_timeout:?}"
+        ))),
+    }
 }
 
 /// Client side of the handshake over an ALREADY-CONNECTED socket.
@@ -428,17 +480,50 @@ pub async fn secure_handshake_client(
     })
 }
 
-/// Accept one connection on `listener`.
+/// Accept one connection on `listener` and bound the handshake by
+/// [`DEFAULT_HANDSHAKE_TIMEOUT`].
 ///
 /// `expected_peer`: `Some(key)` pins the peer (both sides pre-paired);
 /// `None` accepts any identity and returns it for TOFU pinning by the caller.
+///
+/// The timeout is what keeps a silent or foreign client from occupying the
+/// single accept slot forever; see [`DEFAULT_HANDSHAKE_TIMEOUT`] for the
+/// measured failure (2026-11-02).
 pub async fn accept_secure(
     listener: &TcpListener,
     identity_seed: &[u8],
     expected_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError> {
+    accept_secure_with_timeout(
+        listener,
+        identity_seed,
+        expected_peer_public_key,
+        DEFAULT_HANDSHAKE_TIMEOUT,
+    )
+    .await
+}
+
+/// Accept one connection on `listener` with an explicit handshake timeout
+/// (tests and hosts with slower links use this; production uses
+/// [`accept_secure`]).
+pub async fn accept_secure_with_timeout(
+    listener: &TcpListener,
+    identity_seed: &[u8],
+    expected_peer_public_key: Option<&[u8]>,
+    handshake_timeout: std::time::Duration,
+) -> Result<SecureStream, LinkError> {
     let (socket, _) = listener.accept().await?;
-    secure_handshake_server(socket, identity_seed, expected_peer_public_key).await
+    match tokio::time::timeout(
+        handshake_timeout,
+        secure_handshake_server(socket, identity_seed, expected_peer_public_key),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(LinkError::Handshake(format!(
+            "handshake timed out after {handshake_timeout:?}"
+        ))),
+    }
 }
 
 /// Server side of the handshake over an ALREADY-ACCEPTED socket.
@@ -714,5 +799,88 @@ mod tests {
         r2.unwrap();
         s1.unwrap();
         s2.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_silent_client_cannot_hold_the_accept_slot() {
+        // Measured failure (2026-11-02): a foreign app dialled the Tidings
+        // port with its own wire format, its first bytes never formed a valid
+        // flight, and the single accept loop waited forever. The legitimate
+        // peer queued in the backlog was starved until the foreign process
+        // exited.
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let silent = tokio::spawn(async move {
+            let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            drop(stream);
+        });
+        // Give the silent connection time to be queued.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let seed_b = b.seed.clone();
+        let key_a = a.public_key.clone();
+        let first = accept_secure_with_timeout(
+            &listener,
+            &seed_b,
+            Some(&key_a),
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert!(
+            matches!(first, Err(LinkError::Handshake(_))),
+            "a client that never sends a flight must time out"
+        );
+
+        // The same listener still serves the next (legitimate) connection.
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
+            .await
+            .expect("legitimate peer after the silent one");
+        let server = server.await.unwrap().expect("server handshake");
+        assert_eq!(client.peer_public_key, b.public_key);
+        assert_eq!(server.peer_public_key, a.public_key);
+
+        silent.abort();
+    }
+
+    #[tokio::test]
+    async fn a_dialer_does_not_hang_on_a_listener_that_never_answers() {
+        // The other half of the starvation: a dialer queued behind a busy
+        // listener used to wait forever and report nothing at all.
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hold = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            drop(stream);
+        });
+
+        let socket = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let started = std::time::Instant::now();
+        let result = handshake_client_timed(
+            socket,
+            &a.seed,
+            &b.public_key,
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(LinkError::Handshake(_))),
+            "a dialer must fail instead of hanging"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "the dialer timed out far too late: {:?}",
+            started.elapsed()
+        );
+
+        hold.abort();
     }
 }

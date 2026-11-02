@@ -6,9 +6,18 @@
 ## 1. 端口分配(同机多产品)
 
 UDP **17878 保留给"单引擎设备"**。同机运行第二个 luciola 产品时,自选其他端口
-(如 17880),每个产品一个独立 mesh。端口被占时引擎会重试 5 秒,失败后通过
-`onError("bind_failed", ...)`(uniffi/KMP)或 `{type:"error"}`(Node)上报——
+(如 17880),每个产品一个独立 mesh;产品端口块与分配规则见 `docs/PORTS.md`。
+
+端口被占时**不再静默回落到临时端口**:uniffi/KMP 重试 5 秒后经
+`onError("bind_failed", ...)` 上报、`isBound()` 随之为 false;Node 直接发
+`{type:"error"}`;Rust 侧 `DiscoveryEngine::bind` 返回 `CoreError::BindFailed`。
 **UI 必须展示这个错误**,否则用户只会看到"扫描不到设备"。
+
+> 为什么不再回落:回落后引擎仍按原端口 announce,落败进程的信标会打进胜者
+> 的 socket,两个产品于是互相发现、并去拨对方的信道端口——这是 2026-11-02
+> Firefly/Tidings 抢位饿死的放大器。确实需要"端口被占也要活着"的宿主,在
+> Rust 侧显式打开 `DiscoveryConfig::allow_ephemeral_fallback`,并由宿主展示
+> `local_port()`(此时广播发现是降级的)。
 
 Profile 携带 `deviceId`(设备分组)与 `product`(产品标签),对端 UI 应按
 deviceId 折叠同一物理设备上的多个产品。
@@ -17,7 +26,7 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
 
 | 端口 | 协议/地址 | 归属与公式 |
 | :-- | :-- | :-- |
-| 17878 | UDP 双栈 | 设备发现(多播);保留给「单引擎设备」,同机第二个产品自选其他端口 |
+| 17878 | UDP 双栈 | 设备发现(多播);保留给「单引擎设备」,同机第二个产品自选其他端口(见 `docs/PORTS.md`) |
 | `secure_port` | TCP | 消息链路:`listen(p)` / `connect(addrs, p, ...)` 每次调用传参 |
 | `tunnel_port` | TCP 双栈,仅 Responder | 转发端点 accept;默认 = `secure_port + 1`,`set_tunnel_port(port)` 覆盖(`0` = 恢复推导);**惰性绑定**——`enable_forward_endpoint` 首次启用才占端口,绑定失败经事件报 `forward_bind_failed: ` |
 | `listen_port`(TCP) | TCP,绑 `127.0.0.1` | 发起端本地转发 / 响应端 remote forward 监听:`0` = 系统分配(stats 行给实际端口,`stop_*_forward` 接受该值);冲突同步返回 `false` 并报 `forward_bind_failed: ` |
@@ -71,6 +80,9 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
 - 监听方 `listen()` 是循环接受:一条连接关闭后自动重新等待。0.6.0 起
   bind/accept 均可被 `disconnect()` 打断——**stop 之后端口立即释放**(老版本
   存在「阻塞在 accept 时 stop 不生效」的僵尸监听;现已由测试钉死)。
+- **监听是单槽**:同一时刻只服务一条会话,后来的拨号排在 TCP backlog 里。
+  两侧握手都有超时(监听 5s、拨号 10s):连上却不发握手的外来客户端会被丢弃
+  并让出槽位,拨号方超时后进入重连,不会永远停在 "connecting"。
 - 监听器是**双栈**单 socket:IPv4 与 IPv6 入站共用一个端口;不可用平台自动
   降级 IPv4-only。
 
@@ -88,7 +100,7 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
 
 | 症状 | 原因 | 处置 |
 | :--- | :--- | :--- |
-| 引擎"在线"但永远扫不到 | 17878 被同机其他产品占用,bind 回落随机端口 | 换端口;`isBound()`/`bind_failed` 上报后 UI 提示 |
+| 引擎"在线"但永远扫不到 | 17878 被同机其他产品占用 | 按产品端口块换端口;`isBound()`/`bind_failed` 会如实上报(不再静默回落) |
 | 手机 App 后台"假死" | Android freezer 冻结进程 | 前台服务;回前台自动恢复 |
 | 广播全部丢失、单播正常 | TUN 代理(`0.0.0.0/1`)截流受限广播 | 库已走子网定向广播,确认 `subnetBroadcastAddresses()` 非空 |
 | macOS UDP 发送报 EPIPE | ICMP 错误粘滞在 socket | Rust 引擎按周期重发自愈;Node 侧裸 dgram 需重建 socket |
