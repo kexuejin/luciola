@@ -15,12 +15,19 @@ UDP **17878 保留给"单引擎设备"**。同机运行第二个 luciola 产品�
 
 > 为什么不再回落:回落后引擎仍按原端口 announce,落败进程的信标会打进胜者
 > 的 socket,两个产品于是互相发现、并去拨对方的信道端口——这是 2026-11-02
-> Firefly/Tidings 抢位饿死的放大器。确实需要"端口被占也要活着"的宿主,在
+> 实测的"先到先占、后来者饿死"现象的放大器。确实需要"端口被占也要活着"的宿主,在
 > Rust 侧显式打开 `DiscoveryConfig::allow_ephemeral_fallback`,并由宿主展示
 > `local_port()`(此时广播发现是降级的)。
 
 Profile 携带 `deviceId`(设备分组)与 `product`(产品标签),对端 UI 应按
 deviceId 折叠同一物理设备上的多个产品。
+
+**产品隔离**:不同产品即使共用同一个发现端口,也不应互相出现在 peer 表里
+(否则会按对方的 `tcp_port` 去拨、挤占单槽入站)。FFI 侧 `DiscoveredPeer.product`
+已携带标签,宿主必须按自己的产品过滤;Rust 侧可用
+`DiscoveryConfig::product_filter` 让引擎直接丢弃其它产品的信标;
+`luciola-cli agent --product <id>` 只向客户端推送指定产品。
+
 
 T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用):
 
@@ -83,6 +90,10 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
 - **监听是单槽**:同一时刻只服务一条会话,后来的拨号排在 TCP backlog 里。
   两侧握手都有超时(监听 5s、拨号 10s):连上却不发握手的外来客户端会被丢弃
   并让出槽位,拨号方超时后进入重连,不会永远停在 "connecting"。
+- **并发对端不在 FFI 契约内**:`SecureSession::send()` 没有对端参数,一条
+  会话只承载一条信道。需要同时服务 N 个对端时,宿主必须为每个对端建独立
+  `SecureSession`(各自的监听端口),或走隧道复用;别指望 backlog 排队变成
+  并发——2026-11-02 的饿死是握手无超时(已修),并发能力本身仍未提供。
 - 监听器是**双栈**单 socket:IPv4 与 IPv6 入站共用一个端口;不可用平台自动
   降级 IPv4-only。
 

@@ -6,6 +6,7 @@ pub use luciola_ip as ip;
 
 pub mod link;
 pub mod pairing;
+pub mod ports;
 pub mod relay_crypto;
 pub mod trust;
 pub use luciola_net as net;
@@ -207,6 +208,11 @@ impl PeerRegistry {
     pub fn profile_rev_of(&self, node_id: &str) -> Option<u32> {
         self.peers.get(node_id).map(|p| p.profile_rev)
     }
+
+    /// Product label last advertised by this peer (for the product allow-list).
+    pub fn product_of(&self, node_id: &str) -> Option<String> {
+        self.peers.get(node_id).and_then(|p| p.product.clone())
+    }
 }
 
 /// Configuration options for the discovery engine.
@@ -229,6 +235,15 @@ pub struct DiscoveryConfig {
     /// well-known port opt in here and surface `local_port()` (announce and
     /// receive then use different ports, so discovery is degraded).
     pub allow_ephemeral_fallback: bool,
+    /// Optional allow-list of Profile.product values.
+    ///
+    /// None (default) accepts every product — the historical open mesh.
+    /// Some(list) ignores beacons from any other product, which keeps two
+    /// products that share a link from appearing in each other's peer table
+    /// and then dialling each other's channel port (the 2026-11-02
+    /// Firefly/Tidings cross-dial). Beacons without a product label are
+    /// ignored too: an allow-list that admits unknowns is not a list.
+    pub product_filter: Option<Vec<String>>,
 }
 
 impl Default for DiscoveryConfig {
@@ -259,6 +274,21 @@ impl Default for DiscoveryConfig {
             offline_after: Duration::from_secs(90),
             manual_peers: Vec::new(),
             allow_ephemeral_fallback: false,
+            product_filter: None,
+        }
+    }
+}
+
+impl DiscoveryConfig {
+    /// Whether this engine accepts a beacon that carries `product`.
+    ///
+    /// No filter means the historical open mesh. With a filter, a beacon
+    /// without a product label is rejected: accepting unknowns would defeat
+    /// the isolation the filter exists for.
+    pub fn accepts_product(&self, product: Option<&str>) -> bool {
+        match &self.product_filter {
+            None => true,
+            Some(allowed) => product.is_some_and(|p| allowed.iter().any(|a| a == p)),
         }
     }
 }
@@ -532,6 +562,12 @@ impl DiscoveryEngine {
         match msg_type {
             MsgType::Entry => {
                 let profile = envelope.extract_profile();
+                if !self
+                    .config
+                    .accepts_product(profile.as_ref().and_then(|p| p.product.as_deref()))
+                {
+                    return;
+                }
                 let (record, changed) = self.registry.write().await.touch(
                     &envelope.from,
                     &peer_ip,
@@ -565,6 +601,12 @@ impl DiscoveryEngine {
             }
             MsgType::Alive => {
                 let profile = envelope.extract_profile();
+                if !self
+                    .config
+                    .accepts_product(profile.as_ref().and_then(|p| p.product.as_deref()))
+                {
+                    return;
+                }
                 let (record, changed) = self.registry.write().await.touch(
                     &envelope.from,
                     &peer_ip,
@@ -581,6 +623,12 @@ impl DiscoveryEngine {
                 }
             }
             MsgType::Presence => {
+                // Presence carries no profile; use the product learned from
+                // the last entry/alive for this node.
+                let known_product = self.registry.read().await.product_of(&envelope.from);
+                if !self.config.accepts_product(known_product.as_deref()) {
+                    return;
+                }
                 let their_rev = envelope.extract_presence_rev().unwrap_or(0);
                 let (record, changed) =
                     self.registry
@@ -920,5 +968,86 @@ mod tests {
         if let Ok(Ok(PeerEvent::Lost(id))) = lost_event {
             assert_eq!(id, "node_B");
         }
+    }
+
+    #[tokio::test]
+    async fn product_filter_keeps_other_products_out_of_the_peer_table() {
+        // Two products that end up on the same discovery port (shared agent,
+        // same machine, a legacy deployment) must not see each other: each
+        // would otherwise treat the other as a peer and dial the channel port
+        // from its profile — the 2026-11-02 Firefly/Tidings cross-dial.
+        fn profile(node_id: &str, product: &str) -> Profile {
+            Profile {
+                node_id: node_id.to_string(),
+                name: node_id.to_string(),
+                profile_rev: 1,
+                addresses: vec!["127.0.0.1".to_string()],
+                udp_port: 0,
+                tcp_port: 0,
+                device: None,
+                device_id: None,
+                product: Some(product.to_string()),
+                extra: None,
+                public_key: None,
+            }
+        }
+
+        let observer = DiscoveryEngine::bind(DiscoveryConfig {
+            self_profile: profile("filter_A", "alpha"),
+            listen_port: 0,
+            product_filter: Some(vec!["alpha".to_string()]),
+            ..Default::default()
+        })
+        .await
+        .expect("bind observer");
+        let observer_port = observer.local_port().await.expect("observer port");
+
+        let dial = |node: &str, product: &str| DiscoveryConfig {
+            self_profile: profile(node, product),
+            listen_port: 0,
+            manual_peers: vec![("127.0.0.1".to_string(), observer_port)],
+            ..Default::default()
+        };
+        let other_product = DiscoveryEngine::bind(dial("filter_B", "beta"))
+            .await
+            .expect("bind beta");
+        let same_product = DiscoveryEngine::bind(dial("filter_C", "alpha"))
+            .await
+            .expect("bind alpha");
+
+        let mut events = observer.subscribe();
+        observer.clone().spawn();
+        other_product.clone().spawn();
+        same_product.clone().spawn();
+
+        other_product.announce().await;
+        same_product.announce().await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut saw_alpha = false;
+        let mut saw_beta = false;
+        while tokio::time::Instant::now() < deadline && !saw_alpha {
+            match tokio::time::timeout(Duration::from_millis(200), events.recv()).await {
+                Ok(Ok(PeerEvent::Found(peer))) => {
+                    if peer.node_id == "filter_B" {
+                        saw_beta = true;
+                    }
+                    if peer.node_id == "filter_C" {
+                        saw_alpha = true;
+                    }
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(_) => {}
+            }
+        }
+        assert!(saw_alpha, "the allowed product must still be discovered");
+        assert!(
+            !saw_beta,
+            "a filtered-out product must never enter the peer table"
+        );
+
+        observer.announce_exit().await;
+        other_product.announce_exit().await;
+        same_product.announce_exit().await;
     }
 }

@@ -38,6 +38,49 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking (Rust API):** `DiscoveryEngine::bind` no longer falls back to an
+  ephemeral port when the requested discovery port is occupied; it returns
+  `CoreError::BindFailed`. The silent fallback kept announcing into the
+  well-known port, so two products joined one broadcast mesh and dialled each
+  other's channel ports. Hosts that must stay up without the port opt into
+  `DiscoveryConfig::allow_ephemeral_fallback` explicitly and surface
+  `local_port()`. The FFI surfaces now report `bind_failed` and
+  `isBound() == false` after the documented 5 s retry (the retry was dead code
+  while `bind` swallowed the conflict); Node emits `{type:"error"}`.
+- Handshakes are time-bounded (5 s on the listener, 10 s on the dialler). The
+  single accept slot is still one session at a time, but a client that
+  connects and sends nothing can no longer hold it forever, and a dialler
+  queued behind a busy listener fails visibly and reconnects instead of
+  hanging as "connecting" indefinitely.
+- `DiscoveryConfig::product_filter` (Rust) and `luciola-cli agent --product`
+  let a host ignore beacons from other products sharing one discovery port.
+
+### Added
+
+- `luciola::ports` — port-plan rules (16-port blocks, `tunnel = channel + 1`,
+  `screen = discovery + 10`), cross-product conflict detection (legacy
+  overlaps warn, live overlaps fail) and a machine probe.
+- `docs/PORTS.md` + `docs/ports.json` — the single authority for multi-product
+  port allocations, plus `luciola-cli ports --registry <file> [--probe]
+  [--json]` to validate it (exit code 1 on a live conflict, warnings for known
+  legacy overlaps).
+- Regression tests: occupied discovery port -> `BindFailed`; FFI
+  `bind_failed` / `is_bound == false`; a silent foreign client times out and
+  the listener still serves the legitimate peer; product filter keeps other
+  products out of the peer table.
+
+### Fixed
+
+- `SecureSession::listen` keeps its TCP listener for the whole session instead
+  of dropping it after each accept. The listener used to disappear within a
+  second of accepting, so peers dialling while a channel was live were refused
+  and a peer restart wedged both sides (2026-11-02 field evidence: every frame
+  became no-ack after the first burst).
+
 ---
 
 ## [0.8.2] — 2026-10-30

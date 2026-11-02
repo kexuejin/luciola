@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "block_size": 16,
+  "note": "Single authority for luciola port allocations on shared hosts. Register a product here BEFORE it picks a number. Entries under legacy_tcp are still bound by older releases: an overlap involving them is a warning, not an error, until the migration lands.",
+  "products": [
+    {
+      "product": "tidings",
+      "discovery_udp": 17878,
+      "channel_tcp": 17878,
+      "extra_tcp": [17888],
+      "legacy_tcp": [17879, 17880, 17881, 17882]
+    },
+    {
+      "product": "firefly",
+      "discovery_udp": 17888,
+      "channel_tcp": 17879,
+      "extra_tcp": [17889]
+    }
+  ]
+}

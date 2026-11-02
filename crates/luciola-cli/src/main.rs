@@ -70,6 +70,9 @@ enum Commands {
         socket: Option<String>,
         #[arg(short, long, default_value_t = 17878)]
         port: u16,
+        /// Only stream peers of these product labels (repeatable; default: all)
+        #[arg(long = "product")]
+        product: Vec<String>,
     },
     /// Inspect local network interfaces, TUN detection, and candidate IPs
     Ip {
@@ -79,6 +82,19 @@ enum Commands {
         /// Port to use in QR URL (default: 8080)
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
+    },
+    /// Validate the fleet port registry and optionally probe the ports on
+    /// this machine (the executable half of docs/PORTS.md).
+    Ports {
+        /// Registry JSON (default: docs/ports.json)
+        #[arg(long, default_value = "docs/ports.json")]
+        registry: String,
+        /// Try to bind every claimed port and report which are open
+        #[arg(long)]
+        probe: bool,
+        /// Machine-readable JSON output
+        #[arg(long)]
+        json: bool,
     },
     /// 端口隧道：secure 链路上的 LAN TCP 转发
     Forward {
@@ -146,6 +162,107 @@ enum ForwardCommands {
     },
 }
 
+/// Validate the port registry and (optionally) probe the current machine.
+///
+/// Exit code 1 when the registry has a live conflict; warnings (legacy
+/// overlaps) are printed but do not fail, because the whole fleet cannot be
+/// migrated in one release.
+fn run_ports(
+    registry_path: &str,
+    do_probe: bool,
+    as_json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(registry_path)
+        .map_err(|e| format!("cannot read {registry_path}: {e}"))?;
+    let registry = luciola::ports::PortRegistry::from_json(&text)?;
+    let conflicts = registry.conflicts();
+    let probes = if do_probe {
+        registry.probe()
+    } else {
+        Vec::new()
+    };
+
+    if as_json {
+        let payload = serde_json::json!({
+            "registry": registry_path,
+            "blockSize": registry.block_size,
+            "products": registry.products.iter().map(|p| serde_json::json!({
+                "product": p.product,
+                "discoveryUdp": p.discovery_udp,
+                "channelTcp": p.channel_tcp,
+                "extraTcp": p.extra_tcp,
+                "legacyTcp": p.legacy_tcp,
+                "tunnelPort": p.tunnel_port(),
+                "screenPort": p.screen_port(),
+            })).collect::<Vec<_>>(),
+            "conflicts": conflicts.iter().map(|c| serde_json::json!({
+                "severity": c.severity.as_str(),
+                "protocol": c.protocol.as_str(),
+                "port": c.port,
+                "products": c.products,
+                "message": c.message,
+            })).collect::<Vec<_>>(),
+            "probe": probes.iter().map(|p| serde_json::json!({
+                "product": p.product,
+                "protocol": p.protocol.as_str(),
+                "port": p.port,
+                "inUse": p.in_use,
+            })).collect::<Vec<_>>(),
+            "ok": registry.errors().is_empty(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!(
+            "Port registry: {registry_path} ({} product(s), block size {})",
+            registry.products.len(),
+            registry.block_size
+        );
+        for plan in &registry.products {
+            let channel = plan
+                .channel_tcp
+                .map(|port| port.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "  {:<14} discovery udp {:<6} channel tcp {:<6} extra {:?} legacy {:?}",
+                plan.product, plan.discovery_udp, channel, plan.extra_tcp, plan.legacy_tcp
+            );
+        }
+        if conflicts.is_empty() {
+            println!("\nNo port conflicts.");
+        } else {
+            println!("\nClaims:");
+            for conflict in &conflicts {
+                println!(
+                    "  [{}] {}",
+                    conflict.severity.as_str().to_uppercase(),
+                    conflict.message
+                );
+            }
+        }
+        if do_probe {
+            println!("\nProbe (this machine):");
+            for probe in &probes {
+                println!(
+                    "  {:<14} {} {:<6} {}",
+                    probe.product,
+                    probe.protocol.as_str(),
+                    probe.port,
+                    if probe.in_use { "IN USE" } else { "free" }
+                );
+            }
+            println!(
+                "\nNote: IN USE is not a conflict by itself — it usually means the owner is running."
+            );
+        }
+    }
+
+    if !registry.errors().is_empty() {
+        eprintln!("\nPort registry has live conflicts; fix the registry before shipping.");
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -155,6 +272,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Ports {
+            registry,
+            probe,
+            json,
+        } => run_ports(&registry, probe, json)?,
         Commands::Scan { port, timeout_secs } => {
             println!(
                 "🔍 Scanning for peers on port {} (timeout: {}s)...",
@@ -265,14 +387,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine.announce_exit().await;
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Commands::Agent { socket, port } => {
+        Commands::Agent {
+            socket,
+            port,
+            product,
+        } => {
             let path = socket.unwrap_or_else(|| {
                 std::env::var("TMPDIR")
                     .or_else(|_| std::env::var("XDG_RUNTIME_DIR"))
                     .map(|d| format!("{d}/luciola-agent.sock"))
                     .unwrap_or_else(|_| "/tmp/luciola-agent.sock".to_string())
             });
-            run_agent(&path, port).await?;
+            run_agent(&path, port, product).await?;
         }
         Commands::Ip { qr, port } => {
             println!("========================================================");
@@ -425,7 +551,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(unix)]
-async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_agent(
+    socket_path: &str,
+    port: u16,
+    products: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
     println!("🛰️  [Agent] listening on {socket_path} (UDP :{port} owned machine-wide)");
@@ -449,6 +579,10 @@ async fn run_agent(socket_path: &str, port: u16) -> Result<(), Box<dyn std::erro
         self_profile: profile,
         listen_port: port,
         broadcast_port: port,
+        // Empty = stream every product (historical behaviour). One or more
+        // labels isolates this agent's clients from other products sharing
+        // the discovery port.
+        product_filter: (!products.is_empty()).then_some(products),
         ..Default::default()
     };
 
@@ -537,7 +671,11 @@ async fn handle_agent_client(
 }
 
 #[cfg(not(unix))]
-async fn run_agent(_socket_path: &str, _port: u16) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_agent(
+    _socket_path: &str,
+    _port: u16,
+    _products: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     Err("the discovery agent requires unix domain sockets (unix platforms only)".into())
 }
 

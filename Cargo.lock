@@ -696,6 +696,7 @@ dependencies = [
  "luciola-tunnel",
  "qrcode",
  "rand",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
