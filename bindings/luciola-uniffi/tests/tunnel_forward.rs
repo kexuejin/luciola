@@ -72,13 +72,24 @@ fn wait_until(pred: impl Fn() -> bool, ms: u64) -> bool {
     }
 }
 
-/// 单个空闲端口。
+/// 单个空闲端口。**保留 ±1 邻域**：tunnel 默认端口 = secure + 1，并行测试的
+/// 其它临时端口分配不许落进邻位（否则 tunnel 绑定时 Address already in use，
+/// 全量跑必撞、单跑恒绿的典型来源）。
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    loop {
+        let a = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let p = a.local_addr().unwrap().port();
+        let ok = p > 0
+            && p < u16::MAX
+            && std::net::TcpListener::bind(("127.0.0.1", p + 1)).is_ok()
+            && std::net::TcpListener::bind(("::1", p + 1)).is_ok()
+            && std::net::TcpListener::bind(("127.0.0.1", p - 1)).is_ok()
+            && std::net::TcpListener::bind(("::1", p - 1)).is_ok();
+        drop(a);
+        if ok {
+            return p;
+        }
+    }
 }
 
 /// 连续空闲端口对 (p, p+1)：tunnel 默认端口 = secure + 1。

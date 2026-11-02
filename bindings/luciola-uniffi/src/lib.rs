@@ -1289,6 +1289,24 @@ impl SecureSession {
                         timings.reconnect_min_ms.load(std::sync::atomic::Ordering::Relaxed));
                     let mut backoff = min;
 
+                    // Listen 角色：**整个会话周期只绑一次**，accept 循环复用同一个
+                    // listener。原实现每接受一条连接就把 listener drop 掉、信道关闭后
+                    // 重新 bind —— 信道活着期间对端**拨不进来**（TCP 层被拒），
+                    // 任何一次对端重启/第二条会话都会把双方永久楔死（2026-11-02 真机：
+                    // 两端互发全部 no-ack，lsof 里 17878 监听器在 accept 后 1 秒内消失）。
+                    // 现在监听器常驻：信道活着时新拨入排在 backlog 里，当前信道一关
+                    // （对端重启的旧信道会因写失败/RST 收掉）立刻接受排队的重拨。
+                    let bound_listener: Option<tokio::net::TcpListener> = match &role {
+                        LinkRole::Listen(port, _) => match luciola::link::bind_dual_stack_listener(*port).await {
+                            Ok(l) => Some(l),
+                            Err(e) => {
+                                listener.on_state("error".into(), Some(e.to_string()));
+                                return;
+                            }
+                        },
+                        _ => None,
+                    };
+
                     'outer: loop {
                         // Establish the channel.
                         let stream: SecureStream = match role.clone() {
@@ -1320,23 +1338,16 @@ impl SecureSession {
                                     }
                                 }
                             }
-                            LinkRole::Listen(port, expected) => {
+                            LinkRole::Listen(_, expected) => {
                                 // bind 与 accept 都必须可被 shutdown 打断:disconnect()
                                 // 到达时引擎多半正阻塞在 accept_secure 里,而 shutdown
                                 // 只在 pump 循环的 select! 里被轮询 —— 不在这里接管,
                                 // stop() 之后会留下一个攥着端口的僵尸 accept 循环。
-                                let l = tokio::select! {
-                                    l = luciola::link::bind_dual_stack_listener(port) => match l {
-                                        Ok(l) => l,
-                                        Err(e) => {
-                                            listener.on_state("error".into(), Some(e.to_string()));
-                                            return;
-                                        }
-                                    },
-                                    _ = &mut shutdown => break 'outer,
-                                };
+                                let l = bound_listener
+                                    .as_ref()
+                                    .expect("listen role always has a bound listener");
                                 let accepted = tokio::select! {
-                                    r = accept_secure(&l, &seed, expected.as_deref()) => match r {
+                                    r = accept_secure(l, &seed, expected.as_deref()) => match r {
                                         Ok(s) => s,
                                         Err(e) => {
                                             // A failed handshake (wrong initiator)
