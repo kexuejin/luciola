@@ -35,7 +35,7 @@ pub fn render_qr_terminal(content: &str) -> Option<String> {
 }
 
 #[derive(Parser)]
-#[command(name = "luciola")]
+#[command(name = "luciola-cli")]
 #[command(about = "Luciola: resilient LAN peer discovery and interface intelligence", long_about = None)]
 struct Cli {
     #[command(subcommand)]
