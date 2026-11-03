@@ -38,12 +38,8 @@ impl SecureSessionListener for Events {
     }
 }
 
-fn free_tcp_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    port
-}
+mod support;
+use support::free_tcp_port;
 
 fn wait_until(pred: impl Fn() -> bool, ms: u64) -> bool {
     let deadline = Instant::now() + Duration::from_millis(ms);

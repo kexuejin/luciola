@@ -72,64 +72,13 @@ fn wait_until(pred: impl Fn() -> bool, ms: u64) -> bool {
     }
 }
 
-/// Ports handed out in this test process plus their ±1 neighbours.
-///
-/// The tunnel port is `secure + 1` and both the secure listener and the tunnel
-/// bind wildcard addresses, so a neighbour check must probe `0.0.0.0` / `[::]`
-/// (a loopback probe succeeds while another test's wildcard tunnel listener
-/// holds the port on macOS) and the reservation must be process-wide (two
-/// tests otherwise claim adjacent pairs in the window between check and bind).
-/// Both defects made this binary red on a busy machine while every test passed
-/// when run alone.
-fn reserved_ports() -> &'static std::sync::Mutex<std::collections::HashSet<u16>> {
-    static PORTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u16>>> =
-        std::sync::OnceLock::new();
-    PORTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-}
+mod support;
+use support::{free_tcp_port as free_port, free_tcp_port_pair as free_port_pair};
 
-fn wildcard_free(port: u16) -> bool {
-    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
-        && std::net::TcpListener::bind(("::", port)).is_ok()
-}
-
-/// Reserve `p..=p+span` and return `p`. Fails the caller's loop only when the
-/// kernel handed us a neighbour of an already reserved block.
-fn reserve_port_block(span: u16) -> Option<u16> {
-    let probe = std::net::TcpListener::bind("0.0.0.0:0").ok()?;
-    let p = probe.local_addr().ok()?.port();
-    drop(probe);
-    if p <= span || p >= u16::MAX - span {
-        return None;
-    }
-    let mut reserved = reserved_ports().lock().unwrap();
-    for port in (p - span)..=(p + span) {
-        if reserved.contains(&port) || !wildcard_free(port) {
-            return None;
-        }
-    }
-    for port in (p - span)..=(p + span) {
-        reserved.insert(port);
-    }
-    Some(p)
-}
-
-/// 单个空闲端口（并保留 ±1 邻域，见 [reserved_ports]）。
-fn free_port() -> u16 {
-    loop {
-        if let Some(port) = reserve_port_block(1) {
-            return port;
-        }
-    }
-}
-
-/// 连续空闲端口对 (p, p+1)：tunnel 默认端口 = secure + 1。
-fn free_port_pair() -> (u16, u16) {
-    loop {
-        if let Some(port) = reserve_port_block(2) {
-            return (port, port + 1);
-        }
-    }
-}
+// 端口 helper 在 tests/support/mod.rs：候选端口取自 OS 临时端口范围之下
+// （Linux 32768 起、macOS/Windows 49152 起），见该文件的说明——用
+// `bind(0.0.0.0:0)` 探测会让并发出站连接把端口当源端口抢走，Windows 上报
+// WSAEADDRINUSE(10048)（曾让本文件三个用例红）。
 
 /// 本机回显服务：模拟「对端内网」的 TCP 目标。
 fn spawn_echo() -> u16 {

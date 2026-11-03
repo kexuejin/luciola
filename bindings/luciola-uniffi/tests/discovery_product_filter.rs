@@ -18,10 +18,9 @@ impl OnPeerDiscovered for Recorder {
     fn on_error(&self, _code: String, _message: String) {}
 }
 
-fn free_udp_port() -> u16 {
-    let holder = std::net::UdpSocket::bind("0.0.0.0:0").expect("udp holder");
-    holder.local_addr().expect("addr").port()
-}
+mod support;
+
+use support::free_udp_port;
 
 fn session(
     name: &str,

@@ -3,6 +3,8 @@
 //! able to reclaim P within 5 seconds. (The consumer acceptance probe is a Kotlin
 //! `ServerSocket(port)`.)
 
+mod support;
+
 use luciola_uniffi::{generate_device_identity, SecureSession, SecureSessionListener};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,11 +24,9 @@ impl SecureSessionListener for NopListener {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn listen_port_rebindable_after_stop() {
-    // freePort() 等价:bind :0 拿到端口号后立即释放。
-    let port = {
-        let l = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // 端口取自 tests/support 的非临时端口带：bind :0 探测会让并发出站连接把
+    // 端口当源端口抢走，Windows 上报 WSAEADDRINUSE（见 support 模块说明）。
+    let port = support::free_tcp_port();
 
     let server_id = generate_device_identity();
     let client_id = generate_device_identity();
