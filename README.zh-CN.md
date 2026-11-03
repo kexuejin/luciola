@@ -75,13 +75,13 @@ node server.js       # 然后打开 http://localhost:3000
 // Gradle —— KMP(Android / JVM / iOS)。不要写 mavenLocal():
 // 陈旧的本地构建会静默遮蔽线上版本(AGENTS.md §3 的老坑)。
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.9.0") // AAR 内嵌 arm64 .so;JVM/iOS 变体同坐标
+implementation("io.github.kexuejin:luciola:0.9.1") // AAR 内嵌 arm64 .so;JVM/iOS 变体同坐标
 ```
 
 ```toml
 # Rust —— crates.io(七个 crate 均为 0.9.0)
-luciola = "0.9.0"        # 引擎、安全信道、信任原语
-luciola-tunnel = "0.9.0" # mux v2 转发(见下文隧道小节)
+luciola = "0.9.1"        # 引擎、安全信道、信任原语
+luciola-tunnel = "0.9.1" # mux v2 转发(见下文隧道小节)
 # CLI:cargo install luciola-cli
 ```
 

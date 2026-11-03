@@ -75,13 +75,13 @@ node server.js       # then open http://localhost:3000
 // Gradle — KMP (Android / JVM / iOS). Never add mavenLocal() here:
 // a stale local build silently shadows the published artifact (AGENTS.md §3).
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.9.0") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
+implementation("io.github.kexuejin:luciola:0.9.1") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
 ```
 
 ```toml
-# Rust — crates.io (all seven crates at 0.9.0)
-luciola = "0.9.0"        # engine, secure channels, trust primitives
-luciola-tunnel = "0.9.0" # mux v2 forwarding (the tunnel section below)
+# Rust — crates.io (all seven crates at 0.9.1)
+luciola = "0.9.1"        # engine, secure channels, trust primitives
+luciola-tunnel = "0.9.1" # mux v2 forwarding (the tunnel section below)
 # CLI: cargo install luciola-cli
 ```
 

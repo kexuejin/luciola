@@ -3,6 +3,17 @@
 Breaking changes and behavioural shifts between published versions, from the
 consumer's point of view. For what each release added, see [CHANGELOG.md](../CHANGELOG.md).
 
+## 0.9.1
+
+1. **A stalled channel no longer stalls the session (behavioural shift).**
+   `luciola-tunnel` used to serialise the whole session behind one channel whose
+   consumer stopped reading; that channel now has its own forwarder and the
+   session read task never waits on it. For v2 peers the visible behaviour is
+   unchanged. A v1 peer that ignores window credit can now be cut off at the
+   per-channel inbound budget (`window_size` + one frame) with CLOSE(2) — the
+   old code would first block the whole session and then cut the same channel.
+   No API change; no action required for clients that respect the window.
+
 ## 0.9.0
 
 1. **An occupied discovery port is now a hard error, not a silent fallback.**

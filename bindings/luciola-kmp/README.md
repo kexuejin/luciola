@@ -26,7 +26,7 @@ Package: `io.github.kexuejin:luciola` (Kotlin package `io.github.kexuejin.luciol
 Published on Maven Central:
 
 ```kotlin
-implementation("io.github.kexuejin:luciola:0.9.0")
+implementation("io.github.kexuejin:luciola:0.9.1")
 ```
 
 ## Consume (local Maven)
@@ -36,7 +36,7 @@ implementation("io.github.kexuejin:luciola:0.9.0")
 dependencyResolutionManagement { repositories { mavenLocal(); ... } }
 
 // build.gradle.kts
-implementation("io.github.kexuejin:luciola:0.9.0")
+implementation("io.github.kexuejin:luciola:0.9.1")
 ```
 
 KMP consumers resolve per-target variants automatically via Gradle module

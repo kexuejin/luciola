@@ -36,6 +36,38 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
+## [0.9.1] — 2026-11-03
+
+### Fixed
+
+- **Tunnel multiplexing (`luciola-tunnel`):** a channel whose consumer stops
+  reading no longer stalls the entire session. The shared read task used to
+  await that channel's bounded inbound queue, so one blocked channel serialised
+  every other channel's OPEN/ACK/DATA and could make an unrelated `open()` time
+  out (observed on Windows first, where socket buffers are smaller). Frames now
+  pass through a per-channel staging queue with a byte budget
+  (`window_size` + one frame); the bounded queue and the section 1.4 stall
+  cut-off moved into that channel's own forwarder. Public API unchanged; a v2
+  peer that honours its window never reaches the budget.
+- **CI could not answer "is Windows green?"** The Rust matrix cancelled sibling
+  OS jobs when one failed, so a macOS flake hid the Windows result. The matrix
+  now runs every leg; Windows-only test defects (2.0 s loopback dial refusal vs
+  a 1.5 s test timeout, test ports taken from the OS ephemeral range,
+  assert-immediately-after-dialer-event) are fixed in the tests, and the macOS
+  transfer E2E treats a peer close as end-of-input instead of panicking.
+- `LICENSE-APACHE` is the complete Apache-2.0 text. The previous file stopped
+  inside section 3, which made GitHub report "Other" instead of the dual
+  MIT/Apache-2.0 license every crate declares.
+
+### Changed
+
+- crates.io metadata: every crate now declares `keywords`, `categories`,
+  `homepage` and `documentation`, so the crates can be found through registry
+  facets and lib.rs category pages (these take effect on this release).
+- Documentation: README install snippets name 0.9.1, the iOS simulator test
+  command is runnable from a fresh clone, and the KMP binding README describes
+  the iOS cinterop targets and JNA dependency accurately.
+
 ## [0.9.0] — 2026-11-03
 
 ### Changed
