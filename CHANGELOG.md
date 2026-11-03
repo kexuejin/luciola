@@ -13,26 +13,22 @@ change, taken from the repository history; where one change needed several commi
 primary one is cited.
 
 > **Published-versus-repo version note.** The repository is at **0.9.0** (workspace
-> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). That version is
-> **prepared but NOT published**: no registry answers `0.9.0` yet (the checks below
-> describe `0.8.2`, the last published line). Pin the git commit, or publish locally
-> with `scripts/publish-maven-local.sh`, until 0.9.0 is actually released.
-> Publishing status below was checked 2026-10-30 rather than assumed:
+> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Release state,
+> checked 2026-11-03 rather than assumed:
 >
 > - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
 >   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
->   `0.8.2` from the registry API.
-> - **Maven Central — published and verified.** The bundle
->   (`io.github.kexuejin:luciola*:0.8.2`, AAR with the embedded arm64 `.so`, JVM jar,
->   iOS klibs) was accepted (deployment `860b5d98-4362-4aa1-b03a-6593cbddcc29`) and
->   took far longer than usual to leave `PUBLISHING` — roughly 45 minutes against a
->   couple of minutes for 0.8.0. It did complete: `repo1` answers 200 for the
->   `luciola-android` pom, the aar and the `luciola` pom, and
->   `maven-metadata.xml` reports `latest=0.8.2`. Nothing needed to be re-uploaded;
->   the wait was on Sonatype's side.
-> - **iOS — published.** `LuciolaUniFFI-0.8.2.zip` (xcframework for device and
->   simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256` are release
->   assets on tag `v0.8.2`.
+>   `0.9.0` from the registry API.
+> - **Maven Central — upload pending an operator step.** The signed bundle is produced
+>   by `scripts/publish-central.sh`, which reads `~/.luciola/signing-key.asc` and
+>   uploads to the Sonatype Central Portal. The agent session that prepared this
+>   release was policy-blocked from reading the signing key / uploading, so a human
+>   must run that one command. Do **not** advertise
+>   `io.github.kexuejin:luciola*:0.9.0` as installable until
+>   `repo1.maven.org/.../maven-metadata.xml` reports it.
+> - **iOS — asset built, not yet attached.** `LuciolaUniFFI-0.9.0.zip` (xcframework
+>   for device and simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256`
+>   are built locally; attach them to the `v0.9.0` release before announcing.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
@@ -41,7 +37,7 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
-## [Unreleased]
+## [0.9.0] — 2026-11-03
 
 ### Changed
 
