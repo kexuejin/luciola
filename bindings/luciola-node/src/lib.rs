@@ -189,6 +189,7 @@ pub struct DiscoverySession {
     shutdown_tx: Option<oneshot::Sender<()>>,
     node_id: std::sync::Mutex<Option<String>>,
     manual_peers: std::sync::Mutex<Vec<(String, u16)>>,
+    product_filter: std::sync::Mutex<Option<Vec<String>>>,
     product: Option<String>,
     device_id: Option<String>,
     extra: Option<String>,
@@ -224,6 +225,7 @@ impl DiscoverySession {
                     .map(|p| (p.host, p.port as u16))
                     .collect(),
             ),
+            product_filter: std::sync::Mutex::new(None),
             product,
             device_id,
             extra,
@@ -238,6 +240,18 @@ impl DiscoverySession {
     #[napi]
     pub fn node_id(&self) -> Option<String> {
         self.node_id.lock().unwrap().clone()
+    }
+
+    /// Restrict discovery to these `product` labels (the `product` field of a
+    /// peer profile). `null`/`undefined` or an empty array accepts every
+    /// product. Takes effect on the next `start()` call.
+    ///
+    /// Use it when several luciola products share one discovery port or one
+    /// machine: without a filter each product sees the others as peers and
+    /// dials the channel port advertised in their profiles.
+    #[napi]
+    pub fn set_product_filter(&self, products: Option<Vec<String>>) {
+        *self.product_filter.lock().unwrap() = products.filter(|list| !list.is_empty());
     }
 
     /// Start discovery session and listen for discovered peers via callback.
@@ -289,6 +303,7 @@ impl DiscoverySession {
             .clone()
             .unwrap_or_else(|| format!("node_{:x}", rand::random::<u32>()));
         let manual_peers = self.manual_peers.lock().unwrap().clone();
+        let product_filter = self.product_filter.lock().unwrap().clone();
         let detected = luciola_net::DeviceDetector::detect();
         let device_id = self.device_id.clone().or(detected.device_id.clone());
         let product = self.product.clone();
@@ -326,6 +341,7 @@ impl DiscoverySession {
                     listen_port: port,
                     broadcast_port: port,
                     manual_peers,
+                    product_filter,
                     ..Default::default()
                 };
 

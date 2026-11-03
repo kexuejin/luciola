@@ -108,6 +108,16 @@ export class DiscoverySession {
    */
   nodeId(): string | null;
   /**
+   * Restrict discovery to these `product` labels (the `product` field of a
+   * peer profile). `null`/`undefined` or an empty array accepts every
+   * product. Takes effect on the next `start()` call.
+   *
+   * Use it when several luciola products share one discovery port or one
+   * machine: without a filter each product sees the others as peers and
+   * dials the channel port advertised in their profiles.
+   */
+  setProductFilter(products?: string[] | null): void;
+  /**
    * Start discovery and consume lifecycle events.
    * `found`/`updated` carry `peer`; `lost` carries `nodeId` (remove it from
    * your UI); `error` carries `message` (e.g. bind_failed: port occupied).

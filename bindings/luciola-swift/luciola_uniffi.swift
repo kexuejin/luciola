@@ -603,6 +603,17 @@ public protocol DiscoverySessionProtocol: AnyObject, Sendable {
     func setManualPeers(peers: [ManualPeer]) 
     
     /**
+     * Restrict discovery to these `Profile.product` labels.
+     *
+     * `None` or an empty list accepts every product (the historical open
+     * mesh). Takes effect on the next `start()` / `restart()`. Use it when
+     * several luciola products share one discovery port or one machine:
+     * without a filter each product sees the others as peers and dials the
+     * channel port advertised in their profiles (the 2026-11-02 cross-dial).
+     */
+    func setProductFilter(products: [String]?) 
+    
+    /**
      * Start the engine on a dedicated background thread.
      */
     func start(listener: OnPeerDiscovered) 
@@ -759,6 +770,22 @@ open func secondsSinceIdle() -> Double  {
 open func setManualPeers(peers: [ManualPeer])  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(self.uniffiClonePointer(),
         FfiConverterSequenceTypeManualPeer.lower(peers),$0
+    )
+}
+}
+    
+    /**
+     * Restrict discovery to these `Profile.product` labels.
+     *
+     * `None` or an empty list accepts every product (the historical open
+     * mesh). Takes effect on the next `start()` / `restart()`. Use it when
+     * several luciola products share one discovery port or one machine:
+     * without a filter each product sees the others as peers and dials the
+     * channel port advertised in their profiles (the 2026-11-02 cross-dial).
+     */
+open func setProductFilter(products: [String]?)  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(self.uniffiClonePointer(),
+        FfiConverterOptionSequenceString.lower(products),$0
     )
 }
 }
@@ -3751,6 +3778,30 @@ fileprivate struct FfiConverterOptionTypeTrustLevel: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceTypeManualPeer: FfiConverterRustBuffer {
     typealias SwiftType = [ManualPeer]?
 
@@ -4356,6 +4407,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers() != 43607) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_discoverysession_set_product_filter() != 64489) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_start() != 53880) {

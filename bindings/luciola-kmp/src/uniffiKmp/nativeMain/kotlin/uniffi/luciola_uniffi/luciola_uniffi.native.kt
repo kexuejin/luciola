@@ -1492,6 +1492,8 @@ internal val UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByValue.`un
 
 
 
+
+
 internal object UniffiLib {
     init {
             uniffiCallbackInterfaceOnPeerDiscovered.register(this)
@@ -1572,6 +1574,15 @@ internal object UniffiLib {
     ): Unit = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(
         `ptr`,
         `peers`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(
+        `ptr`: Pointer?,
+        `products`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(
+        `ptr`,
+        `products`,
         uniffiCallStatus,
     )
     fun uniffi_luciola_uniffi_fn_method_discoverysession_start(
@@ -2613,6 +2624,9 @@ internal object UniffiLib {
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers(
     )
+    fun uniffi_luciola_uniffi_checksum_method_discoverysession_set_product_filter(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_discoverysession_set_product_filter(
+    )
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_start(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_discoverysession_start(
     )
@@ -3191,6 +3205,27 @@ public actual open class DiscoverySession: Disposable, DiscoverySessionInterface
                 UniffiLib.uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(
                     it,
                     FfiConverterSequenceTypeManualPeer.lower(`peers`),
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
+     * Restrict discovery to these `Profile.product` labels.
+     *
+     * `None` or an empty list accepts every product (the historical open
+     * mesh). Takes effect on the next `start()` / `restart()`. Use it when
+     * several luciola products share one discovery port or one machine:
+     * without a filter each product sees the others as peers and dials the
+     * channel port advertised in their profiles (the 2026-11-02 cross-dial).
+     */
+    public actual override fun `setProductFilter`(`products`: List<kotlin.String>?) {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(
+                    it,
+                    FfiConverterOptionalSequenceString.lower(`products`),
                     uniffiRustCallStatus,
                 )
             }
@@ -4951,6 +4986,35 @@ public object FfiConverterOptionalTypeTrustLevel: FfiConverterRustBuffer<TrustLe
         } else {
             buf.put(1)
             FfiConverterTypeTrustLevel.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<kotlin.String>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.String>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
         }
     }
 }

@@ -189,6 +189,7 @@ pub struct DiscoverySession {
     tcp_port: Mutex<Option<u16>>,
     public_key: Mutex<Option<Vec<u8>>>,
     manual_peers: Mutex<Vec<ManualPeer>>,
+    product_filter: Mutex<Option<Vec<String>>>,
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     listener: Mutex<Option<std::sync::Arc<dyn OnPeerDiscovered>>>,
     last_activity: std::sync::Arc<Mutex<std::time::SystemTime>>,
@@ -248,6 +249,7 @@ impl DiscoverySession {
             product: Mutex::new(product),
             extra_field: Mutex::new(extra),
             manual_peers: Mutex::new(manual_peers.unwrap_or_default()),
+            product_filter: Mutex::new(None),
             node_id: Mutex::new(chosen_node_id),
             tcp_port: Mutex::new(tcp_port),
             public_key: Mutex::new(public_key),
@@ -261,6 +263,17 @@ impl DiscoverySession {
     /// Replace the manual peer list; takes effect on the next `restart()`.
     pub fn set_manual_peers(&self, peers: Vec<ManualPeer>) {
         *self.manual_peers.lock().unwrap() = peers;
+    }
+
+    /// Restrict discovery to these `Profile.product` labels.
+    ///
+    /// `None` or an empty list accepts every product (the historical open
+    /// mesh). Takes effect on the next `start()` / `restart()`. Use it when
+    /// several luciola products share one discovery port or one machine:
+    /// without a filter each product sees the others as peers and dials the
+    /// channel port advertised in their profiles (the 2026-11-02 cross-dial).
+    pub fn set_product_filter(&self, products: Option<Vec<String>>) {
+        *self.product_filter.lock().unwrap() = products;
     }
 
     /// This session's stable engine node id. Companion sockets (sweeps, unicast
@@ -325,6 +338,7 @@ impl DiscoverySession {
         let extra = self.extra_field.lock().unwrap().clone();
         let tcp_port = *self.tcp_port.lock().unwrap();
         let public_key = self.public_key.lock().unwrap().clone();
+        let product_filter = self.product_filter.lock().unwrap().clone();
         let manual_peers: Vec<(String, u16)> = self
             .manual_peers
             .lock()
@@ -366,6 +380,10 @@ impl DiscoverySession {
                         listen_port: port,
                         broadcast_port: port,
                         manual_peers,
+                        // An empty allow-list means "no filter": the FFI
+                        // caller passes None to clear, and serde-free hosts
+                        // commonly hand over an empty list.
+                        product_filter: product_filter.filter(|list| !list.is_empty()),
                         ..Default::default()
                     };
 

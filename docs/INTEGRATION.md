@@ -23,10 +23,15 @@ Profile 携带 `deviceId`(设备分组)与 `product`(产品标签),对端 UI 应
 deviceId 折叠同一物理设备上的多个产品。
 
 **产品隔离**:不同产品即使共用同一个发现端口,也不应互相出现在 peer 表里
-(否则会按对方的 `tcp_port` 去拨、挤占单槽入站)。FFI 侧 `DiscoveredPeer.product`
-已携带标签,宿主必须按自己的产品过滤;Rust 侧可用
-`DiscoveryConfig::product_filter` 让引擎直接丢弃其它产品的信标;
-`luciola-cli agent --product <id>` 只向客户端推送指定产品。
+(否则会按对方的 `tcp_port` 去拨、挤占单槽入站)。在 `start()` 之前调用:
+
+- uniffi / KMP / Swift:`DiscoverySession.setProductFilter(listOf("my-product"))`
+- Node:`session.setProductFilter(['my-product'])`
+- Rust:`DiscoveryConfig { product_filter: Some(vec![...]), .. }`
+- 机器级 agent:`luciola-cli agent --product <id>`
+
+不传 / 空列表 = 不过滤(历史开放 mesh)。`restart()` 会沿用同一过滤表。
+宿主若选择不过滤,至少必须按 `DiscoveredPeer.product` 自行丢弃其它产品的 peer。
 
 
 T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用):

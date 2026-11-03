@@ -159,6 +159,17 @@ public interface DiscoverySessionInterface {
     public fun `setManualPeers`(`peers`: List<ManualPeer>)
     
     /**
+     * Restrict discovery to these `Profile.product` labels.
+     *
+     * `None` or an empty list accepts every product (the historical open
+     * mesh). Takes effect on the next `start()` / `restart()`. Use it when
+     * several luciola products share one discovery port or one machine:
+     * without a filter each product sees the others as peers and dials the
+     * channel port advertised in their profiles (the 2026-11-02 cross-dial).
+     */
+    public fun `setProductFilter`(`products`: List<kotlin.String>?)
+    
+    /**
      * Start the engine on a dedicated background thread.
      */
     public fun `start`(`listener`: OnPeerDiscovered)
@@ -257,6 +268,17 @@ public expect open class DiscoverySession: Disposable, DiscoverySessionInterface
      * Replace the manual peer list; takes effect on the next `restart()`.
      */
     public override fun `setManualPeers`(`peers`: List<ManualPeer>)
+    
+    /**
+     * Restrict discovery to these `Profile.product` labels.
+     *
+     * `None` or an empty list accepts every product (the historical open
+     * mesh). Takes effect on the next `start()` / `restart()`. Use it when
+     * several luciola products share one discovery port or one machine:
+     * without a filter each product sees the others as peers and dials the
+     * channel port advertised in their profiles (the 2026-11-02 cross-dial).
+     */
+    public override fun `setProductFilter`(`products`: List<kotlin.String>?)
     
     /**
      * Start the engine on a dedicated background thread.
@@ -1092,6 +1114,8 @@ public interface SecureSessionListener {
     
     public companion object
 }
+
+
 
 
 

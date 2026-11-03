@@ -12,9 +12,12 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.8.2** (workspace
-> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Publishing
-> status, checked 2026-10-30 rather than assumed:
+> **Published-versus-repo version note.** The repository is at **0.9.0** (workspace
+> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). That version is
+> **prepared but NOT published**: no registry answers `0.9.0` yet (the checks below
+> describe `0.8.2`, the last published line). Pin the git commit, or publish locally
+> with `scripts/publish-maven-local.sh`, until 0.9.0 is actually released.
+> Publishing status below was checked 2026-10-30 rather than assumed:
 >
 > - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
 >   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
@@ -61,6 +64,12 @@ primary one is cited.
 
 ### Added
 
+- **FFI product isolation:** `DiscoverySession.setProductFilter([...])` (uniffi →
+  KMP / Swift) and `setProductFilter(products?)` (Node) wire
+  `DiscoveryConfig::product_filter` through the FFI, so a host can ignore beacons
+  from other luciola products without filtering in app code. KMP and Swift
+  bindings were regenerated (gobley 0.3.7 / uniffi 0.29.4); an old binding paired
+  with the new library fails loudly on checksum mismatch.
 - `luciola::ports` — port-plan rules (16-port blocks, `tunnel = channel + 1`,
   `screen = discovery + 10`), cross-product conflict detection (legacy
   overlaps warn, live overlaps fail) and a machine probe.

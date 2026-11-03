@@ -200,6 +200,8 @@ double uniffi_luciola_uniffi_fn_method_discoverysession_seconds_since_idle(void 
 );
 void uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(void * ptr, RustBuffer peers, UniffiRustCallStatus *_Nonnull out_status
 );
+void uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(void * ptr, RustBuffer products, UniffiRustCallStatus *_Nonnull out_status
+);
 void uniffi_luciola_uniffi_fn_method_discoverysession_start(void * ptr, int64_t listener, UniffiRustCallStatus *_Nonnull out_status
 );
 void uniffi_luciola_uniffi_fn_method_discoverysession_stop(void * ptr, UniffiRustCallStatus *_Nonnull out_status
@@ -549,6 +551,9 @@ int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_seconds_since_idl
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_set_product_filter(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_start(void

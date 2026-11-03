@@ -1193,6 +1193,8 @@ internal typealias UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByVal
 
 
 
+
+
 @Synchronized
 private fun findLibraryName(componentName: String): String {
     val libOverride = System.getProperty("uniffi.component.$componentName.libraryOverride")
@@ -1332,6 +1334,9 @@ internal object IntegrityCheckingUniffiLib : Library {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers() != 43607.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_discoverysession_set_product_filter() != 64489.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_discoverysession_start() != 53880.toShort()) {
@@ -1551,6 +1556,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_discoverysession_set_manual_peers(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_discoverysession_set_product_filter(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_discoverysession_start(
     ): Short
     @JvmStatic
@@ -1728,6 +1736,12 @@ internal object UniffiLib : Library {
     external fun uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(
         `ptr`: Pointer?,
         `peers`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(
+        `ptr`: Pointer?,
+        `products`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
     @JvmStatic
@@ -2847,6 +2861,27 @@ public actual open class DiscoverySession: Disposable, DiscoverySessionInterface
                 UniffiLib.uniffi_luciola_uniffi_fn_method_discoverysession_set_manual_peers(
                     it,
                     FfiConverterSequenceTypeManualPeer.lower(`peers`),
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
+     * Restrict discovery to these `Profile.product` labels.
+     *
+     * `None` or an empty list accepts every product (the historical open
+     * mesh). Takes effect on the next `start()` / `restart()`. Use it when
+     * several luciola products share one discovery port or one machine:
+     * without a filter each product sees the others as peers and dials the
+     * channel port advertised in their profiles (the 2026-11-02 cross-dial).
+     */
+    public actual override fun `setProductFilter`(`products`: List<kotlin.String>?) {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_discoverysession_set_product_filter(
+                    it,
+                    FfiConverterOptionalSequenceString.lower(`products`),
                     uniffiRustCallStatus,
                 )
             }
@@ -4527,6 +4562,35 @@ public object FfiConverterOptionalTypeTrustLevel: FfiConverterRustBuffer<TrustLe
         } else {
             buf.put(1)
             FfiConverterTypeTrustLevel.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<kotlin.String>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.String>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
         }
     }
 }

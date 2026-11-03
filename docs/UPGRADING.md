@@ -3,6 +3,34 @@
 Breaking changes and behavioural shifts between published versions, from the
 consumer's point of view. For what each release added, see [CHANGELOG.md](../CHANGELOG.md).
 
+## 0.9.0
+
+1. **An occupied discovery port is now a hard error, not a silent fallback.**
+   Rust hosts get `CoreError::BindFailed`; uniffi/KMP/Swift sessions report
+   `onError("bind_failed", ...)` after a 5 s retry and `isBound() == false`;
+   Node emits `{type:"error"}`. Hosts that must keep running without the
+   well-known port set `DiscoveryConfig::allow_ephemeral_fallback = true` and
+   must surface `local_port()` — broadcast discovery is degraded in that mode.
+   UI that used to claim "online" while the engine sat on an ephemeral port
+   now has to show the bind error.
+2. **Handshakes are time-bounded.** 5 s on the listening side, 10 s on the
+   dialling side (`DEFAULT_HANDSHAKE_TIMEOUT` / `DEFAULT_DIAL_HANDSHAKE_TIMEOUT`).
+   A client that connects and sends nothing is dropped instead of holding the
+   single accept slot forever; a dialler behind a busy listener now fails and
+   reconnects instead of hanging as "connecting". Custom `accept_secure`
+   callers that need a different window use
+   `accept_secure_with_timeout` / `handshake_client_timed`.
+3. **New option: product isolation.** `DiscoverySession.setProductFilter([...])`
+   (uniffi / KMP / Swift) and `setProductFilter(products?)` (Node) restrict
+   discovery to the given `Profile.product` labels; `None`/empty keeps the
+   historical open mesh. Rust hosts use `DiscoveryConfig::product_filter`.
+   Call it before `start()`; `restart()` re-applies it.
+4. **Regenerate the bindings.** The uniffi interface gained a method, so the
+   committed KMP/Swift bindings carry a new metadata checksum: an old binding
+   paired with the 0.9.0 dylib fails loudly (checksum mismatch) rather than
+   silently. Consumers pin the git commit or publish 0.9.0 locally until it
+   reaches the registries — 0.9.0 is **not published** at the time of writing.
+
 ## 0.6.0
 
 1. **SecureSessionListener.on_message takes three arguments.**

@@ -18,6 +18,56 @@ async function main() {
   assert.ok(!luciola.verifyMessage(id.publicKey, Buffer.from('x'), sig), 'verify tamper');
   assert.strictEqual(luciola.identityFromSeed(id.seed).fingerprint, id.fingerprint, 'seed restore');
 
+  // Discovery product filter (FFI surface): a host must be able to ignore
+  // peers of another luciola product sharing the same discovery port.
+  const dgram = require('node:dgram');
+  const freeUdpPort = () =>
+    new Promise((resolve, reject) => {
+      const sock = dgram.createSocket('udp4');
+      sock.once('error', reject);
+      sock.bind(0, '0.0.0.0', () => {
+        const p = sock.address().port;
+        sock.close(() => resolve(p));
+      });
+    });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitFor = async (pred, ms) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (pred()) return true;
+      await sleep(50);
+    }
+    return pred();
+  };
+  const discoveryPort = await freeUdpPort();
+  const observed = [];
+  const observer = new luciola.DiscoverySession('observer', discoveryPort, null, 'alpha');
+  assert.strictEqual(typeof observer.setProductFilter, 'function', 'setProductFilter exists');
+  observer.setProductFilter(['alpha']);
+  observer.start((ev) => {
+    if (ev.type === 'found' && ev.peer) observed.push(ev.peer);
+  });
+  await sleep(200);
+  const dialPeer = (name, product) => {
+    const s = new luciola.DiscoverySession(name, 0, [{ host: '127.0.0.1', port: discoveryPort }], product);
+    s.start(() => {});
+    return s;
+  };
+  const betaPeer = dialPeer('beta-peer', 'beta');
+  const alphaPeer = dialPeer('alpha-peer', 'alpha');
+  assert.ok(
+    await waitFor(() => observed.some((p) => p.product === 'alpha'), 4000),
+    'the allowed product must still be discovered',
+  );
+  await sleep(600);
+  assert.ok(
+    !observed.some((p) => p.product === 'beta'),
+    'a filtered-out product must never reach the callback',
+  );
+  observer.stop();
+  betaPeer.stop();
+  alphaPeer.stop();
+
   // Pairing payload v2
   const uri = luciola.buildPairingUri('Mac 的', 'p1', 3000, ['192.168.1.2', '2408::1'], id.fingerprint, '123456');
   const parsed = luciola.parsePairingUri(uri);
