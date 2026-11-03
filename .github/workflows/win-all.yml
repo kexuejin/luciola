@@ -1,0 +1,21 @@
+name: Win All
+on:
+  push:
+    branches: ["diag/**"]
+
+jobs:
+  probe:
+    name: Windows full test sweep
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: All tests, no fail-fast (collect every failing binary)
+        run: |
+          cargo test --all-targets --all-features --no-fail-fast 2>&1 | Tee-Object -FilePath full.log
+          exit 0
+      - name: Failure summary
+        if: always()
+        run: |
+          Select-String -Path full.log -Pattern 'test result: FAILED|panicked at|^failures:$' -CaseSensitive | ForEach-Object { $_.Line }
+          exit 0
