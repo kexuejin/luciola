@@ -113,6 +113,21 @@ async fn p1_dead_port_connect_timing() {
         };
         println!("P2 #{i} port={} -> {desc} elapsed={:?}", addr.port(), t.elapsed());
     }
+
+    println!("=== P2b blocking std::net::TcpStream::connect (same port kind) ===");
+    for i in 0..2 {
+        let addr = dead_addr();
+        let t = Instant::now();
+        let join = tokio::task::spawn_blocking(move || {
+            std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(10))
+        });
+        let r = join.await.expect("blocking join");
+        let desc = match &r {
+            Ok(_) => "CONNECTED (unexpected)".to_string(),
+            Err(e) => format!("err kind={:?} display={}", e.kind(), e),
+        };
+        println!("P2b #{i} port={} -> {desc} elapsed={:?}", addr.port(), t.elapsed());
+    }
 }
 
 /// probe 3: the real failing scenario, but with a generous open_timeout so we

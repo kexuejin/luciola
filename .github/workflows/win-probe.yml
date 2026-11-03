@@ -11,10 +11,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Probes (serial, nocapture)
+        continue-on-error: true
         run: cargo test -p luciola-tunnel --test zz_probe -- --nocapture --test-threads=1
-      - name: Failing test alone (serial)
-        run: cargo test -p luciola-tunnel --test forward_e2e dial_failure -- --nocapture --test-threads=1
-      - name: Stalled test alone (serial)
-        run: cargo test -p luciola-tunnel --test forward_e2e stalled_channel -- --nocapture --test-threads=1
-      - name: Whole forward_e2e suite
-        run: cargo test -p luciola-tunnel --test forward_e2e -- --nocapture
+      - name: Full forward_e2e suite, iteration 1 (CI-like parallelism)
+        continue-on-error: true
+        run: cargo test -p luciola-tunnel --test forward_e2e -- --nocapture --skip dial_failure
+      - name: Full forward_e2e suite, iteration 2
+        continue-on-error: true
+        run: cargo test -p luciola-tunnel --test forward_e2e -- --nocapture --skip dial_failure
+      - name: Full forward_e2e suite, iteration 3
+        continue-on-error: true
+        run: cargo test -p luciola-tunnel --test forward_e2e -- --nocapture --skip dial_failure
+      - name: Full forward_e2e suite, iteration 4
+        continue-on-error: true
+        run: cargo test -p luciola-tunnel --test forward_e2e -- --nocapture --skip dial_failure

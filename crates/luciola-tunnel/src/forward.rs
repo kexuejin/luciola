@@ -695,8 +695,13 @@ async fn serve_stream(req: OpenRequest, state: Arc<EndpointState>, ip: IpAddr, p
     // ④ 并发拨号（link::dial 内含 IPv4/IPv6/host 统一路径与链路本地 scope 处理；
     //    受 dial_timeout 上限，与 initiator 的 open_timeout 对齐）。
     let ip_str = ip.to_string();
-    let dial = luciola::link::dial(&ip_str, port);
-    let mut upstream: TcpStream = match tokio::time::timeout(state.dial_timeout, dial).await {
+    let __dial_t0 = std::time::Instant::now();
+    let __dial_res = tokio::time::timeout(state.dial_timeout, luciola::link::dial(&ip_str, port)).await;
+    let __dial_el = __dial_t0.elapsed();
+    if __dial_el >= Duration::from_millis(20) {
+        eprintln!("[fwd-trace] dial {ip}:{port} ok={} took {__dial_el:?}", __dial_res.as_ref().map(|r| r.is_ok()).unwrap_or(false));
+    }
+    let mut upstream: TcpStream = match __dial_res {
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => {
             state.counters.dial_failed.fetch_add(1, Ordering::SeqCst);

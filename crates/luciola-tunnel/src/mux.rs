@@ -1058,6 +1058,10 @@ impl MuxSession {
 
         match tokio::time::timeout(inner.cfg.open_timeout, ack_rx).await {
             Err(_) => {
+                eprintln!(
+                    "[mux-trace] open ch={ch_id} timed out after {:?} (no OPEN_ACK)",
+                    inner.cfg.open_timeout
+                );
                 // 超时放弃：回收通道并补发 CLOSE(upstream_reset)，防对端孤儿条目（§1.3）
                 remove_entry(inner, ch_id, &dead, None);
                 let _ = inner.ctrl_tx.try_send(encode_frame(
@@ -1472,8 +1476,14 @@ async fn deliver(
 ) {
     // 入站流量即通道活动（UDP 映射语义：任一方向有包就续期）。
     flow.touch(now_ms(inner.epoch));
+    let __trace_t0 = std::time::Instant::now();
     match tokio::time::timeout(inner.cfg.stall_hard_timeout, in_tx.send(msg)).await {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => {
+            let __el = __trace_t0.elapsed();
+            if __el >= Duration::from_millis(20) {
+                eprintln!("[mux-trace] deliver ch={ch_id} blocked {__el:?} on full channel queue");
+            }
+        }
         Ok(Err(_)) => {
             // 本地通道端已被丢弃：回收条目（Drop 已补发 CLOSE(0)）
             remove_entry(inner, ch_id, &dead, None);
