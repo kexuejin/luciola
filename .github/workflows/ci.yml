@@ -11,6 +11,11 @@ jobs:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      # 一个 OS 红了不能让另一个 OS 的结论消失：今天 macOS 的负载敏感用例
+      # (luciola-transfer final_ack_loss_recovers_via_answer_cache, AGENTS.md §2)
+      # 触发 fail-fast，把正在跑的 Windows job 直接 cancel 掉，于是「Windows 到底
+      # 绿没绿」没有答案——这正是 §2 要求门禁区分「没验到」与「验坏了」的那条原则。
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
