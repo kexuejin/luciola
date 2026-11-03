@@ -27,8 +27,12 @@
 //!   被判违规）；OPEN_ACK(非0) 是终态帧，只回收通道、不补发 CLOSE。
 //! - 终止是幂等的：terminate(reason) 首次触发者生效，避免 CLOSE 互踢循环；
 //!   会话级关闭 = CLOSE(type 0x05, ch_id 0, reason)。
-//! - 级联停顿硬超时（§1.4）：通道入站队列 send 超过 stall_hard_timeout →
-//!   只拆该通道（CLOSE(2)），会话与其余通道继续流动（对 v1 对端仍是唯一防线）。
+//! - 级联停顿硬超时（§1.4）：通道入站帧队列由**该通道自己的转发任务**写入，
+//!   打满超过 stall_hard_timeout 只拆该通道（CLOSE(2)），会话与其余通道继续
+//!   流动（对 v1 对端仍是唯一防线）。共享 read 任务只把帧放进取字节预算的
+//!   暂存队列，**绝不同步等待单通道队列**——否则一条停顿通道会把整条会话
+//!   （含其他通道的 OPEN/ACK/DATA）串行化：Windows 默认 socket 缓冲比
+//!   macOS/Linux 小，实测可堵 >1s，超过 open_timeout 就让别的通道假超时。
 //! - 控制帧不可丢：队列满时经 `Inner::defer_ctrl` 延迟串行补发（EOF/CLOSE/WINDOW）。
 //! - poll_write 按部分写实现：每次最多接受 min(max_data_frame, 窗口余量) 字节。
 
@@ -38,7 +42,7 @@ use std::fmt;
 use std::io;
 use std::net::IpAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
@@ -561,6 +565,10 @@ struct FlowState {
     wake: Notify,
     /// 最近活动时刻（epoch 毫秒）；idle reaper 依据。
     last_active_ms: AtomicU64,
+    /// 已投递到通道暂存队列、应用（MuxStream/MuxDatagram）尚未读走的字节数。
+    /// read 任务据此执行 `Inner::inbound_budget` 的字节预算：暂存队列本身无界，
+    /// 但内存仍按窗口量级有界，超限只拆该通道（绝不阻塞 read 任务）。
+    queued_in: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -576,7 +584,32 @@ impl FlowState {
             unacked: AtomicU64::new(0),
             wake: Notify::new(),
             last_active_ms: AtomicU64::new(0),
+            queued_in: AtomicUsize::new(0),
         })
+    }
+
+    /// 应用读走 n 字节：释放通道入站预算额度（饱和减，不 panic）。
+    ///
+    /// 用 compare_exchange 循环而不是 `fetch_update`：后者在较新的 std 里已
+    /// 被重命名/弃用，而本仓库 CI 用 latest stable、开发机可能是旧版本，
+    /// 两边都要能无警告编译。
+    fn release_inbound(&self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let mut cur = self.queued_in.load(Ordering::SeqCst);
+        loop {
+            let next = cur.saturating_sub(n);
+            match self.queued_in.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return,
+                Err(actual) => cur = actual,
+            }
+        }
     }
 
     /// peer_v2 证明时刻的钳制：证明前未执行窗口，outstanding 可能已超限。
@@ -604,7 +637,13 @@ impl FlowState {
 struct Entry {
     state: State,
     mode: ChanMode,
+    /// 有界帧队列（容量 `channel_queue_frames`），由本通道的转发任务写入、
+    /// 应用侧读走。read 任务不直接触碰它，因此队列满只会堵住该通道的转发任务。
     in_tx: mpsc::Sender<MuxInbound>,
+    /// read 任务 → 本通道转发任务的暂存队列。无界，但读任务按
+    /// `Inner::inbound_budget` 的字节预算入账，内存有界；加这一跳的原因见
+    /// `deliver` 文档（共享 read 任务绝不能被单通道队列堵住）。
+    staging_tx: mpsc::UnboundedSender<MuxInbound>,
     /// 通道与 MuxStream/MuxDatagram 共享：置位后 poll_read/poll_write 直接报错。
     dead: Arc<AtomicBool>,
     /// 流控状态（v2）。
@@ -722,9 +761,43 @@ impl Inner {
             entry.flow.clamp(window);
         }
     }
+
+    /// 单通道入站字节预算：已投递、应用尚未读走的字节上限。
+    ///
+    /// v2 对端的发送量受窗口约束（应用读走数据才回 WINDOW credit，故
+    /// queued ≤ outstanding ≤ 对端 window），加一帧余量即可覆盖同配置对端的
+    /// 全部在途数据——诚实对端永不触发。v1 对端没有窗口，超出即按 §1.4
+    /// 兜底只拆该通道（旧实现是先把整条会话的 read 任务堵住再拆，这正是要
+    /// 修掉的级联停顿）。
+    ///
+    /// 窗口不在线上协商（各端用自己的 `window_size`）：对端把窗口配得远大于
+    /// 本端时，本端会在预算处拆掉该通道并告警；旧实现同样会在帧队列打满后
+    /// 拆，且先堵住整条会话，所以这里不会更差。
+    fn inbound_budget(&self) -> usize {
+        self.cfg.window_size.saturating_add(self.cfg.max_data_frame)
+    }
+
+    /// 为通道启动站内转发任务（见 [`channel_forwarder`]）：read 任务只入暂存
+    /// 队列，有界队列与 stall 判定都发生在该通道自己的任务里。
+    fn spawn_channel_forwarder(
+        self: &Arc<Self>,
+        ch_id: u32,
+        dead: Arc<AtomicBool>,
+        staging: mpsc::UnboundedReceiver<MuxInbound>,
+        in_tx: mpsc::Sender<MuxInbound>,
+    ) {
+        let inner = self.clone();
+        let term_rx = self.term.subscribe();
+        self.handle.spawn(async move {
+            channel_forwarder(inner, ch_id, dead, staging, in_tx, term_rx).await;
+        });
+    }
 }
 
 /// 若表内条目仍是 dead 指向的那一个，则移除并置位 dead（可选向通道队列推一条终态消息）。
+///
+/// 终态消息走暂存队列：与已投递的 DATA 保序（同通道先 DATA 后 EOF/CLOSE 的顺序
+/// 不倒），且不依赖有界队列此刻是否有空位。
 fn remove_entry(inner: &Inner, ch_id: u32, dead: &Arc<AtomicBool>, push: Option<MuxInbound>) {
     let mut table = inner.table.lock().unwrap();
     let is_same = table
@@ -735,7 +808,7 @@ fn remove_entry(inner: &Inner, ch_id: u32, dead: &Arc<AtomicBool>, push: Option<
         if let Some(entry) = table.remove(&ch_id) {
             entry.dead.store(true, Ordering::SeqCst);
             if let Some(msg) = push {
-                let _ = entry.in_tx.try_send(msg);
+                let _ = entry.staging_tx.send(msg);
             }
             entry.flow.kill();
         }
@@ -1026,6 +1099,7 @@ impl MuxSession {
         }
 
         let (in_tx, in_rx) = mpsc::channel(inner.cfg.channel_queue_frames);
+        let (staging_tx, staging_rx) = mpsc::unbounded_channel();
         let (ack_tx, ack_rx) = oneshot::channel();
         let dead = Arc::new(AtomicBool::new(false));
         let flow = FlowState::new();
@@ -1036,7 +1110,8 @@ impl MuxSession {
                 Entry {
                     state: State::Pending,
                     mode,
-                    in_tx,
+                    in_tx: in_tx.clone(),
+                    staging_tx,
                     dead: dead.clone(),
                     flow,
                     ack: Some(ack_tx),
@@ -1044,6 +1119,7 @@ impl MuxSession {
             );
         }
         inner.opened_total.fetch_add(1, Ordering::SeqCst);
+        inner.spawn_channel_forwarder(ch_id, dead.clone(), staging_rx, in_tx);
 
         let ftype = if mode == ChanMode::Stream {
             T_OPEN
@@ -1349,6 +1425,7 @@ async fn handle_open(
         }
     };
     let (in_tx, in_rx) = mpsc::channel(inner.cfg.channel_queue_frames);
+    let (staging_tx, staging_rx) = mpsc::unbounded_channel();
     let dead = Arc::new(AtomicBool::new(false));
     let flow = FlowState::new();
     // 锁内只做准入决策（无 await），事件全部在锁外发送；
@@ -1375,7 +1452,8 @@ async fn handle_open(
                         } else {
                             ChanMode::Stream
                         },
-                        in_tx,
+                        in_tx: in_tx.clone(),
+                        staging_tx,
                         dead: dead.clone(),
                         flow,
                         ack: None,
@@ -1403,6 +1481,7 @@ async fn handle_open(
         Admit::Pass => {}
     }
     inner.opened_total.fetch_add(1, Ordering::SeqCst);
+    inner.spawn_channel_forwarder(ch_id, dead.clone(), staging_rx, in_tx);
     let req = OpenRequest {
         target,
         ch_id,
@@ -1427,7 +1506,11 @@ async fn handle_open(
 /// 未知通道丢弃且只回 CLOSE(0)（D9，不杀会话）。
 async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Result<(), ()> {
     enum Target {
-        Channel(mpsc::Sender<MuxInbound>, Arc<AtomicBool>, Arc<FlowState>),
+        Channel(
+            mpsc::UnboundedSender<MuxInbound>,
+            Arc<AtomicBool>,
+            Arc<FlowState>,
+        ),
         Pending,
         Unknown,
     }
@@ -1435,9 +1518,11 @@ async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Re
         let table = inner.table.lock().unwrap();
         match table.get(&ch_id) {
             Some(entry) => match entry.state {
-                State::Active => {
-                    Target::Channel(entry.in_tx.clone(), entry.dead.clone(), entry.flow.clone())
-                }
+                State::Active => Target::Channel(
+                    entry.staging_tx.clone(),
+                    entry.dead.clone(),
+                    entry.flow.clone(),
+                ),
                 State::Pending => Target::Pending,
             },
             None => Target::Unknown,
@@ -1454,41 +1539,96 @@ async fn deliver_dispatch(inner: &Arc<Inner>, ch_id: u32, msg: MuxInbound) -> Re
             }
             Ok(())
         }
-        Target::Channel(in_tx, dead, flow) => {
-            deliver(inner, ch_id, dead, flow, in_tx, msg).await;
+        Target::Channel(staging_tx, dead, flow) => {
+            deliver(inner, ch_id, dead, flow, &staging_tx, msg);
             Ok(())
         }
     }
 }
 
-/// 投递到通道队列，带级联停顿硬超时（§1.4）：超时只拆该通道（CLOSE(2)），会话继续。
-async fn deliver(
-    inner: &Inner,
+/// 投递一条入站消息：只入本通道的暂存队列，**绝不在共享 read 任务里 await
+/// 单通道队列**。
+///
+/// 旧实现直接 `in_tx.send(msg).await`：一条通道的消费端停读（黑洞上游、慢应用、
+/// 没人读的 UDP 映射）填满它自己的有界队列后，read 任务就卡在那里，同会话其他
+/// 通道的 OPEN/ACK/DATA 全被串行化——open() 因此假超时（Windows 默认 socket
+/// 缓冲比 macOS/Linux 小，实测一条 200KB 的停顿通道能堵 read 任务 1.0–1.3s）。
+/// 现在有界队列与 stall 判定都发生在该通道自己的转发任务里（[channel_forwarder]）。
+///
+/// 内存上限：暂存队列无界，但 Data 字节按 `Inner::inbound_budget` 入账，超出即
+/// 按 §1.4 兜底只拆该通道（v2 诚实对端受窗口约束，永不触发）。
+fn deliver(
+    inner: &Arc<Inner>,
     ch_id: u32,
     dead: Arc<AtomicBool>,
     flow: Arc<FlowState>,
-    in_tx: mpsc::Sender<MuxInbound>,
+    staging_tx: &mpsc::UnboundedSender<MuxInbound>,
     msg: MuxInbound,
 ) {
     // 入站流量即通道活动（UDP 映射语义：任一方向有包就续期）。
     flow.touch(now_ms(inner.epoch));
-    match tokio::time::timeout(inner.cfg.stall_hard_timeout, in_tx.send(msg)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) => {
-            // 本地通道端已被丢弃：回收条目（Drop 已补发 CLOSE(0)）
-            remove_entry(inner, ch_id, &dead, None);
-        }
-        Err(_) => {
+    if let MuxInbound::Data(bytes) = &msg {
+        let queued = flow.queued_in.load(Ordering::SeqCst);
+        let budget = inner.inbound_budget();
+        if queued.saturating_add(bytes.len()) > budget {
             warn!(
-                "mux channel {ch_id} stalled > {:?} — tearing down channel only (§1.4)",
-                inner.cfg.stall_hard_timeout
+                "mux channel {ch_id} inbound {queued}+{} bytes over budget {budget} — tearing down channel only (§1.4)",
+                bytes.len()
             );
-            remove_entry(inner, ch_id, &dead, None);
-            let _ = inner.ctrl_tx.try_send(encode_frame(
-                T_CLOSE,
-                ch_id,
-                &[CloseReason::UPSTREAM_RESET],
-            ));
+            cut_channel(inner, ch_id, &dead, CloseReason::UPSTREAM_RESET);
+            return;
+        }
+        flow.queued_in.fetch_add(bytes.len(), Ordering::SeqCst);
+    }
+    // 转发任务已退出（条目已回收）时丢弃：通道级终态已由别处补发。
+    let _ = staging_tx.send(msg);
+}
+
+/// 只拆一条通道：回收条目 + CLOSE(reason)。会话与其余通道继续流动（§1.4）。
+fn cut_channel(inner: &Inner, ch_id: u32, dead: &Arc<AtomicBool>, reason: u8) {
+    remove_entry(inner, ch_id, dead, None);
+    let _ = inner
+        .ctrl_tx
+        .try_send(encode_frame(T_CLOSE, ch_id, &[reason]));
+}
+
+/// 单通道站内转发任务：把暂存队列的消息按序送进本通道的有界帧队列。
+///
+/// §1.4 的 stall 判定点在这里：有界队列打满超过 `stall_hard_timeout` 只拆本条
+/// 通道（CLOSE(2)），会话与其余通道继续流动。会话终止时经 watch 立即退出，
+/// 不会一直等到 stall 超时。
+async fn channel_forwarder(
+    inner: Arc<Inner>,
+    ch_id: u32,
+    dead: Arc<AtomicBool>,
+    mut staging: mpsc::UnboundedReceiver<MuxInbound>,
+    in_tx: mpsc::Sender<MuxInbound>,
+    mut term_rx: watch::Receiver<Option<u8>>,
+) {
+    loop {
+        let msg = tokio::select! {
+            biased;
+            _ = term_rx.changed() => return,
+            msg = staging.recv() => match msg {
+                Some(msg) => msg,
+                None => return, // 条目已回收 / 应用端已丢弃
+            },
+        };
+        match tokio::time::timeout(inner.cfg.stall_hard_timeout, in_tx.send(msg)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                // 应用端已丢弃通道（Drop 已补发 CLOSE(0)）：回收本端条目
+                remove_entry(&inner, ch_id, &dead, None);
+                return;
+            }
+            Err(_) => {
+                warn!(
+                    "mux channel {ch_id} stalled > {:?} — tearing down channel only (§1.4)",
+                    inner.cfg.stall_hard_timeout
+                );
+                cut_channel(&inner, ch_id, &dead, CloseReason::UPSTREAM_RESET);
+                return;
+            }
         }
     }
 }
@@ -1734,8 +1874,9 @@ impl MuxStream {
         self.dead.load(Ordering::SeqCst)
     }
 
-    /// 把消费量上报为对端窗口 credit（v2）。
+    /// 应用读走 n 字节：释放入站预算 + 上报对端窗口 credit（v2）。
     fn credit(&self, n: usize) {
+        self.flow.release_inbound(n);
         send_credit(&self.inner, self.ch_id, &self.flow, n);
     }
 }
@@ -2030,6 +2171,7 @@ impl MuxDatagram {
     pub async fn recv_datagram(&mut self) -> Option<Vec<u8>> {
         match self.rx.recv().await {
             Some(MuxInbound::Data(bytes)) => {
+                self.flow.release_inbound(bytes.len());
                 send_credit(&self.inner, self.ch_id, &self.flow, bytes.len());
                 self.flow.touch(now_ms(self.inner.epoch));
                 Some(bytes)

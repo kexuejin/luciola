@@ -13,8 +13,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use luciola_tunnel::{
-    AckStatus, CloseReason, DialTarget, Frame, MuxConfig, MuxError, MuxSession, Role, T_ACK,
-    T_DATA, T_OPEN,
+    AckStatus, CloseReason, DialTarget, Frame, MuxConfig, MuxError, MuxSession, Role,
+    MAX_DATA_FRAME, T_ACK, T_DATA, T_OPEN,
 };
 
 // ---------------------------------------------------------------- T1 验收用例
@@ -739,6 +739,94 @@ async fn stall_cut_off_tears_channel_not_session() {
     .expect("test timed out");
 }
 
+/// 回归：单通道入站帧队列打满时，共享 read 任务**不能**被它堵住。
+///
+/// 旧实现里 read 任务直接 `await` 该通道的有界队列。只要一条通道的消费端停读
+/// （黑洞上游、慢应用、没人读的 UDP 映射），队列填满后 read 任务就卡在那里，
+/// 同会话其他通道的 OPEN/ACK/DATA 全部排在它后面：`open()` 因此假超时。
+/// Windows 默认 socket 缓冲比 macOS/Linux 小，实测一条 200KB 的停顿通道就能把
+/// read 任务堵 1.0–1.3s（见 fix 提交信息），在负载下超过 open_timeout 后，
+/// 下一个通道的 open() 超时 → 本地连接 fail-fast 关闭并带未读数据 → RST 10054。
+///
+/// 这里把队列压到 1 帧，任何平台都能复现：A 的队列打满后，B 的 open + 回环必须
+/// 在 1s 内完成，且 A 在 stall 预算（5s）内不得被误拆。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn full_channel_queue_does_not_stall_the_session_reader() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let cfg = MuxConfig {
+            channel_queue_frames: 1,
+            stall_hard_timeout: Duration::from_secs(5),
+            open_timeout: Duration::from_secs(1),
+            ..fast_cfg()
+        };
+        let (i, r) = mux_pair_cfg(cfg).await;
+
+        // responder：A 授予但永不读；B 回显。
+        let r2 = r.clone();
+        tokio::spawn(async move {
+            let a = r2
+                .accept_open()
+                .await
+                .expect("accept A")
+                .grant()
+                .await
+                .expect("grant A");
+            let mut b = r2
+                .accept_open()
+                .await
+                .expect("accept B")
+                .grant()
+                .await
+                .expect("grant B");
+            let mut buf = [0u8; 16];
+            loop {
+                match b.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if b.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            drop(a);
+        });
+
+        // A：64KiB 占满 1 帧队列，再补 8KiB → 该通道进入 stall 等待。
+        let mut a = i.open(target(1)).await.expect("open A");
+        a.write_all(&vec![0xABu8; MAX_DATA_FRAME])
+            .await
+            .expect("A write 1");
+        a.write_all(&vec![0xABu8; 8 * 1024])
+            .await
+            .expect("A write 2");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // B：同会话新通道必须立刻可用（open_timeout = 1s）。
+        let started = std::time::Instant::now();
+        let mut b = i
+            .open(target(2))
+            .await
+            .expect("open B must not be delayed by another channel's full queue");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "open B was delayed {:?} by A's full inbound queue",
+            started.elapsed()
+        );
+        b.write_all(b"ping").await.expect("B write");
+        let mut back = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(5), b.read_exact(&mut back))
+            .await
+            .expect("B echo deadline")
+            .expect("B echo read");
+        assert_eq!(&back, b"ping");
+
+        // A 只是在 stall 预算内排队，不该被误拆。
+        assert_eq!(i.stats().channels_open, 2, "A must not be torn down yet");
+    })
+    .await
+    .expect("test timed out");
+}
 /// 本地 invalid target：解析阶段直接拒绝，不发任何帧。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn invalid_target_rejected_locally_without_wire() {
