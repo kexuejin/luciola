@@ -75,7 +75,7 @@ node server.js       # 然后打开 http://localhost:3000
 // Gradle —— KMP(Android / JVM / iOS)。不要写 mavenLocal():
 // 陈旧的本地构建会静默遮蔽线上版本(AGENTS.md §3 的老坑)。
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.9.1") // AAR 内嵌 arm64 .so;JVM/iOS 变体同坐标
+implementation("io.github.kexuejin:luciola:0.9.0") // AAR 内嵌 arm64 .so;JVM/iOS 变体同坐标
 ```
 
 ```toml
@@ -87,7 +87,7 @@ luciola-tunnel = "0.9.1" # mux v2 转发(见下文隧道小节)
 
 - **Node.js** —— `@luciola/core` 未发布 npm;请从源码构建 `bindings/luciola-node`(见 [Node.js](#nodejs--electron))。
 
-> **0.9.0**(2026-11-03 发布),以下状态均对注册表核对过而非假设:crates.io 七个 crate 均回答 `0.9.0`;Maven Central metadata 为 `latest=0.9.0`(`io.github.kexuejin:luciola` + `luciola-android` / `-jvm` / `-iosarm64` / `-iossimulatorarm64`);iOS `LuciolaUniFFI-0.9.0.zip` xcframework 挂在 tag `v0.9.0` 的 release 资产上。repo1 CDN 可能比 Portal 晚几分钟同步。破坏性变更标记见 [CHANGELOG.md](CHANGELOG.md)。
+> **0.9.1**(2026-11-03 发布),以下状态均对注册表核对过而非假设:crates.io 七个 crate 均回答 `0.9.1`;iOS `LuciolaUniFFI-0.9.1.zip` xcframework 挂在 tag `v0.9.1` 的 release 资产上。**Maven Central 仍是 0.9.0**——0.9.1 的 KMP bundle 还在等 operator 上传,因此上面的 Gradle 坐标暂保持 0.9.0。破坏性变更标记见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### CLI(一条命令诊断你的局域网)
 

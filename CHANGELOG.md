@@ -12,22 +12,21 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.9.0** (workspace
+> **Published-versus-repo version note.** The repository is at **0.9.1** (workspace
 > `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Release state,
 > checked 2026-11-03 rather than assumed:
 >
 > - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
 >   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
->   `0.9.0` from the registry API.
-> - **Maven Central — published and verified.**
->   `repo1.maven.org/maven2/io/github/kexuejin/luciola/maven-metadata.xml` reports
->   `latest=0.9.0` (lastUpdated 20261103), `luciola-0.9.0.pom`,
->   `luciola-android-0.9.0.aar` and the android pom all answer 200. The bundle was
->   accepted by the Sonatype Central Portal on 2026-11-03 via
->   `scripts/publish-central.sh`.
-> - **iOS — published.** `LuciolaUniFFI-0.9.0.zip` (28,605,515 bytes, xcframework for
->   device and simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256`
->   (`1880e680…d87591e`) are release assets on tag `v0.9.0`.
+>   `0.9.1` from the registry API, and the registry now shows every crate's
+>   keywords and categories (they take effect on the publish that carries them).
+> - **Maven Central — 0.9.0 is the published artifact; 0.9.1 is pending.** The
+>   `0.9.1` KMP bundle still has to be uploaded through the Sonatype Central
+>   Portal (`scripts/publish-central.sh`); until that succeeds, Gradle consumers
+>   must stay on `0.9.0`. Do not name `0.9.1` in a Gradle dependency yet.
+> - **iOS — published.** `LuciolaUniFFI-0.9.1.zip` (28,574,235 bytes, xcframework
+>   for device and simulator, `luciola_uniffi.swift`, FFI headers) plus its
+>   `.sha256` (`f8dce34b…363696`) are release assets on tag `v0.9.1`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >

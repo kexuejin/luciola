@@ -75,7 +75,7 @@ node server.js       # then open http://localhost:3000
 // Gradle — KMP (Android / JVM / iOS). Never add mavenLocal() here:
 // a stale local build silently shadows the published artifact (AGENTS.md §3).
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.9.1") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
+implementation("io.github.kexuejin:luciola:0.9.0") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
 ```
 
 ```toml
@@ -87,12 +87,12 @@ luciola-tunnel = "0.9.1" # mux v2 forwarding (the tunnel section below)
 
 - **Node.js** — `@luciola/core` is not on npm; build `bindings/luciola-node` from source (see [Node.js](#nodejs--electron)).
 
-> **Released 0.9.0** (2026-11-03), checked against the registries rather than
-> assumed: crates.io answers `0.9.0` for all seven crates, Maven Central lists
-> `latest=0.9.0` (`io.github.kexuejin:luciola` + `luciola-android` / `-jvm` /
-> `-iosarm64` / `-iossimulatorarm64`), and the iOS `LuciolaUniFFI-0.9.0.zip`
-> xcframework is attached to tag `v0.9.0`. The repo1 CDN may lag the Portal by a
-> few minutes. Breaking-change markers: [CHANGELOG.md](CHANGELOG.md).
+> **Released 0.9.1** (2026-11-03), checked against the registries rather than
+> assumed: crates.io answers `0.9.1` for all seven crates, and the iOS
+> `LuciolaUniFFI-0.9.1.zip` xcframework is attached to tag `v0.9.1`. **Maven
+> Central is still at 0.9.0** — the 0.9.1 KMP bundle waits for an operator upload —
+> so the Gradle coordinate above stays at 0.9.0 until that lands.
+> Breaking-change markers: [CHANGELOG.md](CHANGELOG.md).
 
 ### CLI (diagnose your LAN in one command)
 
