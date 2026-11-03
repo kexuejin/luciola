@@ -1,0 +1,20 @@
+name: Win Probe
+on:
+  push:
+    branches: ["diag/**"]
+
+jobs:
+  probe:
+    name: Windows tunnel probes
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Probes (serial, nocapture)
+        run: cargo test -p luciola-tunnel --test zz_probe -- --nocapture --test-threads=1
+      - name: Failing test alone (serial)
+        run: cargo test -p luciola-tunnel --test forward_e2e dial_failure -- --nocapture --test-threads=1
+      - name: Stalled test alone (serial)
+        run: cargo test -p luciola-tunnel --test forward_e2e stalled_channel -- --nocapture --test-threads=1
+      - name: Whole forward_e2e suite
+        run: cargo test -p luciola-tunnel --test forward_e2e -- --nocapture
