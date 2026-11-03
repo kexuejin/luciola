@@ -22,7 +22,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use luciola_tunnel::{
     start_forward_endpoint, start_local_forward, CloseReason, DialTarget, ForwardAcl, ForwardRule,
-    LocalForwardConfig, MuxError,
+    LocalForwardConfig, MuxConfig, MuxError,
 };
 
 // ---------------------------------------------------------------- 本机上游
@@ -336,12 +336,34 @@ async fn acl_deny_counts_and_never_dials() {
     .expect("test timed out");
 }
 
+/// dial_failure 用例的 open_timeout：必须比对端「拨号被拒」的终态 ACK 更慢。
+///
+/// 平台差异（同一提交实测，macOS 本地 / windows-latest CI）：
+/// - macOS/Linux 对 loopback 上无人监听的端口立即回 ECONNREFUSED（< 1 ms），
+///   所以 `fast_cfg()` 的 1500 ms 足够，且能快速暴露「对端没回 ACK」的回归。
+/// - Windows 的 TCP 栈要约 2.0 s 才把拒绝上报给调用方（windows-latest 实测 3 次
+///   tokio `TcpStream::connect`：2.004 s / 2.004 s / 2.009 s；`luciola::link::dial`
+///   同为 ~2.0 s）。2.0 s > 1.5 s，initiator 会先撞上本端 open_timeout，测到的是
+///   OpenTimeout 而不是对端的 ACK(2)——那是测试对 Windows 语义的错误假设，不是
+///   mux 的缺陷（默认 5 s open_timeout 下 2.0 s 的拒绝延迟完全在预算内）。
+///
+/// 8 s 同时保证 open_timeout > `MuxConfig::dial_timeout`（默认 5 s），
+/// 让 responder 的终态 ACK 必然先于本端超时到达。
+#[cfg(windows)]
+const DIAL_FAIL_OPEN_TIMEOUT: Duration = Duration::from_secs(8);
+#[cfg(not(windows))]
+const DIAL_FAIL_OPEN_TIMEOUT: Duration = Duration::from_millis(1500);
+
 /// 上游拨号失败（端口无人监听）：dial_failed+1、initiator 收 OPEN_ACK(2) 且带 detail。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dial_failure_counts_and_acks_2() {
     tokio::time::timeout(Duration::from_secs(30), async {
         // 先建会话/上游，再取死端口，最小化端口重用竞态。
-        let (i, r) = mux_pair().await;
+        let cfg = MuxConfig {
+            open_timeout: DIAL_FAIL_OPEN_TIMEOUT,
+            ..fast_cfg()
+        };
+        let (i, r) = mux_pair_cfg(cfg).await;
         let (echo_addr, echo) = spawn_echo_upstream().await;
         let dead = dead_addr();
 
