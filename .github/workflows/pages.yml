@@ -1,0 +1,59 @@
+name: Pages
+
+# The web-radar demo is a static page. GitHub Pages has no Node backend, so the
+# page detects the missing /api/* endpoints and renders clearly labelled sample
+# data instead (see examples/web-radar-demo/index.html). This workflow only
+# publishes that one self-contained HTML file — it never builds or runs the
+# Rust/Node engine, and nothing here can produce real discovery results.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "examples/web-radar-demo/index.html"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# GITHUB_TOKEN permissions required by the Pages deployment actions.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time; never cancel a deployment in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy static demo
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage the static site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp examples/web-radar-demo/index.html _site/index.html
+          # The page must stay self-contained: a tailwind/JS CDN turns the demo
+          # into a blank screen on a slow or offline network. Fail the deploy
+          # instead of shipping that regression.
+          if grep -nE '(src|href)="https?://' _site/index.html; then
+            echo "::error::index.html references an external asset; the static demo must be self-contained"
+            exit 1
+          fi
+          ls -la _site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
