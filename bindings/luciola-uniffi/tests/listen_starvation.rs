@@ -98,8 +98,14 @@ fn silent_foreign_client_does_not_starve_the_legitimate_peer() {
         "legitimate peer starved; events: {:?}",
         dial_events.dump()
     );
+    // dialer 的 connected 与 server 的 on_state("connected") 由两端各自的
+    // accept/dial 任务分别上报，先后没有保证：server 侧要等 accept 任务跑完
+    // 握手收尾才回调，负载高（windows-latest）时会晚于 dialer 那次即时断言，
+    // 于是"合法对端其实已被接受"也会判红。这里同样等它入队——属性不变：
+    // 合法对端最终必须被接受（10s 预算内）。
+    let accepted = wait_until(|| server_events.has("connected"), 10_000);
     assert!(
-        server_events.has("connected"),
+        accepted,
         "server never accepted the legitimate peer; events: {:?}",
         server_events.dump()
     );
