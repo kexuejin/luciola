@@ -7,14 +7,24 @@
   "napi": {
     "name": "luciola"
   },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "cargo build && cp $(cargo metadata --format-version 1 --no-deps | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/debug/libluciola_node.dylib ./luciola.node",
+    "build": "cargo build --release -p luciola-node && cp $(cargo metadata --format-version 1 --no-deps | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/release/libluciola_node.dylib ./luciola.node",
     "test": "node test.js && node test/forward.test.mjs"
   },
   "files": [
     "index.js",
     "index.d.ts",
-    "luciola.node"
+    "luciola.node",
+    "README.md"
   ],
   "keywords": [
     "lan",
@@ -25,6 +35,10 @@
     "peer-to-peer"
   ],
   "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/kexuejin/luciola#readme",
+  "bugs": {
+    "url": "https://github.com/kexuejin/luciola/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/kexuejin/luciola.git"
