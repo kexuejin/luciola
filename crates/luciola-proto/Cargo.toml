@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://kexuejin.github.io/luciola/"
+documentation = "https://docs.rs/luciola-proto"
+keywords = ["p2p", "protocol", "discovery", "udp", "state-machine"]
+categories = ["network-programming"]
 description = "Zero-IO protocol state machine for Luciola P2P discovery: frames, jitter scheduling, and revision sync"
 
 [dependencies]

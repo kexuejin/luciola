@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://kexuejin.github.io/luciola/"
+documentation = "https://docs.rs/luciola-transfer"
+keywords = ["file-transfer", "p2p", "chunked", "checksum", "networking"]
+categories = ["network-programming", "filesystem"]
 description = "Chunked file transfer data plane (offset-addressed writes, ACK prefix, SHA-256 receipt)"
 
 [dependencies]

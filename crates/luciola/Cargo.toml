@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://kexuejin.github.io/luciola/"
+documentation = "https://docs.rs/luciola"
+keywords = ["p2p", "lan", "discovery", "ipv6", "peer-to-peer"]
+categories = ["network-programming", "asynchronous"]
 description = "Lightweight, resilient LAN peer discovery and interface intelligence engine"
 
 [dependencies]

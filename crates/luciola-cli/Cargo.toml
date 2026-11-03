@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://kexuejin.github.io/luciola/"
+documentation = "https://docs.rs/luciola-cli"
+keywords = ["cli", "diagnostics", "lan", "radar", "discovery"]
+categories = ["command-line-utilities", "network-programming"]
 description = "Command-line interface and diagnostic radar for the Luciola P2P discovery engine"
 
 [dependencies]

@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://kexuejin.github.io/luciola/"
+documentation = "https://docs.rs/luciola-net"
+keywords = ["network-interface", "subnet-broadcast", "wsl2", "lan", "windows"]
+categories = ["network-programming"]
 description = "Network interface intelligence, physical/virtual scoring, WSL2 passthrough, and subnet broadcast calculation"
 
 [dependencies]

@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://kexuejin.github.io/luciola/"
+documentation = "https://docs.rs/luciola-ip"
+keywords = ["ipv6", "no-std", "networking", "tun", "scoping"]
+categories = ["network-programming", "no-std"]
 description = "Pure algorithms for RFC IPv6 scoping, domestic broadband GUA LAN detection, and proxy TUN IP filtering"
 
 [dependencies]
