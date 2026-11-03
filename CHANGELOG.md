@@ -19,16 +19,15 @@ primary one is cited.
 > - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
 >   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
 >   `0.9.0` from the registry API.
-> - **Maven Central — upload pending an operator step.** The signed bundle is produced
->   by `scripts/publish-central.sh`, which reads `~/.luciola/signing-key.asc` and
->   uploads to the Sonatype Central Portal. The agent session that prepared this
->   release was policy-blocked from reading the signing key / uploading, so a human
->   must run that one command. Do **not** advertise
->   `io.github.kexuejin:luciola*:0.9.0` as installable until
->   `repo1.maven.org/.../maven-metadata.xml` reports it.
-> - **iOS — asset built, not yet attached.** `LuciolaUniFFI-0.9.0.zip` (xcframework
->   for device and simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256`
->   are built locally; attach them to the `v0.9.0` release before announcing.
+> - **Maven Central — published and verified.**
+>   `repo1.maven.org/maven2/io/github/kexuejin/luciola/maven-metadata.xml` reports
+>   `latest=0.9.0` (lastUpdated 20261103), `luciola-0.9.0.pom`,
+>   `luciola-android-0.9.0.aar` and the android pom all answer 200. The bundle was
+>   accepted by the Sonatype Central Portal on 2026-11-03 via
+>   `scripts/publish-central.sh`.
+> - **iOS — published.** `LuciolaUniFFI-0.9.0.zip` (28,605,515 bytes, xcframework for
+>   device and simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256`
+>   (`1880e680…d87591e`) are release assets on tag `v0.9.0`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
