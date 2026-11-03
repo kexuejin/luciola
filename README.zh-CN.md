@@ -3,12 +3,41 @@
 [![CI](https://github.com/kexuejin/luciola/actions/workflows/ci.yml/badge.svg)](https://github.com/kexuejin/luciola/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/luciola.svg)](https://crates.io/crates/luciola)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.kexuejin/luciola)](https://central.sonatype.com/artifact/io.github.kexuejin/luciola)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
-**为真实网络环境打造的 Rust 本地网络引擎**:在局域网内发现对等设备、竞速选出最优连接路径、通过认证加密信道传输数据——在 Clash/Sing-box TUN 代理、国内宽带 IPv6-only、ZeroTier/Tailscale 虚拟网络、以及不转发多播的路由器面前依然可用。
+<p align="center">
+  <a href="https://kexuejin.github.io/luciola/?lang=zh"><img src="docs/assets/desktop-radar.zh.png" width="860" alt="Luciola Web 雷达中控台 — GitHub Pages 静态预览（示例数据）"></a>
+  <br>
+  <sub>Web 雷达中控台（<code>examples/web-radar-demo</code>）。这张截图是 <b>GitHub Pages 静态预览：示例数据，不是真实探测结果</b>。<a href="https://kexuejin.github.io/luciola/?lang=zh">打开 demo</a>，或在本地对着真实引擎运行。</sub>
+</p>
 
-Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输、投屏、本地 AI 伴侣)的底座层,让每个产品不必重复发明(并反复踩坑)局域网网络。一个 Rust 核心,**Kotlin Multiplatform(Android/JVM)、iOS/Swift、Node.js/Electron** 三方绑定均为一等公民。
+**在局域网内发现对等设备、竞速选出最优路径、通过认证加密信道传输数据——在 mDNS 会死掉的网络里依然可用**（Clash/Sing-box TUN 模式、国内宽带 IPv6-only、虚拟网卡、不转发多播的路由器）。一个 Rust 核心，**Kotlin Multiplatform（Android/JVM/iOS）**、**Swift**、**Node.js/Electron** 三方绑定均为一等公民。
 
-> 为什么不用 mDNS/Bonjour/Zeroconf?企业/酒店 Wi-Fi 丢组播;代理 TUN 模式吞广播;移动系统冻结后台监听。Luciola 正是围绕这些故障设计的——见[为什么需要 Luciola](#为什么需要-luciola真实网络)。
+**在线 demo（静态预览，明确标注示例数据）：** <https://kexuejin.github.io/luciola/?lang=zh> —— Pages 上没有引擎，页面不会伪造任何探测结果。
+
+**60 秒跑起来：**
+
+```bash
+# 1) 从 crates.io 安装 CLI —— 一条命令诊断本机局域网
+cargo install luciola-cli
+luciola-cli ip       # 网卡 / TUN 检测 + 候选 IP（--qr 额外打印终端二维码）
+luciola-cli scan     # 实时对等雷达
+
+# 2) 真实 Web 雷达中控台（Node 18+，demo 会加载原生引擎）
+git clone https://github.com/kexuejin/luciola.git
+cd luciola
+cargo build -p luciola-node
+cd examples/web-radar-demo
+node server.js       # 然后打开 http://localhost:3000
+```
+
+## 这是什么 —— 以及为什么不用 mDNS
+
+| | mDNS / Bonjour | **Luciola** |
+| :--- | :--- | :--- |
+| 组播被丢（酒店 / 企业 Wi-Fi、多数家用路由器） | 对端消失 | 每网卡子网定向广播 + 单播对账 |
+| Clash / Sing-box TUN 用 `0.0.0.0/1` 抢走路由 | 静默失联 | `/24` 广播落在被截取范围之外 |
+| 找到对端之后 | 应用自己拼凑 | 认证加密信道（预审计密码学），数据面默认拒绝 |
 
 **目录** · [特性](#特性) · [为什么需要 Luciola](#为什么需要-luciola真实网络) · [安装](#安装) · [CLI](#cli一条命令诊断你的局域网) · [KMP 库](#kmp-库android--jvm--ios) · [Node.js](#nodejs--electron) · [演示](#演示) · [文档](#文档) · [架构](#架构) · [项目目标](#项目目标) · [许可](#许可)
 
@@ -46,19 +75,19 @@ Luciola 是**本地优先应用**(局域网剪贴板同步、直连文件传输�
 // Gradle —— KMP(Android / JVM / iOS)。不要写 mavenLocal():
 // 陈旧的本地构建会静默遮蔽线上版本(AGENTS.md §3 的老坑)。
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.8.0") // AAR 内嵌 arm64 .so;JVM/iOS 变体同坐标
+implementation("io.github.kexuejin:luciola:0.9.0") // AAR 内嵌 arm64 .so;JVM/iOS 变体同坐标
 ```
 
 ```toml
-# Rust —— crates.io(七个 crate 均为 0.8.0)
-luciola = "0.8.0"        # 引擎、安全信道、信任原语
-luciola-tunnel = "0.8.0" # mux v2 转发(见下文隧道小节)
+# Rust —— crates.io(七个 crate 均为 0.9.0)
+luciola = "0.9.0"        # 引擎、安全信道、信任原语
+luciola-tunnel = "0.9.0" # mux v2 转发(见下文隧道小节)
 # CLI:cargo install luciola-cli
 ```
 
 - **Node.js** —— `@luciola/core` 未发布 npm;请从源码构建 `bindings/luciola-node`(见 [Node.js](#nodejs--electron))。
 
-> **0.8.0**(2026-10-29 发布),crates.io(七个 crate)与 Maven Central(`io.github.kexuejin:luciola` + `luciola-android` / `-jvm` / `-iosarm64` / `-iossimulatorarm64`)均已验证;repo1 CDN 可能比 Portal 晚几分钟同步。破坏性变更标记见 [CHANGELOG.md](CHANGELOG.md)。
+> **0.9.0**(2026-11-03 发布),以下状态均对注册表核对过而非假设:crates.io 七个 crate 均回答 `0.9.0`;Maven Central metadata 为 `latest=0.9.0`(`io.github.kexuejin:luciola` + `luciola-android` / `-jvm` / `-iosarm64` / `-iossimulatorarm64`);iOS `LuciolaUniFFI-0.9.0.zip` xcframework 挂在 tag `v0.9.0` 的 release 资产上。repo1 CDN 可能比 Portal 晚几分钟同步。破坏性变更标记见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### CLI(一条命令诊断你的局域网)
 
@@ -136,7 +165,7 @@ channel.startLocalForward(3080, '127.0.0.1', 3080); // 发起端本地监听并�
 
 ### 演示
 
-- **Web 雷达中控台**([examples/web-radar-demo](examples/web-radar-demo))— 实时雷达、真实协议心跳、带指纹 + PIN 的配对二维码。
+- **Web 雷达中控台**([examples/web-radar-demo](examples/web-radar-demo))— 实时雷达、真实协议心跳、带指纹 + PIN 的配对二维码。[在线静态预览](https://kexuejin.github.io/luciola/?lang=zh)只跑在 GitHub Pages 上、**仅示例数据**（那边没有后端）；本地运行才能看到真实对端。
 - **Android 应用**([examples/android-demo](examples/android-demo))— 基于 KMP 的 Compose 应用,扫码 + Happy Eyeballs 竞速,真机跨 Wi-Fi/ZeroTier 验证。
 - **iOS 应用**([examples/ios-demo](examples/ios-demo))— SwiftUI + uniffi Swift 绑定,模拟器验证。
 

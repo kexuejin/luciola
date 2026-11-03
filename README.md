@@ -3,12 +3,41 @@
 [![CI](https://github.com/kexuejin/luciola/actions/workflows/ci.yml/badge.svg)](https://github.com/kexuejin/luciola/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/luciola.svg)](https://crates.io/crates/luciola)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.kexuejin/luciola)](https://central.sonatype.com/artifact/io.github.kexuejin/luciola)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
-**A Rust-powered local-network engine for real-world conditions**: discover peers on a LAN, race the best connection path, and move data over authenticated encrypted channels — even behind Clash/Sing-box TUN VPNs, on China-broadband IPv6-only setups, across ZeroTier/Tailscale overlays, and through routers that break multicast.
+<p align="center">
+  <a href="https://kexuejin.github.io/luciola/"><img src="docs/assets/desktop-radar.png" width="860" alt="Luciola web radar console — GitHub Pages static preview with sample data"></a>
+  <br>
+  <sub>Web radar console (<code>examples/web-radar-demo</code>). This screenshot is the <b>GitHub Pages static preview — sample data, not a real discovery run</b>. <a href="https://kexuejin.github.io/luciola/">Open the demo</a>, or run it locally against the engine to see real peers.</sub>
+</p>
 
-Luciola is the foundation layer for **local-first apps** — LAN clipboard sync, direct file transfer, screen sharing, local AI companions — so every product doesn't reinvent (and mis-debug) LAN networking. One Rust core, first-class bindings for **Kotlin Multiplatform (Android/JVM), iOS/Swift, and Node.js/Electron**.
+**Discover peer devices on a LAN, race the fastest path, and move data over authenticated encrypted channels — on the networks where mDNS dies** (Clash/Sing-box TUN modes, IPv6-only China broadband, virtual NICs, routers that drop multicast). One Rust core with first-class **Kotlin Multiplatform (Android/JVM/iOS)**, **Swift** and **Node.js/Electron** bindings.
 
-> Why not mDNS/Bonjour/Zeroconf? Enterprise & hotel Wi-Fi drop multicast; proxy TUN modes swallow broadcasts; mobile OSes freeze background listeners. Luciola is designed around exactly these failures — see [Why Luciola](#why-luciola-real-world-networks).
+**Live demo (static preview, clearly-labelled sample data):** <https://kexuejin.github.io/luciola/> — GitHub Pages has no engine, so the page never fakes a discovery result.
+
+**Run the real thing in 60 seconds:**
+
+```bash
+# 1) CLI from crates.io — inspect this machine's LAN in one command
+cargo install luciola-cli
+luciola-cli ip       # NIC / TUN detection + candidate IPs (--qr prints a terminal QR)
+luciola-cli scan     # live peer radar
+
+# 2) Real web radar console (Node 18+; the demo loads the native engine)
+git clone https://github.com/kexuejin/luciola.git
+cd luciola
+cargo build -p luciola-node
+cd examples/web-radar-demo
+node server.js       # then open http://localhost:3000
+```
+
+## What this is — and why not mDNS
+
+| | mDNS / Bonjour | **Luciola** |
+| :--- | :--- | :--- |
+| Multicast dropped (hotel / enterprise Wi-Fi, most consumer routers) | peers disappear | per-NIC subnet-directed broadcast + unicast reconciliation |
+| Clash / Sing-box TUN hijacks `0.0.0.0/1` | silently dead | `/24` broadcasts stay outside the intercepted ranges |
+| Once a peer is reachable | whatever the app bolts on | authenticated encrypted channel (pre-audit crypto), deny-by-default data plane |
 
 **Contents** · [Features](#features) · [Why Luciola](#why-luciola-real-world-networks) · [Install](#install) · [CLI](#cli-diagnose-your-lan-in-one-command) · [KMP library](#kmp-library-android--jvm--ios) · [Node.js](#nodejs--electron) · [Demos](#demos) · [Docs](#documentation) · [Architecture](#architecture) · [Goals](#project-goals) · [License](#license)
 
@@ -46,22 +75,24 @@ Luciola is the foundation layer for **local-first apps** — LAN clipboard sync,
 // Gradle — KMP (Android / JVM / iOS). Never add mavenLocal() here:
 // a stale local build silently shadows the published artifact (AGENTS.md §3).
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.8.0") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
+implementation("io.github.kexuejin:luciola:0.9.0") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
 ```
 
 ```toml
-# Rust — crates.io (all seven crates at 0.8.0)
-luciola = "0.8.0"        # engine, secure channels, trust primitives
-luciola-tunnel = "0.8.0" # mux v2 forwarding (the tunnel section below)
+# Rust — crates.io (all seven crates at 0.9.0)
+luciola = "0.9.0"        # engine, secure channels, trust primitives
+luciola-tunnel = "0.9.0" # mux v2 forwarding (the tunnel section below)
 # CLI: cargo install luciola-cli
 ```
 
 - **Node.js** — `@luciola/core` is not on npm; build `bindings/luciola-node` from source (see [Node.js](#nodejs--electron)).
 
-> **Released 0.8.0** (2026-10-29), verified on crates.io (seven crates) and Maven
-> Central (`io.github.kexuejin:luciola` + `luciola-android` / `-jvm` /
-> `-iosarm64` / `-iossimulatorarm64`; the repo1 CDN may lag the Portal by a few
-> minutes). Breaking-change markers: [CHANGELOG.md](CHANGELOG.md).
+> **Released 0.9.0** (2026-11-03), checked against the registries rather than
+> assumed: crates.io answers `0.9.0` for all seven crates, Maven Central lists
+> `latest=0.9.0` (`io.github.kexuejin:luciola` + `luciola-android` / `-jvm` /
+> `-iosarm64` / `-iossimulatorarm64`), and the iOS `LuciolaUniFFI-0.9.0.zip`
+> xcframework is attached to tag `v0.9.0`. The repo1 CDN may lag the Portal by a
+> few minutes. Breaking-change markers: [CHANGELOG.md](CHANGELOG.md).
 
 ### CLI (diagnose your LAN in one command)
 
@@ -149,7 +180,7 @@ channel.startLocalForward(3080, '127.0.0.1', 3080); // initiator local bind & tr
 
 ### Demos
 
-- **Web radar console** ([examples/web-radar-demo](examples/web-radar-demo)) — live peer radar, real wire-protocol beacons, pairing QR with fingerprint + PIN.
+- **Web radar console** ([examples/web-radar-demo](examples/web-radar-demo)) — live peer radar, real wire-protocol beacons, pairing QR with fingerprint + PIN. [Live static preview](https://kexuejin.github.io/luciola/) runs on GitHub Pages with **sample data only** (no backend there); run it locally for real peers.
 - **Android app** ([examples/android-demo](examples/android-demo)) — KMP-based Compose app, QR scan + Happy Eyeballs racing, verified on real devices across Wi-Fi/ZeroTier.
 - **iOS app** ([examples/ios-demo](examples/ios-demo)) — SwiftUI over uniffi Swift bindings, verified in the simulator.
 
