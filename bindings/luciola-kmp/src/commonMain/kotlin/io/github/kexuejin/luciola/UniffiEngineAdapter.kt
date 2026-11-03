@@ -24,6 +24,13 @@ class UniffiEngineAdapter(
     /** Ed25519 public key advertised in the beacon (must match the secure
      *  channel identity for zero-trust pairing). */
     private val publicKey: ByteArray? = null,
+    /**
+     * Optional allow-list of `Profile.product` labels (uniffi
+     * `DiscoverySession.setProductFilter`). `null`/empty keeps the historical
+     * open mesh; a non-empty list makes the engine ignore beacons from other
+     * products sharing the same discovery port.
+     */
+    private val productFilter: List<String>? = null,
 ) : DiscoveryEnginePort {
 
     private val manualPeers = manualPeers.toMutableList()
@@ -37,7 +44,9 @@ class UniffiEngineAdapter(
         nodeId,
         tcpPort,
         publicKey,
-    )
+    ).also { session ->
+        productFilter?.takeIf { it.isNotEmpty() }?.let { session.setProductFilter(it) }
+    }
 
     private val lock = SafeLock()
     private var session = rebuildSession()
