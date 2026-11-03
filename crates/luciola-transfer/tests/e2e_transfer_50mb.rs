@@ -123,7 +123,23 @@ async fn run_receiver(
                 _ => return rx,
             }
         } else {
-            server.recv(&mut buf).await.unwrap();
+            // A transport error here means the peer closed while this side
+            // still believes bytes are missing (observed on macOS CI runners:
+            // BrokenPipe on recv). Do not panic on it: end the loop and let
+            // the explicit assertions below say whether the transfer was
+            // actually complete. A panic at this line only reported "Broken
+            // pipe" and hid which invariant broke.
+            match server.recv(&mut buf).await {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!(
+                        "receiver: peer closed before this side was complete (acked {} of {} bytes, error {e:?})",
+                        rx.acked_up_to(),
+                        rx.total_size()
+                    );
+                    return rx;
+                }
+            }
         }
         if !is_chunk_frame(&buf) {
             continue;
