@@ -9,12 +9,17 @@ Package: `io.github.kexuejin:luciola` (Kotlin package `io.github.kexuejin.luciol
 ## Targets
 
 - **androidLibrary** (AGP KMP plugin) — ships `libluciola_uniffi.so`
-  (arm64-v8a) inside the AAR; JNA included.
+  (arm64-v8a) inside the AAR; JNA comes in as a runtime dependency of
+  the published POM.
 - **jvm** — same uniffi bindings over JNA (desktop/CLI; load the
   `luciola_uniffi` native library for your platform first).
-- **iosArm64 / iosSimulatorArm64** — commonMain supervision core only; the
-  engine calls on iOS go through the Swift bindings
-  (`bindings/luciola-swift`), implementing the same surface.
+- **iosArm64 / iosSimulatorArm64** — the same uniffi bindings over
+  cinterop (`src/uniffiKmp/nativeMain`, linked against
+  `libluciola_uniffi.a`): discovery, supervision, trust, tunnel control
+  plane and the secure channel, with native `iosTest` coverage that the
+  simulator runs in-process. The Swift bindings
+  (`bindings/luciola-swift`) are an alternative path that skips Kotlin.
+  Physical iOS devices are **not** runtime-verified (simulator only).
 
 ## Consume
 
