@@ -16,7 +16,7 @@ The static preview never pretends to have discovered a peer: it shows a banner, 
 - **🖥️ Desktop Radar Console**: real device identity, physical NIC candidates, rotating radar with live peer blips, and an authentic vector QR code rendered by the native engine.
 - **📱 Real phone peers**: phones running the Luciola Android app (or any `luciola-cli beacon`) show up live on the radar with their hardware metadata.
 - **⚡ Happy Eyeballs race demo**: one click dials every candidate subnet concurrently (real TCP connects, staggered like RFC 8305) and shows which channel won with its measured RTT.
-- **📡 Real Wire Protocol**: the server crafts genuine Luciola `entry` envelopes (same JSON codec as `luciola-proto`) and sends them as **subnet-directed broadcasts** (`192.168.2.255` style) that bypass Clash/Sing-box TUN `0.0.0.0/1` capture, plus **unicast reconciliation** to peers whose engine fell back to a random port. Alive replies measure true RTT.
+- **📡 Real Wire Protocol**: the server crafts genuine Luciola `entry` envelopes (same JSON codec as `luciola-proto`) and sends them as **subnet-directed broadcasts** (`192.168.2.255` style) that bypass Clash/Sing-box TUN `0.0.0.0/1` capture, plus **unicast reconciliation** to pre-0.9.0 peers (or hosts that explicitly enabled ephemeral-port fallback). Alive replies measure true RTT.
 - **🔄 Live Updates over SSE**: peers joining/leaving, beacon broadcasts, and race results stream to both ends in real time.
 - **🌐 zh / EN**: the page ships both languages inline (no CDN, no fonts): it follows `navigator.language` and accepts `?lang=zh` / `?lang=en`.
 - **🧹 Self-Aging Registry**: peers that stop answering sweeps go offline automatically (the engine's `Found`-only events alone cannot track liveness).

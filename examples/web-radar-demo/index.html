@@ -762,7 +762,7 @@
           bannerHtml: '<div class="banner-icon" aria-hidden="true">⚠</div>' +
             '<div class="banner-body"><strong>静态演示模式 · SAMPLE DATA</strong>' +
             '<p>本页是纯静态预览：下面的每台设备、每个 IP、RTT 与事件<b>全部是虚构示例</b>，不是真实探测结果。示例地址只使用文档保留段（IPv4 <code>192.0.2.0/24</code>、<code>198.51.100.0/24</code>、<code>203.0.113.0/24</code>；IPv6 <code>2001:db8::/32</code>），不可能指向任何真实设备。</p>' +
-            '<p>真实引擎需在本地运行：<code>cd examples/web-radar-demo &amp;&amp; node server.js</code>，然后打开 <code>http://localhost:3000</code>。</p></div>',
+            '<p>真实引擎需在本地运行：先在仓库根目录 <code>cargo build -p luciola-node</code>，再 <code>cd examples/web-radar-demo &amp;&amp; node server.js</code>，然后打开 <code>http://localhost:3000</code>。</p></div>',
           emptyNotice: '正在监听局域网对等广播…<br><span class="small dim">手机打开 Luciola App，或另一终端运行 <code class="mono text-amber">cargo run -p luciola-cli -- beacon</code> 即可被发现。</span>',
           logConnected: function (url) { return '已连接本地引擎 ' + url; },
           logPeerFound: function (p) { return '✨ 发现对端: ' + p.name + ' @ ' + p.ip + ':' + p.udpPort; },
@@ -850,7 +850,7 @@
           bannerHtml: '<div class="banner-icon" aria-hidden="true">⚠</div>' +
             '<div class="banner-body"><strong>Static preview · SAMPLE DATA</strong>' +
             '<p>This page is a static preview: every peer, IP, RTT and event below is <b>fabricated sample data</b>, not a real discovery result. Sample addresses use IETF documentation ranges only (IPv4 <code>192.0.2.0/24</code>, <code>198.51.100.0/24</code>, <code>203.0.113.0/24</code>; IPv6 <code>2001:db8::/32</code>), so none of them can point at a real device.</p>' +
-            '<p>Run the real engine locally: <code>cd examples/web-radar-demo &amp;&amp; node server.js</code>, then open <code>http://localhost:3000</code>.</p></div>',
+            '<p>Run the real engine locally: first <code>cargo build -p luciola-node</code> from the repository root, then <code>cd examples/web-radar-demo &amp;&amp; node server.js</code>, then open <code>http://localhost:3000</code>.</p></div>',
           emptyNotice: 'Listening for LAN discovery broadcasts…<br><span class="small dim">Open the Luciola app on a phone, or run <code class="mono text-amber">cargo run -p luciola-cli -- beacon</code> in another terminal.</span>',
           logConnected: function (url) { return 'Connected to local engine ' + url; },
           logPeerFound: function (p) { return '✨ Peer found: ' + p.name + ' @ ' + p.ip + ':' + p.udpPort; },

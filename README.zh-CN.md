@@ -15,7 +15,7 @@
 
 **在线 demo（静态预览，明确标注示例数据）：** <https://kexuejin.github.io/luciola/?lang=zh> —— Pages 上没有引擎，页面不会伪造任何探测结果。
 
-**60 秒跑起来：**
+**跑起来（首次会编译 Rust 引擎，约几分钟）：**
 
 ```bash
 # 1) 从 crates.io 安装 CLI —— 一条命令诊断本机局域网
@@ -45,7 +45,7 @@ node server.js       # 然后打开 http://localhost:3000
 
 - 🛡️ **免疫代理 TUN 截流** — Clash / Sing-box 增强模式用 `0.0.0.0/1` 抢走路由、吞掉受限广播;Luciola 为每块物理网卡计算**子网定向广播**(`192.168.2.255`),其 `/24` 直连路由无法被代理截走。
 - 🌐 **为真实宽带做好 IPv6** — RFC 作用域分类 + `/64` 前缀匹配,把电信/联通/移动分配的 GUA(`2408:…`)识别为同局域网;引擎双栈,`ff02::1` 链路本地多播,支持 IPv6-only 发现与直连。
-- 🎯 **网卡智能** — 物理网卡打分优选,过滤 Docker/VMware/Tailscale/Radmin/Windows 移动热点虚拟网卡;WSL2 穿透解析 Windows 宿主真实 IP;生成的二维码百分之百可拨。
+- 🎯 **网卡智能** — 物理网卡打分优选,过滤 Docker/VMware/Tailscale/Radmin/Windows 移动热点虚拟网卡;WSL2 穿透解析 Windows 宿主真实 IP;生成的二维码，目标始终是可拨地址。
 - ⚡ **Happy Eyeballs 路径竞速** — 跨全部候选网段(IPv4 + IPv6 GUA)错峰并发拨号,加密握手直接在胜出 socket 上完成——无竞速-建连间隙。
 - 🔐 **信任与配对原语** — Ed25519 设备身份、`sha256:` 指纹、6 位屏上比对 PIN、分级信任库(Full=无感推送,Partial=逐次确认,未配对=默认拒绝)。*发现开放,数据面不开放。*
 - 📡 **带身份的信标** — 发现档案可携带设备 Ed25519 公钥,「信标里宣告的身份」与「加密信道出示的身份」完全一致;线格式对旧版对端双向兼容。
@@ -136,9 +136,15 @@ desktopController.start()
 // 之后: desktopController.close()  —— 停止引擎与计时线程
 ```
 
-**iOS 的诚实边界**:上面的 Swift 路径是 [examples/ios-demo](examples/ios-demo) 实际运行的(模拟器验证);Kotlin 路径(`IosNetworkMonitor` + cinterop 绑定 + 隧道 e2e)已由 `./gradlew :luciola:iosSimulatorArm64Test` 在 **iOS 模拟器进程内运行时验证**(绑定冒烟、Network.framework path monitor、隧道控制面契约、经隧道 TCP 回环;见 `bindings/luciola-kmp/src/iosTest/`)。**真机(arm64 设备)运行时仍未验证**——iOS 模拟器与真机同属 arm64 交叉编译,但内存/沙箱/网络栈有差异。
+**iOS 的诚实边界**:上面的 Swift 路径是 [examples/ios-demo](examples/ios-demo) 实际运行的(模拟器验证);Kotlin 路径(`IosNetworkMonitor` + cinterop 绑定 + 隧道 e2e)已由 `cd examples/android-demo && ./gradlew :luciola:iosSimulatorArm64Test` 在 **iOS 模拟器进程内运行时验证**(绑定冒烟、Network.framework path monitor、隧道控制面契约、经隧道 TCP 回环;见 `bindings/luciola-kmp/src/iosTest/`)。**真机(arm64 设备)运行时仍未验证**——iOS 模拟器与真机同属 arm64 交叉编译,但内存/沙箱/网络栈有差异。
 
 ### Node.js / Electron
+
+先在仓库根目录构建原生插件(未发布 npm)，再加载：
+
+```bash
+cargo build -p luciola-node
+```
 
 ```js
 const luciola = require('./bindings/luciola-node'); // 源码构建(未发布 npm —— 见安装)

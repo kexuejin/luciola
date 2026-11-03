@@ -11,11 +11,11 @@
   <sub>Web radar console (<code>examples/web-radar-demo</code>). This screenshot is the <b>GitHub Pages static preview — sample data, not a real discovery run</b>. <a href="https://kexuejin.github.io/luciola/">Open the demo</a>, or run it locally against the engine to see real peers.</sub>
 </p>
 
-**Discover peer devices on a LAN, race the fastest path, and move data over authenticated encrypted channels — on the networks where mDNS dies** (Clash/Sing-box TUN modes, IPv6-only China broadband, virtual NICs, routers that drop multicast). One Rust core with first-class **Kotlin Multiplatform (Android/JVM/iOS)**, **Swift** and **Node.js/Electron** bindings.
+**Discover peer devices on a LAN, race the best connection path, and move data over authenticated encrypted channels — on the networks where mDNS dies** (Clash/Sing-box TUN modes, IPv6-only China broadband, virtual NICs, routers that drop multicast). One Rust core with first-class **Kotlin Multiplatform (Android/JVM/iOS)**, **Swift** and **Node.js/Electron** bindings.
 
 **Live demo (static preview, clearly-labelled sample data):** <https://kexuejin.github.io/luciola/> — GitHub Pages has no engine, so the page never fakes a discovery result.
 
-**Run the real thing in 60 seconds:**
+**Run the real thing (the first build compiles the Rust engine — a couple of minutes):**
 
 ```bash
 # 1) CLI from crates.io — inspect this machine's LAN in one command
@@ -45,7 +45,7 @@ node server.js       # then open http://localhost:3000
 
 - 🛡️ **Survives proxy TUN interception** — Clash/Sing-box enhanced mode hijacks `0.0.0.0/1` and swallows limited broadcasts; Luciola computes per-NIC **subnet-directed broadcasts** (`192.168.2.255`) whose `/24` direct routes can't be captured.
 - 🌐 **IPv6 for real broadband** — RFC scope taxonomy + `/64` prefix matching treats ISP-assigned GUAs (`2408:…`, China Telecom/Unicom/Mobile) as same-LAN; dual-stack engine, `ff02::1` link-local multicast, IPv6-only discovery.
-- 🎯 **Interface intelligence** — physical-NIC scoring and virtual-adapter filtering (Docker/VMware/Tailscale/Radmin/Windows ICS); WSL2 passthrough resolves the Windows host's real IP; QR codes are always dialable.
+- 🎯 **Interface intelligence** — physical-NIC scoring and virtual-adapter filtering (Docker/VMware/Tailscale/Radmin/Windows ICS); WSL2 passthrough resolves the Windows host's real IP; QR codes are designed to always yield a dialable address.
 - ⚡ **Happy Eyeballs path racing** — staggered concurrent dials across every candidate subnet (IPv4 + IPv6 GUA); the secure handshake runs on the winning socket — no race-then-dial gap.
 - 🔐 **Trust & pairing primitives** — Ed25519 identities, `sha256:` fingerprints, 6-digit comparison PINs, leveled trust store (Full = silent push, Partial = per-action confirm, unpaired = deny). *Discovery is open; data planes are not.*
 - 📡 **Keyed beacons** — discovery profiles carry the device's Ed25519 public key, so the advertised identity is the channel identity; wire-compatible both ways with pre-key peers.
@@ -147,13 +147,19 @@ desktopController.start()
 **iOS, honestly:** the Swift path above is what runs in
 [examples/ios-demo](examples/ios-demo) (simulator-verified). The Kotlin path
 (`IosNetworkMonitor` + cinterop bindings + a tunnel loopback e2e) is
-**runtime-verified on the iOS simulator** — `./gradlew :luciola:iosSimulatorArm64Test`
+**runtime-verified on the iOS simulator** — `cd examples/android-demo && ./gradlew :luciola:iosSimulatorArm64Test`
 executes inside the simulator: binding smoke over cinterop, the Network.framework
 path monitor, tunnel control-plane contracts, and a full tunnel TCP loopback
 (`bindings/luciola-kmp/src/iosTest/`). A physical-device run of the Kotlin path
 is still outstanding.
 
 ### Node.js / Electron
+
+Build the native addon from the repository root first (it is not on npm), then load it:
+
+```bash
+cargo build -p luciola-node
+```
 
 ```js
 const luciola = require('./bindings/luciola-node'); // built from source (not on npm — see Install)
