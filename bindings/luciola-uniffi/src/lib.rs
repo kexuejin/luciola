@@ -361,7 +361,18 @@ impl DiscoverySession {
                     Err(_) => return,
                 };
                 rt.block_on(async move {
-                    let detected = luciola_net::DeviceDetector::detect();
+                    // Same reasoning as the node binding: detect() shells out;
+                    // keep it off this runtime's only worker thread.
+                    let detected = tokio::task::spawn_blocking(luciola_net::DeviceDetector::detect)
+                        .await
+                        .unwrap_or_else(|_| luciola_proto::DeviceMeta {
+                            device_type: luciola_proto::DeviceType::Unknown,
+                            os: std::env::consts::OS.to_string(),
+                            arch: std::env::consts::ARCH.to_string(),
+                            model: None,
+                            hostname: None,
+                            device_id: None,
+                        });
                     let profile = luciola::proto::Profile {
                         node_id,
                         name,

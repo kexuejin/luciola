@@ -304,8 +304,11 @@ impl DiscoverySession {
             .unwrap_or_else(|| format!("node_{:x}", rand::random::<u32>()));
         let manual_peers = self.manual_peers.lock().unwrap().clone();
         let product_filter = self.product_filter.lock().unwrap().clone();
-        let detected = luciola_net::DeviceDetector::detect();
-        let device_id = self.device_id.clone().or(detected.device_id.clone());
+        // DeviceDetector::detect() shells out to system commands (Command::output)
+        // and must not run on the N-API main thread: start() is synchronous and a
+        // slow `system_profiler`/`ipconfig` would freeze the JS event loop. It runs
+        // on a blocking thread inside the engine task below.
+        let device_id = self.device_id.clone();
         let product = self.product.clone();
         let extra = self.extra.clone();
         let tcp_port = self.tcp_port;
@@ -322,6 +325,17 @@ impl DiscoverySession {
             };
 
             rt.block_on(async move {
+                let detected = tokio::task::spawn_blocking(luciola_net::DeviceDetector::detect)
+                    .await
+                    .unwrap_or_else(|_| luciola::proto::DeviceMeta {
+                        device_type: luciola::proto::DeviceType::Unknown,
+                        os: std::env::consts::OS.to_string(),
+                        arch: std::env::consts::ARCH.to_string(),
+                        model: None,
+                        hostname: None,
+                        device_id: None,
+                    });
+                let device_id = device_id.or(detected.device_id.clone());
                 let profile = luciola::proto::Profile {
                     node_id: node_id.clone(),
                     name,
