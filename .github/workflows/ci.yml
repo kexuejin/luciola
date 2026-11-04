@@ -49,6 +49,14 @@ jobs:
       - name: Compile Android + JVM targets
         working-directory: examples/android-demo
         run: ./gradlew :luciola:compileAndroidMain :luciola:compileKotlinJvm --no-daemon
+      # jvmTest loads the host libluciola_uniffi.so via JNA from
+      # <target>/release (hostNativeRoot in build.gradle.kts) — build it
+      # first or the binding smoke test dies in UnsatisfiedLinkError.
+      - name: Build host uniffi library
+        run: cargo build -p luciola-uniffi --release
+      - name: Run JVM binding tests
+        working-directory: examples/android-demo
+        run: ./gradlew :luciola:jvmTest --no-daemon
 
   kmp-ios:
     name: KMP bindings (iOS klib)
@@ -76,8 +84,12 @@ jobs:
         run: ./gradlew :luciola:compileKotlinIosArm64 :luciola:compileKotlinIosSimulatorArm64 --no-daemon
 
   node-smoke:
-    name: Node bindings smoke
-    runs-on: macos-latest
+    name: Node bindings (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -90,3 +102,34 @@ jobs:
         run: node bindings/luciola-node/test.js
       - name: Run tunnel forwarding test
         run: node bindings/luciola-node/test/forward.test.mjs
+      - name: Run runtime contract test
+        run: node bindings/luciola-node/test/contract.test.mjs
+      # Type-level contract: the .d.ts must match the documented call shapes.
+      # typescript comes via npx (no devDependency / lockfile in the package).
+      - name: Type-check the documented API surface
+        run: npx --yes -p typescript@5 tsc --noEmit --strict --skipLibCheck --target es2020 --module commonjs bindings/luciola-node/test/api-consumer.ts
+
+  ios-demo:
+    name: iOS demo builds (Swift bindings)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Build LuciolaUniFFI.xcframework
+        run: ./bindings/luciola-swift/build-xcframework.sh
+      - name: Generate Xcode project
+        working-directory: examples/ios-demo
+        run: xcodegen generate
+      # Compile-only gate: this is what catches the demo drifting off the
+      # generated Swift bindings (a constructor arity change used to leave
+      # the demo broken with nothing in CI noticing).
+      # ARCHS=arm64: the xcframework's simulator slice is
+      # aarch64-apple-ios-sim only (see build-xcframework.sh) — without this
+      # xcodebuild also builds an x86_64 slice and the link fails.
+      - name: Build demo (iOS Simulator, compile-only)
+        working-directory: examples/ios-demo
+        run: xcodebuild build -project LuciolaRadar.xcodeproj -scheme LuciolaRadar -destination 'generic/platform=iOS Simulator' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO
