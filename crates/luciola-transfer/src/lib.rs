@@ -4,6 +4,14 @@
 //! reliable, ordered, message-oriented channel (in practice a
 //! `luciola::link::secure::SecureStream`).
 //!
+//! **Status — Rust-core only, not yet wired through.** There is no CLI
+//! command and no uniffi/napi surface for this crate yet: the state machine
+//! is driven exclusively by its own tests (including the 50 MiB secure-channel
+//! E2E). Consumers on Android/iOS/Node cannot reach it. Wiring it through —
+//! frame transport over a dedicated SecureStream, progress callbacks, a
+//! `luciola-cli transfer send|recv` pair — is a planned follow-up; until then
+//! treat this crate as an internal building block, not a product surface.
+//!
 //! Design invariants:
 //! - the receiver writes every chunk at its **absolute offset** — arrival
 //!   order is irrelevant, duplicates are idempotent, nothing is appended
