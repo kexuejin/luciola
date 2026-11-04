@@ -16,7 +16,7 @@ luciola-ip = { path = "../luciola-ip", version = "0.9.2" }
 luciola-net = { path = "../luciola-net", version = "0.9.2" }
 luciola-proto = { path = "../luciola-proto", version = "0.9.2" }
 luciola-transfer = { path = "../luciola-transfer", version = "0.9.2", optional = true }
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
 tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true

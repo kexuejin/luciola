@@ -26,7 +26,7 @@ luciola-tunnel = { path = "../../crates/luciola-tunnel" }
 qrcode = "0.14"
 rand = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "net", "io-util"] }
 
 [build-dependencies]
 uniffi = { version = "=0.29.4", features = ["build"] }
