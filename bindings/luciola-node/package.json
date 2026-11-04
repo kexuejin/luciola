@@ -18,7 +18,8 @@
   },
   "scripts": {
     "build": "cargo build --release -p luciola-node && cp $(cargo metadata --format-version 1 --no-deps | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/release/libluciola_node.dylib ./luciola.node",
-    "test": "node test.js && node test/forward.test.mjs"
+    "test": "node test.js && node test/forward.test.mjs && node test/contract.test.mjs",
+    "typecheck": "npx --yes -p typescript@5 tsc --noEmit --strict --skipLibCheck --target es2020 --module commonjs test/api-consumer.ts"
   },
   "files": [
     "index.js",

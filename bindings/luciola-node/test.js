@@ -68,12 +68,22 @@ async function main() {
   betaPeer.stop();
   alphaPeer.stop();
 
-  // Pairing payload v2
-  const uri = luciola.buildPairingUri('Mac 的', 'p1', 3000, ['192.168.1.2', '2408::1'], id.fingerprint, '123456');
+  // Pairing payload v2 — publicKey has its own slot between fingerprint and
+  // pin; passing the PIN without the null placeholder used to land it in the
+  // publicKey slot, and the old assertions never checked pin so it passed.
+  const uri = luciola.buildPairingUri('Mac 的', 'p1', 3000, ['192.168.1.2', '2408::1'], id.fingerprint, null, '123456');
   const parsed = luciola.parsePairingUri(uri);
   assert.strictEqual(parsed.name, 'Mac 的');
   assert.strictEqual(parsed.fingerprint, id.fingerprint);
   assert.deepStrictEqual(parsed.addrs, ['192.168.1.2', '2408::1']);
+  assert.strictEqual(parsed.pin, '123456', 'pin must land in the pin slot');
+  assert.ok(!parsed.publicKey, 'publicKey must stay absent when not given');
+  const publicKeyB64 = id.publicKey.toString('base64');
+  const parsedPk = luciola.parsePairingUri(
+    luciola.buildPairingUri('Mac 的', 'p1', 3000, ['192.168.1.2'], id.fingerprint, publicKeyB64, '654321'),
+  );
+  assert.strictEqual(parsedPk.publicKey, publicKeyB64, 'publicKey must roundtrip as base64');
+  assert.strictEqual(parsedPk.pin, '654321');
   assert.strictEqual(luciola.parsePairingUri('http://10.0.0.5:8080').port, 8080);
 
   // Race + secure channel loopback with stats
@@ -108,6 +118,8 @@ async function main() {
         setTimeout(() => {
           const s = client.stats();
           assert.ok(s.framesSent >= 1 && s.framesReceived >= 1 && s.connectionsEstablished === 1, 'stats');
+          assert.strictEqual(typeof s.framesEnqueued, 'number', 'queue counters exist');
+          assert.ok(s.framesEnqueued >= 1, 'queued frames must be counted');
           client.close(); server2.close();
           res();
         }, 200);
