@@ -64,7 +64,8 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
    **Keychain(iOS)/ Keystore(Android)/ 系统钥匙串或受限文件(桌面)**——
    不要存明文 SharedPreferences。
 2. 配对流程:主机侧 `buildPairingUri(name, product, port, addrs, fingerprint,
-   pin)` 生成二维码(渲染用 `renderQrSvg`);手机扫码 `parsePairingUri` 解析,
+   publicKey, pin)`(`publicKey` 传 base64 字符串,可传 `null`)生成二维码
+   (渲染用 `renderQrSvg`);手机扫码 `parsePairingUri` 解析,
    **两屏核对 6 位 pin**(不一致=中间人,中止);然后把对端公钥写入
    `TrustStore`。
 3. 分级:
