@@ -122,9 +122,16 @@ pub async fn bind_dual_stack_listener(port: u16) -> std::io::Result<TcpListener>
     )?;
 
     // Windows/Unix 通用安全调用（socket2，无 libc unsafe）
-    let _ = socket.set_only_v6(false);
-    let _ = socket.set_reuse_address(true);
-    let _ = socket.set_nonblocking(true);
+    if let Err(e) = socket.set_only_v6(false) {
+        tracing::debug!("set_only_v6(false) failed: {e}");
+    }
+    if let Err(e) = socket.set_reuse_address(true) {
+        tracing::debug!("set_reuse_address(true) failed: {e}");
+    }
+    // set_nonblocking 失败会让后续 accept/read 阻塞整个 runtime，必须可见。
+    if let Err(e) = socket.set_nonblocking(true) {
+        tracing::warn!("set_nonblocking(true) failed: {e} — listener may block the runtime");
+    }
 
     if socket.bind(&addr.into()).is_ok() && socket.listen(1024).is_ok() {
         let std_listener: std::net::TcpListener = socket.into();

@@ -576,8 +576,8 @@ impl DiscoveryEngine {
                 );
 
                 if let Some(r) = record {
-                    if changed {
-                        let _ = self.event_tx.send(PeerEvent::Found(r));
+                    if changed && self.event_tx.send(PeerEvent::Found(r)).is_err() {
+                        tracing::debug!("no discovery event subscribers; PeerEvent::Found dropped");
                     }
                 }
 
@@ -594,7 +594,9 @@ impl DiscoveryEngine {
                         tokio::time::sleep(delay).await;
                         let alive = Codec::make_alive(&self_profile, probe_id.as_deref());
                         if let Ok(bytes) = Codec::encode(&alive) {
-                            let _ = socket.send_to(&bytes, peer_addr).await;
+                            if let Err(e) = socket.send_to(&bytes, peer_addr).await {
+                                tracing::debug!("presence probe to {peer_addr} failed: {e}");
+                            }
                         }
                     });
                 }
@@ -616,9 +618,15 @@ impl DiscoveryEngine {
 
                 if let Some(r) = record {
                     if changed {
-                        let _ = self.event_tx.send(PeerEvent::Found(r));
-                    } else {
-                        let _ = self.event_tx.send(PeerEvent::Updated(r));
+                        if self.event_tx.send(PeerEvent::Found(r)).is_err() {
+                            tracing::debug!(
+                                "no discovery event subscribers; PeerEvent::Found dropped"
+                            );
+                        }
+                    } else if self.event_tx.send(PeerEvent::Updated(r)).is_err() {
+                        tracing::debug!(
+                            "no discovery event subscribers; PeerEvent::Updated dropped"
+                        );
                     }
                 }
             }
@@ -637,8 +645,8 @@ impl DiscoveryEngine {
                         .touch(&envelope.from, &peer_ip, peer_port, None);
 
                 if let Some(r) = record {
-                    if changed {
-                        let _ = self.event_tx.send(PeerEvent::Found(r));
+                    if changed && self.event_tx.send(PeerEvent::Found(r)).is_err() {
+                        tracing::debug!("no discovery event subscribers; PeerEvent::Found dropped");
                     }
                 }
 
@@ -652,7 +660,9 @@ impl DiscoveryEngine {
                 if known_rev != their_rev {
                     let entry = Codec::make_entry(&self.config.self_profile, Some("refresh"));
                     if let Ok(bytes) = Codec::encode(&entry) {
-                        let _ = receiving_socket.send_to(&bytes, peer_addr).await;
+                        if let Err(e) = receiving_socket.send_to(&bytes, peer_addr).await {
+                            tracing::debug!("profile refresh to {peer_addr} failed: {e}");
+                        }
                     }
                 }
             }
@@ -663,8 +673,9 @@ impl DiscoveryEngine {
                     .await
                     .mark_offline(&envelope.from)
                     .is_some()
+                    && self.event_tx.send(PeerEvent::Lost(envelope.from)).is_err()
                 {
-                    let _ = self.event_tx.send(PeerEvent::Lost(envelope.from));
+                    tracing::debug!("no discovery event subscribers; PeerEvent::Lost dropped");
                 }
             }
         }
@@ -691,7 +702,9 @@ impl DiscoveryEngine {
                 dead_rounds += 1;
                 if dead_rounds >= STALLED_ROUNDS_BEFORE_RESTART {
                     dead_rounds = 0;
-                    let _ = self.restart_socket().await;
+                    if let Err(e) = self.restart_socket().await {
+                        error!("discovery socket restart failed: {e}; discovery is down until the next successful restart");
+                    }
                 }
             } else {
                 dead_rounds = 0;
@@ -704,7 +717,9 @@ impl DiscoveryEngine {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let lost_ids = self.registry.write().await.sweep(self.config.offline_after);
             for id in lost_ids {
-                let _ = self.event_tx.send(PeerEvent::Lost(id));
+                if self.event_tx.send(PeerEvent::Lost(id)).is_err() {
+                    tracing::debug!("no discovery event subscribers; PeerEvent::Lost dropped");
+                }
             }
         }
     }

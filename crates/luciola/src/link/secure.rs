@@ -427,7 +427,9 @@ pub async fn secure_handshake_client(
     // 我们自己已经按整帧写，没有需要 Nagle 去合的小包。
     // 注：回环实测（release 引擎、10fps×100KiB）关与不关都是 p95≈6ms —— 这条是
     // 防御性的正确做法，不是某个具体数字的修复。
-    let _ = socket.set_nodelay(true);
+    if let Err(e) = socket.set_nodelay(true) {
+        tracing::debug!("set_nodelay failed: {e}");
+    }
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
@@ -534,7 +536,9 @@ pub async fn secure_handshake_server(
 ) -> Result<SecureStream, LinkError> {
     // 与客户端同一条：关掉 Nagle（原因见 `secure_handshake_client`）。
     // 服务端这条同样重要：画面与文件的回程都从这里出去。
-    let _ = socket.set_nodelay(true);
+    if let Err(e) = socket.set_nodelay(true) {
+        tracing::debug!("set_nodelay failed: {e}");
+    }
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
