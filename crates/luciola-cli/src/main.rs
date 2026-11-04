@@ -375,9 +375,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("🚀 Beacon active. Press Ctrl+C to exit.");
 
             tokio::spawn(async move {
-                while let Ok(event) = events.recv().await {
-                    if let PeerEvent::Found(peer) = event {
-                        println!("👋 Discovered neighbor: {} @ {}", peer.name, peer.ip);
+                loop {
+                    // Lagged 只说明错过了一批事件，监视图必须存活；
+                    // 仅 Closed（引擎已亡）才退出。
+                    match events.recv().await {
+                        Ok(PeerEvent::Found(peer)) => {
+                            println!("👋 Discovered neighbor: {} @ {}", peer.name, peer.ip);
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            eprintln!("⚠️  Neighbor watcher lagged, {n} events skipped");
+                        }
+                        Err(_) => break,
                     }
                 }
             });
