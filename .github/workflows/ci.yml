@@ -30,6 +30,19 @@ jobs:
       - name: Run Tests
         run: cargo test --all-targets --all-features
 
+  msrv:
+    name: MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 1.88 is the floor the dependency tree itself enforces (image, napi-build,
+      # textwrap all require rustc 1.88); every crate declares
+      # rust-version = "1.88" via the workspace, so cargo fails the build here
+      # before a release can ship a manifest it cannot honor.
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Check workspace on MSRV
+        run: cargo check --all-targets --all-features
+
   kmp-android-jvm:
     name: KMP bindings (Android + JVM)
     runs-on: ubuntu-latest
