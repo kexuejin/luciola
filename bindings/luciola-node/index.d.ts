@@ -90,6 +90,8 @@ export interface JsPeerRecord {
   deviceId?: string;
   /** Product label running on the peer, e.g. "luciola-clipboard". */
   product?: string;
+  /** Free-form extra field advertised in the peer profile (may be absent). */
+  extra?: string;
 }
 
 /**
@@ -102,6 +104,10 @@ export class DiscoverySession {
     manualPeers?: JsManualPeer[] | null,
     product?: string,
     deviceId?: string,
+    extra?: string,
+    nodeId?: string,
+    tcpPort?: number,
+    publicKey?: Buffer,
   );
   /**
    * This session's engine node id (available after `start`).
@@ -256,12 +262,14 @@ export class SecureChannel {
    */
   setKeepalive(intervalMs: number, deadAfterMs: number): void;
   isConnected(): boolean;
-  /** Link health counters (sent/received frames, connections, retries). */
+  /** Link health counters (sent/received frames, connections, retries, outbound queue in/out). */
   stats(): {
     framesSent: number;
     framesReceived: number;
     connectionsEstablished: number;
     reconnectAttempts: number;
+    framesEnqueued: number;
+    framesDequeued: number;
   };
   close(): void;
   /**
@@ -346,6 +354,8 @@ export interface JsPairingInfo {
   addrs: string[];
   /** Host identity fingerprint (`sha256:<hex>`) — bind trust on it. */
   fingerprint?: string;
+  /** Optional base64 host identity public key (trust pinning without a QR scan). */
+  publicKey?: string;
   /** Optional 6-digit on-screen comparison pin. */
   pin?: string;
 }
@@ -357,6 +367,7 @@ export function buildPairingUri(
   port: number,
   addrs: string[],
   fingerprint?: string | null,
+  publicKey?: string | null,
   pin?: string | null,
 ): string;
 

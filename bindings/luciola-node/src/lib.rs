@@ -593,6 +593,8 @@ pub struct SecureChannel {
     frames_received: std::sync::Arc<std::sync::atomic::AtomicU64>,
     connections_established: std::sync::Arc<std::sync::atomic::AtomicU64>,
     reconnect_attempts: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    frames_enqueued: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    frames_dequeued: std::sync::Arc<std::sync::atomic::AtomicU64>,
     timings: std::sync::Arc<LinkTimings>,
     /// T3：独立隧道监督实例（数据面不经过 JS，与消息链路并行）。
     tunnel: std::sync::Arc<TunnelLink>,
@@ -600,13 +602,15 @@ pub struct SecureChannel {
     tunnel_event: std::sync::Mutex<Option<ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>>>,
 }
 
-/// Link health counters.
+/// Link health counters (same six fields as the uniffi `LinkStats`).
 #[napi(object)]
 pub struct JsLinkStats {
     pub frames_sent: i64,
     pub frames_received: i64,
     pub connections_established: i64,
     pub reconnect_attempts: i64,
+    pub frames_enqueued: i64,
+    pub frames_dequeued: i64,
 }
 
 /// T3/T4 转发 ACL 规则（主机为 IP 字面量或主机名，与 uniffi ForwardRuleDto 同构）。
@@ -687,6 +691,8 @@ impl SecureChannel {
             frames_received: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             connections_established: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             reconnect_attempts: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            frames_enqueued: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            frames_dequeued: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             timings: std::sync::Arc::new(LinkTimings::default()),
             tunnel: TunnelLink::new(identity_seed.to_vec()),
             tunnel_event: std::sync::Mutex::new(None),
@@ -719,7 +725,8 @@ impl SecureChannel {
             .store(d.max(i), std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Link health counters (sent/received frames, connections, retries).
+    /// Link health counters (sent/received frames, connections, retries,
+    /// outbound queue in/out — same set as the uniffi `LinkStats`).
     #[napi]
     pub fn stats(&self) -> JsLinkStats {
         JsLinkStats {
@@ -733,6 +740,12 @@ impl SecureChannel {
                 as i64,
             reconnect_attempts: self
                 .reconnect_attempts
+                .load(std::sync::atomic::Ordering::Relaxed) as i64,
+            frames_enqueued: self
+                .frames_enqueued
+                .load(std::sync::atomic::Ordering::Relaxed) as i64,
+            frames_dequeued: self
+                .frames_dequeued
                 .load(std::sync::atomic::Ordering::Relaxed) as i64,
         }
     }
@@ -785,7 +798,14 @@ impl SecureChannel {
             return false;
         }
         match self.outbound_tx.lock().unwrap().as_ref() {
-            Some(tx) => tx.try_send(message.to_vec()).is_ok(),
+            Some(tx) => {
+                let ok = tx.try_send(message.to_vec()).is_ok();
+                if ok {
+                    self.frames_enqueued
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                ok
+            }
             None => false,
         }
     }
@@ -1013,6 +1033,7 @@ impl SecureChannel {
             self.connections_established.clone(),
             self.reconnect_attempts.clone(),
         );
+        let frames_dequeued = self.frames_dequeued.clone();
 
         std::thread::Builder::new()
             .name("luciola-node-secure-link".to_string())
@@ -1115,6 +1136,7 @@ impl SecureChannel {
                                 }
                                 msg = out_rx.recv() => match msg {
                                     Some(m) => {
+                                        frames_dequeued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         keepalive.reset();
                                         awaiting_pong = false;
                                         if stream.send(&m).await.is_ok() {
