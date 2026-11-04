@@ -1014,3 +1014,70 @@ async fn forward_dial(
         backoff = (backoff * 2).min(Duration::from_secs(30));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        decode_hex, encode_hex, parse_host_port, parse_listen_target, parse_pin, parse_seed,
+    };
+
+    #[test]
+    fn hex_roundtrip_and_rejections() {
+        let bytes = decode_hex("00ffA9").expect("valid hex");
+        assert_eq!(bytes, vec![0x00, 0xff, 0xa9]);
+        assert_eq!(encode_hex(&bytes), "00ffa9");
+        assert!(decode_hex("abc").is_err(), "odd length must be rejected");
+        assert!(decode_hex("zz").is_err(), "non-hex must be rejected");
+        assert!(
+            decode_hex(" 0f0f ").is_ok(),
+            "surrounding whitespace is trimmed"
+        );
+    }
+
+    #[test]
+    fn seed_requires_exactly_32_bytes() {
+        assert!(parse_seed(&encode_hex(&[7u8; 32])).is_ok());
+        assert!(parse_seed(&encode_hex(&[7u8; 31])).is_err());
+        assert!(parse_seed(&encode_hex(&[7u8; 33])).is_err());
+    }
+
+    #[test]
+    fn pin_rejects_fingerprint_digests_with_an_actionable_message() {
+        let fp = "sha256:deadbeef";
+        let err = parse_pin(fp).expect_err("digest must be rejected");
+        assert!(
+            err.contains("无法反推公钥"),
+            "message must point at the public-key path: {err}"
+        );
+        assert!(parse_pin(&encode_hex(&[9u8; 32])).is_ok());
+        assert!(parse_pin(&encode_hex(&[9u8; 16])).is_err());
+    }
+
+    #[test]
+    fn host_port_parses_ipv4_and_bracketed_ipv6() {
+        assert_eq!(
+            parse_host_port("127.0.0.1:8080").unwrap(),
+            ("127.0.0.1".into(), 8080)
+        );
+        assert_eq!(parse_host_port("[::1]:9090").unwrap(), ("::1".into(), 9090));
+        assert!(parse_host_port("no-port").is_err());
+        assert!(parse_host_port("host:notaport").is_err());
+    }
+
+    #[test]
+    fn listen_target_requires_listen_eq_target() {
+        let (listen, target) = parse_listen_target("9090=127.0.0.1:8080").expect("valid");
+        assert_eq!(listen, 9090);
+        assert_eq!(target.host, "127.0.0.1");
+        assert!(
+            parse_listen_target("9090127.0.0.1:8080").is_err(),
+            "missing '='"
+        );
+        // LISTEN=0（系统分配）合法；非法的是 TARGET 侧的 port 0。
+        assert!(parse_listen_target("0=127.0.0.1:8080").is_ok());
+        assert!(
+            parse_listen_target("9090=127.0.0.1:0").is_err(),
+            "port 0 target is invalid"
+        );
+    }
+}

@@ -204,13 +204,14 @@ async fn window_slow_consumer_parks_writer_and_spares_other_channels() {
             "session must survive a window-parked channel"
         );
 
-        // A 通道未死（没有 CLOSE 送达）
+        // A 通道未死（没有 CLOSE 送达）：上游持有连接不发数据，读到的任何
+        // EOF 都意味着通道在窗口挂起期间被拆除——这是一条真正会失败的断言。
         let mut probe = [0u8; 1];
         let still_open =
             tokio::time::timeout(Duration::from_millis(100), a_r.read(&mut probe)).await;
         assert!(
-            matches!(still_open, Err(_) | Ok(Ok(0)) | Ok(Ok(_)) | Ok(Err(_))),
-            "no assertion — read may block; session stats are the real check"
+            !matches!(still_open, Ok(Ok(0))),
+            "channel A saw EOF while parked on the window — it was torn down"
         );
         assert_eq!(i.stats().channels_open, 2, "A must not be torn down");
     })
