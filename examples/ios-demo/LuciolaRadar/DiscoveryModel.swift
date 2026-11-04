@@ -27,7 +27,16 @@ final class DiscoveryModel: ObservableObject {
 
     func start(sessionName: String, port: UInt16 = 17878, manualPeers: [ManualPeer] = []) {
         do {
-            let s = try DiscoverySession(name: sessionName, port: port, manualPeers: manualPeers, product: "luciola-radar-demo")
+            let s = try DiscoverySession(
+                name: sessionName,
+                port: port,
+                manualPeers: manualPeers,
+                product: "luciola-radar-demo",
+                extra: nil,
+                nodeId: nil,
+                tcpPort: nil,
+                publicKey: nil,
+            )
             s.start(listener: PeerRelay(
                 onPeer: { [weak self] peer in
                     Task { @MainActor in self?.onPeer(peer) }
