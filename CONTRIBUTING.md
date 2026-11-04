@@ -76,10 +76,13 @@ cd examples/android-demo
 cargo build -p luciola-node
 node bindings/luciola-node/test.js
 node bindings/luciola-node/test/forward.test.mjs
+node bindings/luciola-node/test/contract.test.mjs
+npm run typecheck --prefix bindings/luciola-node
 ```
 
-CI's Node job runs `test.js` only; `test/forward.test.mjs` is a **local** gate today, so
-run it yourself whenever you touch the tunnel or the Node forwarding surface.
+All four run in CI's Node job (Ubuntu and macOS): the smoke test, the tunnel
+forwarding acceptance, the runtime contract test, and the `.d.ts` type-level
+consumer check. Run them yourself whenever you touch the Node binding surface.
 
 **5) KMP iOS runtime verification (macOS + Xcode only):**
 
