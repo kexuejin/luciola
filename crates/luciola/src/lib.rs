@@ -69,6 +69,11 @@ pub struct PeerRegistry {
     peers: HashMap<String, PeerRecord>,
 }
 
+/// 离线超过这个时长的表项会被彻底移除：peers 表只增不删会让长驻进程的
+/// 内存随历史邻居数无界增长（sweep 只置 offline）。1 小时后同一 node_id
+/// 几乎不可能原样回归，真回来了 presence 会重新插入。
+const PEER_EVICT_AFTER: Duration = Duration::from_secs(3600);
+
 /// How suitable an address is for dialling: lower is better.
 ///
 /// IPv4 first, then global IPv6, then link-local (which needs a scope id and
@@ -188,7 +193,12 @@ impl PeerRegistry {
         None
     }
 
-    /// Sweep peers that haven't sent a presence heartbeat within `offline_after`.
+    /// Sweep peers that haven't sent a presence heartbeat within `offline_after`,
+    /// and evict entries whose peer has been gone for longer than
+    /// [`PEER_EVICT_AFTER`] (the table would otherwise grow without bound for
+    /// the lifetime of a long-running engine). Eviction never fires while a
+    /// peer is still within the offline window: the threshold is clamped to
+    /// at least twice `offline_after`.
     pub fn sweep(&mut self, offline_after: Duration) -> Vec<String> {
         let now = Instant::now();
         let mut offline_ids = Vec::new();
@@ -197,6 +207,17 @@ impl PeerRegistry {
                 peer.online = false;
                 offline_ids.push(id.clone());
             }
+        }
+        let evict_after = PEER_EVICT_AFTER.max(offline_after.saturating_mul(2));
+        let evicted: Vec<String> = self
+            .peers
+            .iter()
+            .filter(|(_, p)| now.duration_since(p.last_seen) > evict_after)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &evicted {
+            tracing::debug!("evicting peer {id} from the registry (gone > {evict_after:?})");
+            self.peers.remove(id);
         }
         offline_ids
     }
@@ -404,20 +425,34 @@ impl DiscoveryEngine {
 
     /// Start background background loops: receiving, presence, and sweeping.
     pub fn spawn(self: Arc<Self>) {
+        // Handles are dropped: the loops run for the lifetime of the engine,
+        // which is what the FFI/platform embedders assume (each stops the
+        // engine by shutting down its own runtime). Rust embedders that need
+        // to cancel the loops use [`DiscoveryEngine::spawn_tracked`].
+        let _ = self.spawn_tracked();
+    }
+
+    /// Like [`DiscoveryEngine::spawn`], but returns the JoinHandles of the
+    /// three engine loops so a Rust embedder can cancel them (`abort()`).
+    /// This is the first-class escape hatch the binding layers get for free
+    /// from owning their runtimes.
+    pub fn spawn_tracked(self: Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
         let engine_rx = self.clone();
-        tokio::spawn(async move {
+        let rx = tokio::spawn(async move {
             engine_rx.receive_loop().await;
         });
 
         let engine_presence = self.clone();
-        tokio::spawn(async move {
+        let presence = tokio::spawn(async move {
             engine_presence.presence_loop().await;
         });
 
-        let engine_sweep = self.clone();
-        tokio::spawn(async move {
+        let engine_sweep = self;
+        let sweep = tokio::spawn(async move {
             engine_sweep.sweep_loop().await;
         });
+
+        vec![rx, presence, sweep]
     }
 
     /// Compute broadcast targets:
@@ -773,7 +808,56 @@ impl DiscoveryEngine {
 
 #[cfg(test)]
 mod tests {
+    use super::PeerRegistry;
     use super::{address_rank, should_take_new_address};
+    use crate::proto::Profile;
+    use std::time::{Duration, Instant};
+
+    fn minimal_profile(node_id: &str) -> Profile {
+        Profile {
+            node_id: node_id.to_string(),
+            name: node_id.to_string(),
+            profile_rev: 1,
+            addresses: vec![],
+            udp_port: 1,
+            tcp_port: 1,
+            device: None,
+            device_id: None,
+            product: None,
+            extra: None,
+            public_key: None,
+        }
+    }
+
+    #[test]
+    fn sweep_evicts_entries_gone_longer_than_the_eviction_ttl() {
+        let mut reg = PeerRegistry::new();
+        reg.touch("gone", "10.0.0.1", 1, Some(&minimal_profile("gone")));
+        reg.touch("fresh", "10.0.0.2", 1, Some(&minimal_profile("fresh")));
+        // "gone" 在 2 小时前最后一次心跳：先被判 offline，随后被逐出。
+        let cutoff = Instant::now() - Duration::from_secs(2 * 3600);
+        reg.peers.get_mut("gone").unwrap().last_seen = cutoff;
+        let offline = reg.sweep(Duration::from_secs(90));
+        assert_eq!(offline, vec!["gone".to_string()]);
+        assert!(reg.peers.contains_key("fresh"), "live peer must survive");
+        assert!(
+            !reg.peers.contains_key("gone"),
+            "stale entry must be evicted"
+        );
+    }
+
+    #[test]
+    fn sweep_never_evicts_inside_the_offline_window_even_when_it_is_huge() {
+        let mut reg = PeerRegistry::new();
+        reg.touch("slow", "10.0.0.3", 1, Some(&minimal_profile("slow")));
+        let cutoff = Instant::now() - Duration::from_secs(2 * 3600);
+        reg.peers.get_mut("slow").unwrap().last_seen = cutoff;
+        // offline_after = 3h：2h 未心跳仍算在线，逐出阈值被钳到 ≥ 2×offline_after，
+        // 该表项必须原样保留。
+        let offline = reg.sweep(Duration::from_secs(3 * 3600));
+        assert!(offline.is_empty());
+        assert!(reg.peers.contains_key("slow"));
+    }
 
     #[test]
     fn address_rank_orders_v4_before_global_v6_before_link_local() {
