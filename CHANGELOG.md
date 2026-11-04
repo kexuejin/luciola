@@ -35,6 +35,56 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
+## [0.9.2] — 2026-11-05
+
+### Fixed
+
+- **Tunnel datagram writers can no longer hang forever on a torn-down channel**
+  (`d6f85fb`). `send_datagram`'s window-wait loop checked the channel-dead flag
+  before registering its `Notify::notified()` future, and `kill()` uses
+  `notify_waiters()`, which stores no permit — a teardown landing between the
+  check and the registration lost the wakeup and parked the writer until
+  session end. The wait now registers the `notified()` future *before* any
+  state check, so a `kill()` either wakes the task or is already visible in
+  the dead flag. The credit path (`notify_one`) was always permit-preserving
+  and is unchanged.
+- **Node `DiscoverySession` event stream no longer silently dies** (`69390b8`).
+  The engine loop patterned on `Ok(event) = events.recv()`; a broadcast
+  `RecvError` (a `Lagged` burst is enough) disabled the select branch and the
+  session stayed alive delivering nothing. Lag now continues, a closed channel
+  exits. The CLI beacon's neighbor watcher had the same `while let Ok` shape
+  and got the same fix (`24bbd2b`).
+- **Node `index.d.ts` matches the native surface** (`0c7f8e1`). `JsPeerRecord`
+  documents `extra`, the `DiscoverySession` constructor documents all nine
+  parameters, `JsPairingInfo` documents `publicKey`, and `buildPairingUri`
+  documents its real seven-parameter shape — a caller following the old
+  declaration passed a PIN into the `publicKey` slot. `stats()` now exposes
+  `framesEnqueued`/`framesDequeued`, the same six counters as the uniffi
+  `LinkStats`.
+- **iOS demo compiles against the generated bindings again** (`5d4c47a`): the
+  demo still called the four-argument `DiscoverySession` convenience init.
+
+### Added
+
+- **Node runtime and type-level contract gates** (`f61d9ba`).
+  `test/contract.test.mjs` pins the pairing-URI slot placement, the
+  nine-argument constructor (an advertised `extra` must arrive on peer
+  objects) and the exact six-field `stats()` shape; `npm run typecheck`
+  compiles a documented-call-shape consumer against `index.d.ts`. The smoke
+  test now also asserts the pin/publicKey roundtrip.
+- **CI contract gates** (`96cfe16`). The Node job runs on Ubuntu as well as
+  macOS and runs the contract test plus the type check; the KMP job runs
+  `:luciola:jvmTest` against a freshly built host library (previously it only
+  compiled Kotlin); a new job build-checks the iOS demo — the gate that would
+  have caught the demo drift above.
+
+### Changed
+
+- Documentation: CONTRIBUTING.md's stale "CI runs `test.js` only" note, the
+  integration handbook's pairing snippet (same PIN-slot trap), and the
+  android-demo dev-wiring comment now describe the current state
+  (`0331063`, `b889261`).
+
 ## [0.9.1] — 2026-11-03
 
 ### Fixed
