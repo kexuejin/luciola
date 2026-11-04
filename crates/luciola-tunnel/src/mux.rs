@@ -33,7 +33,8 @@
 //!   暂存队列，**绝不同步等待单通道队列**——否则一条停顿通道会把整条会话
 //!   （含其他通道的 OPEN/ACK/DATA）串行化：Windows 默认 socket 缓冲比
 //!   macOS/Linux 小，实测可堵 >1s，超过 open_timeout 就让别的通道假超时。
-//! - 控制帧不可丢：队列满时经 `Inner::defer_ctrl` 延迟串行补发（EOF/CLOSE/WINDOW）。
+//! - 控制帧不可丢：队列满时经 `Inner::defer_ctrl` 延迟串行补发（PONG/ACK/EOF/CLOSE/WINDOW），
+//!   共享 read 任务内绝不 await 出站队列。
 //! - poll_write 按部分写实现：每次最多接受 min(max_data_frame, 窗口余量) 字节。
 
 use std::collections::HashMap;
@@ -1280,7 +1281,7 @@ async fn handle_frame(inner: &Arc<Inner>, frame: Frame) -> Result<(), ()> {
         Frame::Ping { nonce } => {
             // v2 能力证明 + keepalive 应答（v1 对端不会发 PING，也不会回 PONG）
             inner.set_peer_v2();
-            send_ctrl(inner, encode_frame(T_PONG, 0, &nonce.to_be_bytes())).await;
+            send_ctrl(inner, encode_frame(T_PONG, 0, &nonce.to_be_bytes()));
             Ok(())
         }
         Frame::Pong { .. } => {
@@ -1420,7 +1421,7 @@ async fn handle_open(
         Some(t) => t,
         None => {
             let payload = encode_ack_payload(AckStatus::BAD_TARGET, Some("invalid target"));
-            send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
+            send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload));
             return Ok(());
         }
     };
@@ -1468,14 +1469,13 @@ async fn handle_open(
             send_ctrl(
                 inner,
                 encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
-            )
-            .await;
+            );
             return Ok(());
         }
         Admit::Dup => {
             // 重复 ch_id：不复用旧通道，回 OPEN_ACK(4)（§1.2 bad_target）
             let payload = encode_ack_payload(AckStatus::BAD_TARGET, Some("duplicate channel id"));
-            send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload)).await;
+            send_ctrl(inner, encode_frame(T_ACK, ch_id, &payload));
             return Ok(());
         }
         Admit::Pass => {}
@@ -1496,8 +1496,7 @@ async fn handle_open(
         send_ctrl(
             inner,
             encode_frame(T_ACK, ch_id, &[AckStatus::CHANNEL_LIMIT]),
-        )
-        .await;
+        );
     }
     Ok(())
 }
@@ -1669,9 +1668,18 @@ fn send_credit(inner: &Arc<Inner>, ch_id: u32, flow: &Arc<FlowState>, n: usize) 
     }
 }
 
-async fn send_ctrl(inner: &Inner, frame: Vec<u8>) {
-    if inner.ctrl_tx.send(frame).await.is_err() {
-        debug!("control queue closed (writer exited)");
+/// 控制帧发送（PONG 应答 / OPEN ACK）：队列满时转 `defer_ctrl` 延迟补发，
+/// 绝不在共享 read 任务内 await —— 旧实现的 `send().await` 在单一 FIFO 满
+/// 时会背压 reader_loop，卡住所有通道的 OPEN/ACK/DATA 处理。PONG/ACK 与
+/// WINDOW/EOF/CLOSE 同为不可丢帧，走同一条 defer 路径；defer 乱序对这两类
+/// 帧无害（keepalive 与"先到 DATA 后到 ACK 进 staging"均不依赖严格 FIFO）。
+fn send_ctrl(inner: &Arc<Inner>, frame: Vec<u8>) {
+    match inner.ctrl_tx.try_send(frame) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(f)) => inner.defer_ctrl(f),
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            debug!("control queue closed (writer exited)");
+        }
     }
 }
 
