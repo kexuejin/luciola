@@ -2141,6 +2141,14 @@ impl MuxDatagram {
         if self.inner.peer_v2.load(Ordering::SeqCst) {
             let mut term_rx = self.inner.term.subscribe();
             loop {
+                // notified() 必须先于 dead/窗口检查注册（enable()），否则 kill()
+                // 的 notify_waiters()（不存 permit）落在"检查之后、注册之前"时
+                // 唤醒丢失，写方在窗口耗尽 + 通道拆除的组合下永久挂起。注册之后
+                // 任何一次 kill() 要么唤醒本任务，要么发生在 enable 之前而 dead
+                // 标志在下面的检查里已经可见。
+                let notified = self.flow.wake.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 if self.dead.load(Ordering::SeqCst) {
                     // 等窗口期间通道被对端/本地拆除（CLOSE/stall/回收）：
                     // credit 永不再来，必须干净报错而不是等到会话结束。
@@ -2154,7 +2162,7 @@ impl MuxDatagram {
                     }
                 }
                 tokio::select! {
-                    _ = self.flow.wake.notified() => {}
+                    _ = &mut notified => {}
                     _ = term_rx.changed() => return Err(MuxError::SessionClosed),
                 }
             }

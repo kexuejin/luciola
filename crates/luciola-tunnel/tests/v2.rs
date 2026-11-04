@@ -9,6 +9,7 @@
 
 mod common;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -899,6 +900,91 @@ async fn datagram_send_parked_then_torn_down_returns_closed() {
             ),
             "parked send must resolve on teardown, got {res:?}"
         );
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// 同一会话对上反复"开通道 → 窗口打满 park 写方 → 随机延迟后通道级拆除"，
+/// 覆盖 0ms（teardown 先于 park）到 50ms（teardown 晚于 park）的全谱相位，
+/// 并验证重复开拆循环不泄漏、不串扰。注意：kill() 的 notify_waiters() 与
+/// notified() 注册之间几条指令宽的竞争窗口无法从外部确定性复现——那里的
+/// 确定性保证是 send_datagram 等待循环的构造顺序（notified() 先 enable
+/// 注册、后做 dead/窗口检查），本测试是该路径的鲁棒性回归网。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn datagram_send_teardown_stress_repeated_channels() {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let cfg = MuxConfig {
+            window_size: 128 * 1024, // 2 帧
+            ..v2_cfg()
+        };
+        let (i, r) = mux_pair_cfg(cfg).await;
+        let r = Arc::new(r);
+
+        // xorshift64，固定种子：失败可复现
+        let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+        for round in 0..50u32 {
+            let outcome = tokio::time::timeout(Duration::from_secs(10), async {
+                let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+                // responder：accept 后持有通道但永不消费 → credit 永不来
+                let holder = tokio::spawn({
+                    let r = Arc::clone(&r);
+                    async move {
+                        let ch = r
+                            .accept_open()
+                            .await
+                            .expect("accept")
+                            .grant_datagram()
+                            .await
+                            .expect("grant");
+                        let _ = accepted_tx.send(());
+                        std::future::pending::<()>().await;
+                        drop(ch);
+                    }
+                });
+                // 先 open 触发对端 accept，再等 grant 完成，保证 abort 一定
+                // 触发 Drop-CLOSE（延迟可为 0）
+                let ch = i.open_datagram(target(1)).await.expect("open_datagram");
+                accepted_rx.await.expect("holder accepted");
+                ch.send_datagram(&vec![0u8; 64 * 1024])
+                    .await
+                    .expect("send 1");
+                ch.send_datagram(&vec![0u8; 64 * 1024])
+                    .await
+                    .expect("send 2");
+
+                // 第三帧 park 在窗口上；随机 0-50ms 后本地拆除通道（Drop-CLOSE
+                // 回程 + 本端 remove_entry → kill），park 中的 send_datagram
+                // 必须干净返回。
+                let sender = tokio::spawn({
+                    let ch = ch;
+                    async move { ch.send_datagram(&vec![0u8; 64 * 1024]).await }
+                });
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                tokio::time::sleep(Duration::from_millis(rng % 51)).await;
+                holder.abort();
+
+                let res = tokio::time::timeout(Duration::from_secs(2), sender)
+                    .await
+                    .expect("sender must not hang")
+                    .expect("sender task");
+                assert!(
+                    matches!(
+                        res,
+                        Err(MuxError::ChannelClosed) | Err(MuxError::SessionClosed)
+                    ),
+                    "parked send must resolve on teardown, got {res:?}"
+                );
+            })
+            .await;
+            assert!(
+                outcome.is_ok(),
+                "round {round} did not finish in 10s: {:?}",
+                outcome.unwrap_err()
+            );
+        }
     })
     .await
     .expect("test timed out");
