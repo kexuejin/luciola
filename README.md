@@ -75,23 +75,24 @@ node server.js       # then open http://localhost:3000
 // Gradle — KMP (Android / JVM / iOS). Never add mavenLocal() here:
 // a stale local build silently shadows the published artifact (AGENTS.md §3).
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.9.0") // AAR ships the arm64 .so; JVM/iOS variants ride the same coordinate
+implementation("io.github.kexuejin:luciola:0.9.2") // root coordinate; the android variant resolves to the luciola-android AAR (ships the arm64 .so)
 ```
 
 ```toml
-# Rust — crates.io (all seven crates at 0.9.1)
-luciola = "0.9.1"        # engine, secure channels, trust primitives
-luciola-tunnel = "0.9.1" # mux v2 forwarding (the tunnel section below)
+# Rust — crates.io (all seven crates at 0.9.2)
+luciola = "0.9.2"        # engine, secure channels, trust primitives
+luciola-tunnel = "0.9.2" # mux v2 forwarding (the tunnel section below)
 # CLI: cargo install luciola-cli
 ```
 
 - **Node.js** — `@luciola/core` is not on npm; build `bindings/luciola-node` from source (see [Node.js](#nodejs--electron)).
 
-> **Released 0.9.1** (2026-11-03), checked against the registries rather than
-> assumed: crates.io answers `0.9.1` for all seven crates, and the iOS
-> `LuciolaUniFFI-0.9.1.zip` xcframework is attached to tag `v0.9.1`. **Maven
-> Central is still at 0.9.0** — the 0.9.1 KMP bundle waits for an operator upload —
-> so the Gradle coordinate above stays at 0.9.0 until that lands.
+> **Released 0.9.2** (2026-11-05), checked against the registries rather than
+> assumed: crates.io answers `0.9.2` for all seven crates; Maven Central's
+> `0.9.2` deployment is PUBLISHED with the root Gradle module metadata, the
+> `luciola-android` AAR, `luciola-jvm` and both iOS klibs on repo1 (the first
+> fully-published KMP bundle since 0.9.0); and the iOS `LuciolaUniFFI-0.9.2.zip`
+> xcframework is attached to tag `v0.9.2` with its `.sha256`.
 > Breaking-change markers: [CHANGELOG.md](CHANGELOG.md).
 
 ### CLI (diagnose your LAN in one command)

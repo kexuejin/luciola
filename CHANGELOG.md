@@ -12,21 +12,23 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.9.1** (workspace
+> **Published-versus-repo version note.** The repository is at **0.9.2** (workspace
 > `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Release state,
-> checked 2026-11-03 rather than assumed:
+> checked 2026-11-05 rather than assumed:
 >
 > - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
 >   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
->   `0.9.1` from the registry API, and the registry now shows every crate's
->   keywords and categories (they take effect on the publish that carries them).
-> - **Maven Central — 0.9.0 is the published artifact; 0.9.1 is pending.** The
->   `0.9.1` KMP bundle still has to be uploaded through the Sonatype Central
->   Portal (`scripts/publish-central.sh`); until that succeeds, Gradle consumers
->   must stay on `0.9.0`. Do not name `0.9.1` in a Gradle dependency yet.
-> - **iOS — published.** `LuciolaUniFFI-0.9.1.zip` (28,574,235 bytes, xcframework
+>   `0.9.2` from the registry API.
+> - **Maven Central — published and verified.** The `0.9.2` deployment reached
+>   `PUBLISHED` on the Central Portal; repo1 serves the root Gradle module
+>   metadata (`io.github.kexuejin:luciola:0.9.2`), the `luciola-android` AAR,
+>   `luciola-jvm`, and the `luciola-iosarm64` / `luciola-iossimulatorarm64`
+>   klibs. This is the first fully-published KMP bundle since 0.9.0 — the
+>   `0.9.1` bundle from the previous cycle never left staging, so Gradle
+>   consumers were held at `0.9.0` until now.
+> - **iOS — published.** `LuciolaUniFFI-0.9.2.zip` (28,745,887 bytes, xcframework
 >   for device and simulator, `luciola_uniffi.swift`, FFI headers) plus its
->   `.sha256` (`f8dce34b…363696`) are release assets on tag `v0.9.1`.
+>   `.sha256` (`7ebd438e…0bc30`) are release assets on tag `v0.9.2`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
