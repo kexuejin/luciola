@@ -377,45 +377,61 @@ impl DiscoverySession {
                 engine.announce().await;
 
                 loop {
-                    tokio::select! {
+                    // Match on recv() result explicitly: a broadcast RecvError
+                    // (Lagged/Closed) must NOT disable this select branch
+                    // permanently, or the engine loop silently stops delivering
+                    // events to JS (same fix as the uniffi binding).
+                    let event = tokio::select! {
                         _ = &mut shutdown_rx => {
                             engine.announce_exit().await;
                             break;
                         }
-                        Ok(event) = events.recv() => {
-                            let conv = |p: luciola::PeerRecord| {
-                                let device = p.device.map(|d| JsDeviceMeta {
-                                    device_type: d.device_type.as_str().to_string(),
-                                    icon: d.device_type.icon().to_string(),
-                                    os: d.os,
-                                    arch: d.arch,
-                                    model: d.model,
-                                    hostname: d.hostname,
-                                    device_id: d.device_id,
-                                });
-                                JsPeerRecord {
-                                    node_id: p.node_id,
-                                    name: p.name,
-                                    ip: p.ip,
-                                    udp_port: p.udp_port as u32,
-                                    tcp_port: p.tcp_port as u32,
-                                    device,
-                                    device_id: p.device_id,
-                                    product: p.product,
-                                    extra: p.extra,
-                                }
-                            };
-                            match event {
-                                luciola::PeerEvent::Found(p) => {
-                                    tsfn.call(DiscoveryEvent::Found(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
-                                }
-                                luciola::PeerEvent::Updated(p) => {
-                                    tsfn.call(DiscoveryEvent::Updated(conv(p)), ThreadsafeFunctionCallMode::NonBlocking);
-                                }
-                                luciola::PeerEvent::Lost(id) => {
-                                    tsfn.call(DiscoveryEvent::Lost(id), ThreadsafeFunctionCallMode::NonBlocking);
-                                }
-                            }
+                        event = events.recv() => match event {
+                            Ok(ev) => ev,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(_) => break,
+                        },
+                    };
+                    let conv = |p: luciola::PeerRecord| {
+                        let device = p.device.map(|d| JsDeviceMeta {
+                            device_type: d.device_type.as_str().to_string(),
+                            icon: d.device_type.icon().to_string(),
+                            os: d.os,
+                            arch: d.arch,
+                            model: d.model,
+                            hostname: d.hostname,
+                            device_id: d.device_id,
+                        });
+                        JsPeerRecord {
+                            node_id: p.node_id,
+                            name: p.name,
+                            ip: p.ip,
+                            udp_port: p.udp_port as u32,
+                            tcp_port: p.tcp_port as u32,
+                            device,
+                            device_id: p.device_id,
+                            product: p.product,
+                            extra: p.extra,
+                        }
+                    };
+                    match event {
+                        luciola::PeerEvent::Found(p) => {
+                            tsfn.call(
+                                DiscoveryEvent::Found(conv(p)),
+                                ThreadsafeFunctionCallMode::NonBlocking,
+                            );
+                        }
+                        luciola::PeerEvent::Updated(p) => {
+                            tsfn.call(
+                                DiscoveryEvent::Updated(conv(p)),
+                                ThreadsafeFunctionCallMode::NonBlocking,
+                            );
+                        }
+                        luciola::PeerEvent::Lost(id) => {
+                            tsfn.call(
+                                DiscoveryEvent::Lost(id),
+                                ThreadsafeFunctionCallMode::NonBlocking,
+                            );
                         }
                     }
                 }
