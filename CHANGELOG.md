@@ -37,6 +37,58 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
+## [0.9.3] — 2026-11-05
+
+### Fixed
+
+- **PONG/ACK replies no longer stall the shared mux read task** (`e61029a`).
+  `send_ctrl` awaited `send()` on the single shared outbound FIFO — with the
+  queue full, that backpressured `reader_loop` and serialised every channel's
+  OPEN/ACK/DATA handling (the outbound twin of the 0.9.1 inbound-stall fix).
+  PONG/ACK are must-not-lose frames and now ride the same `defer_ctrl` path as
+  WINDOW/EOF/CLOSE; the local TUNNEL_SPEC §1.4 was synced to the single-FIFO
+  reality.
+- **Device detection no longer freezes hosts** (`cc638d4`). The Node binding
+  ran the subprocess-based `DeviceDetector::detect()` synchronously on the
+  N-API main thread inside `start()`; the uniffi binding ran it on its
+  current-thread runtime's only worker. Both now run it via `spawn_blocking`.
+- Silent failures on the discovery and link paths are visible
+  (`5668236`): a failed discovery-socket restart logs at error level (after it
+  discovery is down with zero output — previously unreportable), listener
+  socket-option failures warn, presence-probe/profile-refresh wire failures
+  and broadcast events dropped for lack of subscribers log at debug.
+
+### Added
+
+- **Platform log sink on both FFI surfaces** (`2ae363e`): uniffi
+  `set_log_sink(LogSink)` and Node `setLogSink(cb)` deliver engine tracing
+  logs as `(level, message)` to the host. Additive API; per AGENTS.md §3 the
+  KMP and Swift bindings were regenerated in the same change and the iOS
+  staticlibs/xcframework rebuilt. The process-wide subscriber yields to a
+  host-owned one by design.
+- `DiscoveryEngine::spawn_tracked()` (`5cf197f`): the additive first-class
+  stop story for Rust embedders — the JoinHandles of the three engine loops.
+- Peer-registry eviction (`5cf197f`): entries whose peer has been silent for
+  over an hour (clamped to ≥ 2× `offline_after`) are removed — the table used
+  to grow without bound on long-running engines.
+- MSRV declared: `rust-version = "1.88"` workspace-wide, verified on a pinned
+  toolchain (1.87 cannot resolve the dependency tree), and gated in CI
+  (`e33de51`).
+- tokio features narrowed per crate instead of workspace-wide `full`
+  (`9bb70b9`).
+- CLI input-parsing unit tests, and a real EOF assertion replacing a
+  matches-everything tautology in the window-park survival test (`5722ba2`).
+
+### Changed
+
+- God modules split into focused files (`322f340`): `mux.rs` 2431 lines →
+  6 files, `tunnel_link.rs` 1642 → 5, core `lib.rs` → `engine.rs` +
+  `registry.rs`. Pure refactor, public API re-exported unchanged; the two
+  hand-written FFI surfaces stay whole deliberately.
+- `luciola-transfer` is explicitly documented as a Rust-core building block —
+  no CLI command or FFI surface yet, its own tests are the only driver
+  (`d1c04d2`).
+
 ## [0.9.2] — 2026-11-05
 
 ### Fixed

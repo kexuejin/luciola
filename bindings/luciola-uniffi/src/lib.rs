@@ -1565,7 +1565,7 @@ impl tracing::field::Visit for MessageVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         use std::fmt::Write;
         if !self.0.is_empty() {
-            self.0.push_str(" ");
+            self.0.push(' ');
         }
         let _ = write!(self.0, "{}={:?}", field.name(), value);
     }

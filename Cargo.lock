@@ -652,7 +652,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "luciola"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "aes-gcm",
  "ed25519-dalek",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-cli"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "clap",
  "luciola",
@@ -695,11 +695,11 @@ dependencies = [
 
 [[package]]
 name = "luciola-ip"
-version = "0.9.2"
+version = "0.9.3"
 
 [[package]]
 name = "luciola-net"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "luciola-ip",
  "luciola-proto",
@@ -710,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-node"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "luciola",
  "luciola-ip",
@@ -723,11 +723,13 @@ dependencies = [
  "qrcode",
  "rand",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "luciola-proto"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "rand",
  "serde",
@@ -737,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-transfer"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "luciola",
  "sha2",
@@ -748,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-tunnel"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "luciola",
  "thiserror",
@@ -759,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-uniffi"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "luciola",
  "luciola-ip",
@@ -770,6 +772,8 @@ dependencies = [
  "rand",
  "thiserror",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uniffi",
 ]
 

@@ -12,10 +12,10 @@ categories = ["network-programming", "asynchronous"]
 description = "Lightweight, resilient LAN peer discovery and interface intelligence engine"
 
 [dependencies]
-luciola-ip = { path = "../luciola-ip", version = "0.9.2" }
-luciola-net = { path = "../luciola-net", version = "0.9.2" }
-luciola-proto = { path = "../luciola-proto", version = "0.9.2" }
-luciola-transfer = { path = "../luciola-transfer", version = "0.9.2", optional = true }
+luciola-ip = { path = "../luciola-ip", version = "0.9.3" }
+luciola-net = { path = "../luciola-net", version = "0.9.3" }
+luciola-proto = { path = "../luciola-proto", version = "0.9.3" }
+luciola-transfer = { path = "../luciola-transfer", version = "0.9.3", optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
 tracing.workspace = true
 thiserror.workspace = true
@@ -36,5 +36,5 @@ default = ["transfer"]
 transfer = ["dep:luciola-transfer"]
 
 [dev-dependencies]
-luciola-net = { path = "../luciola-net", version = "0.9.2" }
+luciola-net = { path = "../luciola-net", version = "0.9.3" }
 network-interface = "2.0"

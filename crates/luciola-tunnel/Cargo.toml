@@ -12,7 +12,7 @@ categories = ["network-programming"]
 description = "LAN TCP multiplexing (mux v2 with per-channel flow control, keepalive, remote forward, UDP mapping and hostname targets over a luciola SecureStream)"
 
 [dependencies]
-luciola = { path = "../luciola", version = "0.9.2" }
+luciola = { path = "../luciola", version = "0.9.3" }
 tokio = { workspace = true, features = ["rt", "net", "time", "sync", "io-util"] }
 tokio-util.workspace = true
 thiserror.workspace = true

@@ -539,7 +539,6 @@ impl DiscoveryEngine {
 
 /// Bind an IPv6-only UDP socket on `port` (0 = same fallback as v4), join
 /// ff02::1 on every physical interface, and set multicast loopback on.
-
 fn bind_v6_socket(port: u16) -> Option<Arc<UdpSocket>> {
     use socket2::{Domain, Protocol, Socket as Sock, Type};
     let sock = Sock::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;
@@ -589,7 +588,7 @@ mod tests {
     use super::{DiscoveryConfig, DiscoveryEngine};
     use crate::proto::Profile;
     use crate::registry::PeerEvent;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[tokio::test]
     async fn two_nodes_discover_over_ipv6_loopback() {
