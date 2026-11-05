@@ -6,6 +6,7 @@
 import { createRequire } from 'node:module';
 import assert from 'node:assert';
 import dgram from 'node:dgram';
+import net from 'node:net';
 
 const require = createRequire(import.meta.url);
 const luciola = require('../index.js');
@@ -89,5 +90,66 @@ assert.ok(
 );
 observer.stop();
 dialer.stop();
+
+// 4) Error contract: one shared taxonomy for Rust / uniffi / Node.
+const codes = luciola.getErrorCodes();
+assert.ok(Array.isArray(codes) && codes.length > 0, 'getErrorCodes must return a list');
+assert.strictEqual(new Set(codes).size, codes.length, 'error codes must be unique');
+for (const c of codes) {
+  assert.match(c, /^[a-z][a-z0-9_]*$/, `error code must be snake_case: ${c}`);
+}
+for (const required of ['bind_failed', 'untrusted_peer', 'unknown']) {
+  assert.ok(codes.includes(required), `error codes must include ${required}`);
+}
+
+// classifyError normalises the canonical form AND the legacy tunnel prefixes
+// that TUNNEL_SPEC still puts on the wire.
+const bindErr = luciola.classifyError('forward_bind_failed: port 3020 in use');
+assert.strictEqual(bindErr.code, 'bind_failed', 'legacy prefix must map to bind_failed');
+assert.strictEqual(bindErr.message, 'port 3020 in use', 'the code prefix must be stripped once');
+assert.strictEqual(bindErr.retryable, true, 'a busy port is retryable');
+
+const pinErr = luciola.classifyError('untrusted_peer: peer key mismatch');
+assert.strictEqual(pinErr.code, 'untrusted_peer');
+assert.strictEqual(pinErr.retryable, false, 'a wrong pin must never be advertised as retryable');
+
+const freeform = luciola.classifyError('a free-form message from an older peer');
+assert.strictEqual(freeform.code, 'unknown', 'unrecognised text degrades to unknown');
+assert.strictEqual(
+  freeform.message,
+  'a free-form message from an older peer',
+  'unknown text must be preserved, never dropped',
+);
+
+// 5) SecureChannel error events carry the structured companion, and it must
+//    agree with classifyError(detail). Dialing a closed loopback port fails
+//    deterministically (connection refused), so there is no timeout race.
+const freeTcpPort = () =>
+  new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+const deadPort = await freeTcpPort();
+const errChannel = new luciola.SecureChannel(id.seed);
+let linkEvent = null;
+errChannel.connect(['127.0.0.1'], deadPort, id.publicKey, false, (ev) => {
+  if (ev.state === 'error' && !linkEvent) linkEvent = ev;
+});
+assert.ok(await waitFor(() => linkEvent !== null, 5000), 'dialing a closed port must emit error');
+assert.strictEqual(typeof linkEvent.detail, 'string', 'detail stays for backward compatibility');
+const parsed = luciola.classifyError(linkEvent.detail);
+assert.ok(linkEvent.error, 'error/retrying events must carry the structured error object');
+assert.strictEqual(linkEvent.error.code, parsed.code, 'error.code must agree with classifyError(detail)');
+assert.strictEqual(linkEvent.error.message, parsed.message, 'error.message must agree with classifyError(detail)');
+assert.strictEqual(linkEvent.error.retryable, parsed.retryable, 'error.retryable must agree with classifyError(detail)');
+assert.ok(
+  linkEvent.detail.startsWith(`${linkEvent.error.code}: `),
+  'detail must keep exactly one "<code>: " prefix',
+);
+errChannel.close();
 
 console.log('✅ node contract test passed');

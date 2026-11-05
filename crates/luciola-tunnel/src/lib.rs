@@ -20,6 +20,8 @@ pub mod forward;
 pub mod mux;
 pub mod tunnel_link;
 
+use luciola_proto::{ErrorCode, ErrorInfo};
+
 pub use forward::{
     start_forward_endpoint, start_local_forward, start_remote_forward, start_udp_forward,
     ForwardAcl, ForwardCounters, ForwardEndpointGuard, ForwardRule, ForwardStatus,
@@ -60,10 +62,80 @@ pub enum TunnelError {
 impl TunnelError {
     /// 同步错误 → 上报事件（state kind, detail），uniffi / node 双绑定共用
     /// 一处真相：`Bind` 产出 spec 规定的 `forward_bind_failed: ` 前缀。
+    /// 保留该前缀是因为 TUNNEL_SPEC 与 `bind_conflict_reports_forward_bind_failed`
+    /// 把它当契约；需要机器可读码时用 [`Self::error_info`]。
     pub fn to_state(&self) -> (&'static str, String) {
         match self {
             TunnelError::Bind(m) => ("error", format!("forward_bind_failed: {m}")),
             other => ("error", other.to_string()),
         }
+    }
+
+    /// Classify into the shared FFI taxonomy. `Mux` delegates to the wrapped
+    /// [`MuxError`] instead of collapsing every mux failure into one code.
+    pub fn error_info(&self) -> ErrorInfo {
+        match self {
+            TunnelError::Mux(e) => ErrorInfo::from(e),
+            other => {
+                let code = match other {
+                    TunnelError::InvalidTarget(_) => ErrorCode::InvalidArgument,
+                    TunnelError::InvalidRule(_) => ErrorCode::InvalidRule,
+                    TunnelError::Bind(_) => ErrorCode::BindFailed,
+                    TunnelError::Stopped(_) => ErrorCode::Stopped,
+                    TunnelError::Io(_) => ErrorCode::IoError,
+                    TunnelError::NotConfigured(_) => ErrorCode::NotConfigured,
+                    TunnelError::RoleMismatch(_) => ErrorCode::RoleMismatch,
+                    TunnelError::Unavailable(_) => ErrorCode::Unavailable,
+                    TunnelError::Mux(_) => unreachable!("handled above"),
+                };
+                ErrorInfo::new(code, self.to_string())
+            }
+        }
+    }
+}
+
+impl From<&MuxError> for ErrorInfo {
+    fn from(e: &MuxError) -> Self {
+        let code = match e {
+            MuxError::SessionClosed | MuxError::ChannelClosed => ErrorCode::ChannelClosed,
+            MuxError::OpenTimeout(_) => ErrorCode::Timeout,
+            MuxError::Rejected { .. } => ErrorCode::ChannelClosed,
+            MuxError::InvalidTarget(_) | MuxError::InvalidAckStatus(_) => {
+                ErrorCode::InvalidArgument
+            }
+            MuxError::Protocol(_) => ErrorCode::ProtocolViolation,
+            MuxError::ModeMismatch | MuxError::DatagramTooLarge(_) => ErrorCode::ProtocolViolation,
+            MuxError::UnsupportedByPeer(_) => ErrorCode::CapabilityMismatch,
+        };
+        Self::new(code, e.to_string())
+    }
+}
+
+impl From<&TunnelError> for ErrorInfo {
+    fn from(e: &TunnelError) -> Self {
+        e.error_info()
+    }
+}
+
+#[cfg(test)]
+mod error_taxonomy_tests {
+    use super::*;
+
+    #[test]
+    fn tunnel_errors_keep_the_spec_prefix_and_gain_a_code() {
+        let e = TunnelError::Bind("port in use".into());
+        assert!(e.to_state().1.starts_with("forward_bind_failed: "));
+        assert_eq!(e.error_info().code, ErrorCode::BindFailed);
+    }
+
+    #[test]
+    fn mux_errors_are_not_all_collapsed() {
+        let timeout = MuxError::OpenTimeout(std::time::Duration::from_secs(1));
+        let bad_frame = MuxError::Protocol("bad magic".into());
+        assert_eq!(ErrorInfo::from(&timeout).code, ErrorCode::Timeout);
+        assert_eq!(
+            ErrorInfo::from(&bad_frame).code,
+            ErrorCode::ProtocolViolation
+        );
     }
 }

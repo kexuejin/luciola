@@ -7,7 +7,7 @@
 //! - Dual-pool candidate address selection (LAN vs Advertised)
 
 use luciola_ip::{get_ipv6_scope, is_private_or_local, is_proxy_tun_address, Ipv6Scope};
-use luciola_proto::{DeviceMeta, DeviceType};
+use luciola_proto::{DeviceMeta, DeviceType, ErrorCode, ErrorInfo};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use thiserror::Error;
@@ -16,6 +16,15 @@ use thiserror::Error;
 pub enum NetError {
     #[error("failed to query system network interfaces: {0}")]
     QueryFailed(String),
+}
+
+impl From<&NetError> for ErrorInfo {
+    fn from(e: &NetError) -> Self {
+        let code = match e {
+            NetError::QueryFailed(_) => ErrorCode::NetworkQueryFailed,
+        };
+        Self::new(code, e.to_string())
+    }
 }
 
 /// Check if interface name corresponds to a virtual, tunnel, or emulator interface.

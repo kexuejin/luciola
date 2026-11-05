@@ -24,9 +24,11 @@ pub mod protocol;
 pub mod receiver;
 pub mod sender;
 
-pub use protocol::{FileAck, FileChunk};
+pub use protocol::{FileAck, FileChunk, FileIntro};
 pub use receiver::{FileReceiver, ReceiverConfig};
 pub use sender::{FileSender, SenderConfig};
+
+use luciola_proto::{ErrorCode, ErrorInfo};
 
 #[derive(thiserror::Error, Debug)]
 pub enum TransferError {
@@ -38,4 +40,33 @@ pub enum TransferError {
     State(String),
     #[error("size mismatch: expected {expected}, got {actual}")]
     SizeMismatch { expected: u64, actual: u64 },
+}
+
+impl From<&TransferError> for ErrorInfo {
+    fn from(e: &TransferError) -> Self {
+        let code = match e {
+            TransferError::Io(_) => ErrorCode::IoError,
+            TransferError::Decode(_) => ErrorCode::DecodeError,
+            TransferError::State(_) => ErrorCode::StateError,
+            TransferError::SizeMismatch { .. } => ErrorCode::SizeMismatch,
+        };
+        Self::new(code, e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod error_taxonomy_tests {
+    use super::*;
+
+    #[test]
+    fn transfer_errors_classify_without_losing_the_message() {
+        let e = TransferError::SizeMismatch {
+            expected: 10,
+            actual: 9,
+        };
+        let info = ErrorInfo::from(&e);
+        assert_eq!(info.code, ErrorCode::SizeMismatch);
+        assert_eq!(info.message, e.to_string());
+        assert!(!info.retryable());
+    }
 }

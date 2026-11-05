@@ -290,9 +290,14 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(UniffiRustCallStat
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri(RustBuffer name, RustBuffer product, int16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer publicKey, RustBuffer pin, UniffiRustCallStatus *_Nonnull out_status
 );
+RustBuffer uniffi_luciola_uniffi_fn_func_classify_error(RustBuffer codeOrDetail, RustBuffer message, UniffiRustCallStatus *_Nonnull out_status
+);
 RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer localPk, RustBuffer remotePk, UniffiRustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_func_error_codes(UniffiRustCallStatus *_Nonnull out_status
+    
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_generate_device_identity(UniffiRustCallStatus *_Nonnull out_status
     
@@ -470,10 +475,16 @@ int16_t uniffi_luciola_uniffi_checksum_func_advertised_addresses(void
 int16_t uniffi_luciola_uniffi_checksum_func_build_pairing_uri(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_func_classify_error(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_func_error_codes(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_func_generate_device_identity(void

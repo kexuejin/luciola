@@ -743,6 +743,7 @@ name = "luciola-transfer"
 version = "0.9.3"
 dependencies = [
  "luciola",
+ "luciola-proto",
  "sha2",
  "thiserror",
  "tokio",
@@ -754,6 +755,7 @@ name = "luciola-tunnel"
 version = "0.9.3"
 dependencies = [
  "luciola",
+ "luciola-proto",
  "thiserror",
  "tokio",
  "tokio-util",

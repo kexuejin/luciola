@@ -1235,6 +1235,10 @@ internal typealias UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByVal
 
 
 
+
+
+
+
 @Synchronized
 private fun findLibraryName(componentName: String): String {
     val libOverride = System.getProperty("uniffi.component.$componentName.libraryOverride")
@@ -1280,10 +1284,16 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 28829.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_func_classify_error() != 40540.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_func_error_codes() != 47804.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_func_generate_device_identity() != 39160.toShort()) {
@@ -1506,10 +1516,16 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_func_build_pairing_uri(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_classify_error(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_comparison_pin(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_error_codes(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_generate_device_identity(
@@ -2030,6 +2046,12 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): RustBufferByValue
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_classify_error(
+        `codeOrDetail`: RustBufferByValue,
+        `message`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_func_comparison_pin(
         `localPk`: RustBufferByValue,
         `remotePk`: RustBufferByValue,
@@ -2038,6 +2060,10 @@ internal object UniffiLib : Library {
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_func_default_race_candidates(
         `addresses`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_error_codes(
         uniffiCallStatus: UniffiRustCallStatus,
     ): RustBufferByValue
     @JvmStatic
@@ -3862,6 +3888,31 @@ public object FfiConverterTypeDiscoveredPeer: FfiConverterRustBuffer<DiscoveredP
 
 
 
+public object FfiConverterTypeErrorInfoDto: FfiConverterRustBuffer<ErrorInfoDto> {
+    override fun read(buf: ByteBuffer): ErrorInfoDto {
+        return ErrorInfoDto(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ErrorInfoDto): ULong = (
+            FfiConverterString.allocationSize(value.`code`) +
+            FfiConverterString.allocationSize(value.`message`) +
+            FfiConverterBoolean.allocationSize(value.`retryable`)
+    )
+
+    override fun write(value: ErrorInfoDto, buf: ByteBuffer) {
+        FfiConverterString.write(value.`code`, buf)
+        FfiConverterString.write(value.`message`, buf)
+        FfiConverterBoolean.write(value.`retryable`, buf)
+    }
+}
+
+
+
+
 public object FfiConverterTypeForwardRuleDto: FfiConverterRustBuffer<ForwardRuleDto> {
     override fun read(buf: ByteBuffer): ForwardRuleDto {
         return ForwardRuleDto(
@@ -4950,6 +5001,26 @@ public actual fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.Str
 }
 
 /**
+ * Normalise either callback shape into one [`ErrorInfoDto`]:
+ * - `classify_error(code, Some(message))` for `on_error`;
+ * - `classify_error(detail, None)` for `on_state("error", detail)`, where the
+ * detail is a `"<code>: <message>"` wire string.
+ *
+ * Legacy tunnel prefixes (`forward_bind_failed:`, `tunnel_*`) map to their
+ * canonical codes; unrecognised text becomes `code = "unknown"` with the
+ * full text preserved in `message`.
+ */
+public actual fun `classifyError`(`codeOrDetail`: kotlin.String, `message`: kotlin.String?): ErrorInfoDto {
+    return FfiConverterTypeErrorInfoDto.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_classify_error(
+            FfiConverterString.lower(`codeOrDetail`),
+            FfiConverterOptionalString.lower(`message`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
  * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
  */
 public actual fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotlin.ByteArray): kotlin.String {
@@ -4970,6 +5041,18 @@ public actual fun `defaultRaceCandidates`(`addresses`: List<kotlin.String>): Lis
     return FfiConverterSequenceString.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_default_race_candidates(
             FfiConverterSequenceString.lower(`addresses`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Every code in the error contract, in a stable order. Use this to validate
+ * that a host handles the full set (and to detect a newer engine).
+ */
+public actual fun `errorCodes`(): List<kotlin.String> {
+    return FfiConverterSequenceString.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_error_codes(
             uniffiRustCallStatus,
         )
     })

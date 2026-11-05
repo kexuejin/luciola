@@ -9,6 +9,8 @@ import {
   setLogSink,
   generateDeviceIdentity,
   parsePairingUri,
+  getErrorCodes,
+  classifyError,
   DiscoverySession,
   SecureChannel,
 } from '../index';
@@ -32,6 +34,13 @@ session.start((event) => {
     const extra: string | undefined = event.peer.extra;
     const tcpPort: number | undefined = event.peer.tcpPort;
     console.log(extra, tcpPort);
+  }
+  if (event.type === 'error') {
+    // Structured triple: branch on code, show message, decide with retryable.
+    const code: string | undefined = event.code;
+    const message: string | undefined = event.message;
+    const retryable: boolean | undefined = event.retryable;
+    console.log(code, message, retryable);
   }
 });
 session.stop();
@@ -62,7 +71,25 @@ const stats = channel.stats();
 const enqueued: number = stats.framesEnqueued;
 const dequeued: number = stats.framesDequeued;
 console.log(enqueued, dequeued);
+
+// Channel events: detail stays a string, error is the structured companion.
+channel.connect(['127.0.0.1'], 1, identity.publicKey, false, (event) => {
+  const state: string | undefined = event.state;
+  const detail: string | undefined = event.detail;
+  const code: string | undefined = event.error?.code;
+  const retryable: boolean | undefined = event.error?.retryable;
+  console.log(state, detail, code, retryable);
+});
 channel.close();
+
+// Error taxonomy: the code list is a string array; classifyError returns the
+// documented record shape.
+const codes: string[] = getErrorCodes();
+const classified = classifyError('forward_bind_failed: port in use');
+const classifiedCode: string = classified.code;
+const classifiedMessage: string = classified.message;
+const classifiedRetryable: boolean = classified.retryable;
+console.log(codes.length, classifiedCode, classifiedMessage, classifiedRetryable);
 
 // Log sink: the documented call shape accepts a callback or null.
 setLogSink(null);

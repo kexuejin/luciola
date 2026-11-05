@@ -113,6 +113,31 @@ T3 隧道端口分配(公式与配置键自 v2 前移,`tunnel_port` 即刻可用
 - KMP:`DiscoveryController` 已内置 peer 表维护与老化,宿主只消费
   `onPeersChanged` 快照;`onEngineError` 需要透传到 UI。
 
+### 5.1 结构化错误码(0.10.0)
+
+错误不再只能当人类可读字符串处理。唯一事实来源是
+`luciola_proto::ErrorCode`(21 个稳定的 `snake_case` 码),每个 crate 通过
+`From<&Err> for ErrorInfo` 映射,三套 FFI 面给出同一套码。
+
+| 面 | 取码方式 |
+| :--- | :--- |
+| Rust | `ErrorInfo::from(&err)` → `code` / `message` / `retryable()` |
+| uniffi(KMP/Swift) | `errorCodes()` 取全集;`classifyError(codeOrDetail, message?)` 归一化回调字符串 → `ErrorInfoDto{code, message, retryable}` |
+| Node | `getErrorCodes()` / `classifyError(detail)`;发现 `error` 事件直接带 `code` / `message` / `retryable`;`SecureChannel` 的 `error` / `retrying` 事件额外带 `error` 对象 |
+
+兼容性:
+
+- 既有回调签名不变。`on_error(code, message)` 与
+  `on_state("error", detail)` 里的字符串仍是 `"<code>: <message>"`。
+- 旧隧道前缀(`forward_bind_failed:` / `tunnel_bind_failed:` /
+  `tunnel_link_failed:` / `tunnel_handshake_failed:`)会被归一化成
+  `bind_failed` / `io_error` / `handshake_failed`,TUNNEL_SPEC 的线缆字符串
+  不变。
+- **Node 发现事件是唯一的行为变化**:`message` 不再拼接 code 前缀,改为
+  独立的 `code` 字段。宿主应 `switch (event.code)`,而不是解析 `message`。
+- 未知码一律降级为 `unknown`,`message` 原样保留;不要因为出现新码就崩溃。
+- `retryable` 只是提示:错配的密钥永远不会变对,端口占用通常会自行恢复。
+
 ## 6. 已知环境行为(排障表)
 
 | 症状 | 原因 | 处置 |

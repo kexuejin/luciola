@@ -51,9 +51,32 @@ primary one is cited.
   port read back from the listening line), a wrong-pin rejection that asserts
   no file is written, and a `transfer pin` identity check. The unit tests in
   `src/transfer.rs` cover a 512 KiB round trip and the path-traversal guard.
+- **One structured error taxonomy across every surface.** `luciola_proto`
+  gains `ErrorCode` (21 stable `snake_case` codes, `#[non_exhaustive]`) and
+  `ErrorInfo` (code + original message + `retryable` hint). Each crate maps
+  its own error enum via `From<&Err> for ErrorInfo`, so Android, iOS, Swift
+  and Node report the same code for the same failure. `wire_detail()` keeps
+  the legacy `"<code>: <message>"` string form and `parse_detail()` inverts
+  it, mapping the TUNNEL_SPEC prefixes (`forward_bind_failed:`,
+  `tunnel_bind_failed:`, `tunnel_link_failed:`, `tunnel_handshake_failed:`)
+  onto canonical codes without changing the wire strings.
+- **uniffi**: `ErrorInfoDto { code, message, retryable }`, `errorCodes()` and
+  `classifyError(codeOrDetail, message?)`. Additive — existing listener
+  signatures are untouched.
+- **Node**: `getErrorCodes()` and `classifyError(detail)`; discovery `error`
+  events now carry `code` / `message` / `retryable`; `SecureChannel` `error`
+  and `retrying` events carry a nested `error` object alongside the legacy
+  `detail` string. `index.d.ts`, the runtime contract test and the TypeScript
+  consumer check cover all of it.
+- KMP facade helpers `luciolaErrorCodes()` and `luciolaClassifyError()`.
 
 ### Changed
 
+- **Node discovery `error` events (behaviour change).** `message` is now the
+  human detail without a code prefix; the code moved to its own field. A host
+  that parsed the old flattened `"<code>: <message>"` string must switch on
+  `code` instead. The Node package is still unpublished on npm, and the other
+  two surfaces keep their existing string callbacks unchanged.
 - README / README.zh-CN now describe the transfer CLI instead of the
   "Rust-core only, no CLI command" downgrade note. The crate remains without
   a KMP / Swift / Node surface.

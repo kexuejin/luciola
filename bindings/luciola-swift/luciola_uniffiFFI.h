@@ -569,6 +569,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
 RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri(RustBuffer name, RustBuffer product, uint16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer public_key, RustBuffer pin, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_CLASSIFY_ERROR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_CLASSIFY_ERROR
+RustBuffer uniffi_luciola_uniffi_fn_func_classify_error(RustBuffer code_or_detail, RustBuffer message, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
 RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer local_pk, RustBuffer remote_pk, RustCallStatus *_Nonnull out_status
@@ -577,6 +582,12 @@ RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer local_pk, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
 RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_ERROR_CODES
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_ERROR_CODES
+RustBuffer uniffi_luciola_uniffi_fn_func_error_codes(RustCallStatus *_Nonnull out_status
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_GENERATE_DEVICE_IDENTITY
@@ -1007,6 +1018,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_build_pairing_uri(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_CLASSIFY_ERROR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_CLASSIFY_ERROR
+uint16_t uniffi_luciola_uniffi_checksum_func_classify_error(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_COMPARISON_PIN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_COMPARISON_PIN
 uint16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
@@ -1016,6 +1033,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
 uint16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_ERROR_CODES
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_ERROR_CODES
+uint16_t uniffi_luciola_uniffi_checksum_func_error_codes(void
     
 );
 #endif

@@ -12,6 +12,7 @@ categories = ["network-programming", "filesystem"]
 description = "Chunked file transfer data plane (offset-addressed writes, ACK prefix, SHA-256 receipt)"
 
 [dependencies]
+luciola-proto = { path = "../luciola-proto", version = "0.9.3" }
 tokio = { workspace = true, features = ["fs", "io-util", "sync", "time"] }
 sha2.workspace = true
 thiserror.workspace = true

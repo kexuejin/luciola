@@ -3,8 +3,44 @@ extern crate napi_derive;
 
 use luciola_ip::{is_lan_address as ip_is_lan, is_proxy_tun_address};
 use luciola_net::{is_physical_interface_name, is_virtual_interface_name, NetworkDetector};
+use luciola_proto::{ErrorCode, ErrorInfo};
 use luciola_tunnel::tunnel_link::{TunnelBase, TunnelLink, TunnelReporter};
 use luciola_tunnel::{ForwardRule, TunnelError};
+
+/// The closed set of stable wire codes delivered by `error` events.
+///
+/// A host can validate its `switch` at startup, and detect a newer engine by
+/// diffing this list against the codes it knows.
+#[napi]
+pub fn get_error_codes() -> Vec<String> {
+    ErrorCode::ALL
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect()
+}
+
+/// Normalise a callback detail (`"<code>: <message>"`, including the legacy
+/// tunnel prefixes) into a structured record. Useful for hosts handling
+/// `onEvent` details emitted by older peers.
+#[napi(object)]
+pub struct JsErrorInfo {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+/// Classify an `onEvent` detail string. Unknown text is preserved in
+/// `message` with `code = "unknown"`.
+#[napi]
+pub fn classify_error(detail: String) -> JsErrorInfo {
+    let info = ErrorInfo::parse_detail(&detail);
+    let retryable = info.retryable();
+    JsErrorInfo {
+        code: info.code_str().to_string(),
+        message: info.message,
+        retryable,
+    }
+}
 
 /// Select the best local IPv4 address for QR code / LAN access.
 ///
@@ -284,8 +320,11 @@ impl DiscoverySession {
                         obj.set_named_property("nodeId", id)?;
                     }
                     DiscoveryEvent::Error(code, m) => {
+                        let info = ErrorInfo::new(ErrorCode::from_code(&code), m);
                         obj.set_named_property("type", "error")?;
-                        obj.set_named_property("message", format!("{code}: {m}"))?;
+                        obj.set_named_property("code", info.code_str())?;
+                        obj.set_named_property("message", &info.message)?;
+                        obj.set_named_property("retryable", info.retryable())?;
                     }
                 }
                 Ok(vec![obj])
@@ -368,7 +407,7 @@ impl DiscoverySession {
                             // the port is occupied", never a silent move.
                             tsfn.call(
                                 DiscoveryEvent::Error(
-                                    "bind_failed".to_string(),
+                                    ErrorCode::BindFailed.as_str().to_string(),
                                     format!("discovery port {port} landed on {actual}"),
                                 ),
                                 ThreadsafeFunctionCallMode::NonBlocking,
@@ -378,8 +417,9 @@ impl DiscoverySession {
                         candidate
                     }
                     Err(e) => {
+                        let info = ErrorInfo::from(&e);
                         tsfn.call(
-                            DiscoveryEvent::Error("bind_failed".to_string(), format!("{e}")),
+                            DiscoveryEvent::Error(info.code_str().to_string(), info.message),
                             ThreadsafeFunctionCallMode::NonBlocking,
                         );
                         return;
@@ -1005,6 +1045,19 @@ impl SecureChannel {
                 }
                 if let Some(d) = detail {
                     obj.set_named_property("detail", d)?;
+                    // Error / retry details carry a `"<code>: <message>"`
+                    // prefix. Surface it as a structured companion instead of
+                    // forcing every host to parse the prose. `connected` uses
+                    // `detail` for the fingerprint, so only these two states
+                    // get an `error` object.
+                    if matches!(state.as_deref(), Some("error") | Some("retrying")) {
+                        let info = ErrorInfo::parse_detail(d);
+                        let mut err = ctx.env.create_object()?;
+                        err.set_named_property("code", info.code_str())?;
+                        err.set_named_property("message", &info.message)?;
+                        err.set_named_property("retryable", info.retryable())?;
+                        obj.set_named_property("error", err)?;
+                    }
                 }
                 if let Some(m) = message {
                     let buf = ctx.env.create_buffer_copy(m.as_slice())?;
@@ -1079,12 +1132,14 @@ impl SecureChannel {
                                     Err(e) => {
                                         connected.store(false, std::sync::atomic::Ordering::SeqCst);
                                         if !auto {
-                                            tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            let info = ErrorInfo::from(&e);
+                                            tsfn.call((Some("error".to_string()), Some(info.wire_detail()), None), ThreadsafeFunctionCallMode::NonBlocking);
                                             return;
                                         }
                                         reconnect_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let jittered = timings.backoff(backoff);
-                                        tsfn.call((Some("retrying".to_string()), Some(format!("{}; next attempt in {:?}", e, jittered)), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                        let info = ErrorInfo::from(&e);
+                                        tsfn.call((Some("retrying".to_string()), Some(format!("{}; next attempt in {:?}", info.wire_detail(), jittered)), None), ThreadsafeFunctionCallMode::NonBlocking);
                                         tokio::select! {
                                             _ = tokio::time::sleep(jittered) => {}
                                             _ = &mut shutdown => break 'outer,
@@ -1103,7 +1158,8 @@ impl SecureChannel {
                                     l = luciola::link::bind_dual_stack_listener(port) => match l {
                                         Ok(l) => l,
                                         Err(e) => {
-                                            tsfn.call((Some("error".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            let info = ErrorInfo::new(ErrorCode::BindFailed, e.to_string());
+                                            tsfn.call((Some("error".to_string()), Some(info.wire_detail()), None), ThreadsafeFunctionCallMode::NonBlocking);
                                             return;
                                         }
                                     },
@@ -1114,7 +1170,8 @@ impl SecureChannel {
                                         Ok(s) => s,
                                         Err(e) => {
                                             // Handshake failures (wrong initiator) keep the listener alive.
-                                            tsfn.call((Some("retrying".to_string()), Some(e.to_string()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            let info = ErrorInfo::from(&e);
+                                            tsfn.call((Some("retrying".to_string()), Some(info.wire_detail()), None), ThreadsafeFunctionCallMode::NonBlocking);
                                             continue 'outer;
                                         }
                                     },

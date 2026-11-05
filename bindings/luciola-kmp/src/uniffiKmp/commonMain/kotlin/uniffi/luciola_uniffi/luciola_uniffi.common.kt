@@ -778,6 +778,34 @@ public data class DiscoveredPeer (
 
 
 /**
+ * A structured engine error, projected from `luciola_proto::ErrorInfo`.
+ *
+ * Hosts receive loose strings from the long-standing callback interfaces
+ * (`on_error(code, message)` and `on_state("error", detail)`). This record is
+ * the typed companion: call [`classify_error`] once and branch on `code`
+ * instead of parsing human prose. Additive — no existing callback changes.
+ */
+
+public data class ErrorInfoDto (
+    /**
+     * Stable snake_case wire code; unknown codes are reported as `"unknown"`.
+     */
+    var `code`: kotlin.String, 
+    /**
+     * The original human-readable detail, never localised or truncated.
+     */
+    var `message`: kotlin.String, 
+    /**
+     * Whether the host should retry the operation.
+     */
+    var `retryable`: kotlin.Boolean
+) {
+    public companion object
+}
+
+
+
+/**
  * 转发规则（T3 `enable_forward_endpoint` / v2 `enable_remote_endpoint`）：
  * 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
  */
@@ -1177,6 +1205,18 @@ public expect fun `advertisedAddresses`(): List<kotlin.String>
 public expect fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?): kotlin.String
 
 /**
+ * Normalise either callback shape into one [`ErrorInfoDto`]:
+ * - `classify_error(code, Some(message))` for `on_error`;
+ * - `classify_error(detail, None)` for `on_state("error", detail)`, where the
+ * detail is a `"<code>: <message>"` wire string.
+ *
+ * Legacy tunnel prefixes (`forward_bind_failed:`, `tunnel_*`) map to their
+ * canonical codes; unrecognised text becomes `code = "unknown"` with the
+ * full text preserved in `message`.
+ */
+public expect fun `classifyError`(`codeOrDetail`: kotlin.String, `message`: kotlin.String?): ErrorInfoDto
+
+/**
  * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
  */
 public expect fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotlin.ByteArray): kotlin.String
@@ -1186,6 +1226,12 @@ public expect fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotli
  * first IPv6 GUA. Feed the result into [race_connect].
  */
 public expect fun `defaultRaceCandidates`(`addresses`: List<kotlin.String>): List<kotlin.String>
+
+/**
+ * Every code in the error contract, in a stable order. Use this to validate
+ * that a host handles the full set (and to detect a newer engine).
+ */
+public expect fun `errorCodes`(): List<kotlin.String>
 
 /**
  * Generate a fresh device identity (Ed25519). Keep the seed secret.

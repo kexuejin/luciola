@@ -2,6 +2,7 @@ uniffi::setup_scaffolding!();
 
 use luciola_ip::{is_lan_address as ip_is_lan, is_proxy_tun_address};
 use luciola_net::{is_physical_interface_name, is_virtual_interface_name, NetworkDetector};
+use luciola_proto::{ErrorCode, ErrorInfo};
 use qrcode::render::unicode;
 use qrcode::QrCode;
 
@@ -74,6 +75,56 @@ pub fn get_device_meta() -> DeviceMeta {
         arch: meta.arch,
         model: meta.model,
         device_id,
+    }
+}
+
+/// A structured engine error, projected from `luciola_proto::ErrorInfo`.
+///
+/// Hosts receive loose strings from the long-standing callback interfaces
+/// (`on_error(code, message)` and `on_state("error", detail)`). This record is
+/// the typed companion: call [`classify_error`] once and branch on `code`
+/// instead of parsing human prose. Additive — no existing callback changes.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ErrorInfoDto {
+    /// Stable snake_case wire code; unknown codes are reported as `"unknown"`.
+    pub code: String,
+    /// The original human-readable detail, never localised or truncated.
+    pub message: String,
+    /// Whether the host should retry the operation.
+    pub retryable: bool,
+}
+
+/// Every code in the error contract, in a stable order. Use this to validate
+/// that a host handles the full set (and to detect a newer engine).
+#[uniffi::export]
+pub fn error_codes() -> Vec<String> {
+    luciola_proto::ErrorCode::ALL
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect()
+}
+
+/// Normalise either callback shape into one [`ErrorInfoDto`]:
+/// - `classify_error(code, Some(message))` for `on_error`;
+/// - `classify_error(detail, None)` for `on_state("error", detail)`, where the
+///   detail is a `"<code>: <message>"` wire string.
+///
+/// Legacy tunnel prefixes (`forward_bind_failed:`, `tunnel_*`) map to their
+/// canonical codes; unrecognised text becomes `code = "unknown"` with the
+/// full text preserved in `message`.
+#[uniffi::export]
+pub fn classify_error(code_or_detail: String, message: Option<String>) -> ErrorInfoDto {
+    let info = match message {
+        Some(m) => {
+            luciola_proto::ErrorInfo::new(luciola_proto::ErrorCode::from_code(&code_or_detail), m)
+        }
+        None => luciola_proto::ErrorInfo::parse_detail(&code_or_detail),
+    };
+    let retryable = info.retryable();
+    ErrorInfoDto {
+        code: info.code_str().to_string(),
+        message: info.message,
+        retryable,
     }
 }
 
@@ -427,10 +478,11 @@ impl DiscoverySession {
                     }
                     let Some(engine) = engine else {
                         *bound.lock().unwrap() = false;
-                        listener.on_error(
-                            "bind_failed".into(),
+                        let info = ErrorInfo::new(
+                            ErrorCode::BindFailed,
                             format!("discovery port {} occupied by another process", port),
                         );
+                        listener.on_error(info.code_str().to_string(), info.message);
                         return;
                     };
                     let mut events = engine.subscribe();
@@ -1339,7 +1391,8 @@ impl SecureSession {
                         LinkRole::Listen(port, _) => match luciola::link::bind_dual_stack_listener(*port).await {
                             Ok(l) => Some(l),
                             Err(e) => {
-                                listener.on_state("error".into(), Some(e.to_string()));
+                                let info = ErrorInfo::new(ErrorCode::BindFailed, e.to_string());
+                                listener.on_state("error".into(), Some(info.wire_detail()));
                                 return;
                             }
                         },
@@ -1358,14 +1411,17 @@ impl SecureSession {
                                     Err(e) => {
                                         connected.store(false, std::sync::atomic::Ordering::SeqCst);
                                         if !auto {
-                                            listener.on_state("error".into(), Some(e.to_string()));
+                                            let info = ErrorInfo::from(&e);
+                                            listener
+                                                .on_state("error".into(), Some(info.wire_detail()));
                                             return;
                                         }
                                         stats.reconnects.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let jittered = timings.backoff(backoff);
+                                        let info = ErrorInfo::from(&e);
                                         listener.on_state("retrying".into(), Some(format!(
                                             "{}; next attempt in {:?}",
-                                            e, jittered
+                                            info.wire_detail(), jittered
                                         )));
                                         tokio::select! {
                                             _ = tokio::time::sleep(jittered) => {}
@@ -1391,7 +1447,11 @@ impl SecureSession {
                                         Err(e) => {
                                             // A failed handshake (wrong initiator)
                                             // must not kill the listener; keep accepting.
-                                            listener.on_state("retrying".into(), Some(e.to_string()));
+                                            let info = ErrorInfo::from(&e);
+                                            listener.on_state(
+                                                "retrying".into(),
+                                                Some(info.wire_detail()),
+                                            );
                                             continue 'outer;
                                         }
                                     },
@@ -1599,4 +1659,38 @@ pub fn set_log_sink(sink: Option<Box<dyn LogSink>>) {
         use tracing_subscriber::prelude::*;
         let _ = tracing_subscriber::registry().with(SinkBridge).try_init();
     });
+}
+
+#[cfg(test)]
+mod error_taxonomy_tests {
+    use super::*;
+
+    #[test]
+    fn error_codes_are_the_shared_table() {
+        let codes = error_codes();
+        assert_eq!(codes.len(), luciola_proto::ErrorCode::ALL.len());
+        assert!(codes.contains(&"untrusted_peer".to_string()));
+        assert!(codes.contains(&"bind_failed".to_string()));
+        assert!(!codes.contains(&"forward_bind_failed".to_string()));
+    }
+
+    #[test]
+    fn classify_error_accepts_both_callback_shapes() {
+        let pair = classify_error("untrusted_peer".into(), Some("wrong key".into()));
+        assert_eq!(pair.code, "untrusted_peer");
+        assert_eq!(pair.message, "wrong key");
+        assert!(!pair.retryable);
+
+        let detail = classify_error("forward_bind_failed: port in use".into(), None);
+        assert_eq!(detail.code, "bind_failed");
+        assert_eq!(detail.message, "port in use");
+        assert!(detail.retryable);
+    }
+
+    #[test]
+    fn classify_error_preserves_unrecognised_text() {
+        let e = classify_error("a free-form message from an older peer".into(), None);
+        assert_eq!(e.code, "unknown");
+        assert_eq!(e.message, "a free-form message from an older peer");
+    }
 }

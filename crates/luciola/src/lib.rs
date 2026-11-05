@@ -4,6 +4,7 @@
 
 pub use luciola_ip as ip;
 
+pub mod errors;
 pub mod link;
 pub mod pairing;
 pub mod ports;

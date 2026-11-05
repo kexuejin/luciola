@@ -2015,6 +2015,110 @@ public func FfiConverterTypeDiscoveredPeer_lower(_ value: DiscoveredPeer) -> Rus
 
 
 /**
+ * A structured engine error, projected from `luciola_proto::ErrorInfo`.
+ *
+ * Hosts receive loose strings from the long-standing callback interfaces
+ * (`on_error(code, message)` and `on_state("error", detail)`). This record is
+ * the typed companion: call [`classify_error`] once and branch on `code`
+ * instead of parsing human prose. Additive — no existing callback changes.
+ */
+public struct ErrorInfoDto {
+    /**
+     * Stable snake_case wire code; unknown codes are reported as `"unknown"`.
+     */
+    public var code: String
+    /**
+     * The original human-readable detail, never localised or truncated.
+     */
+    public var message: String
+    /**
+     * Whether the host should retry the operation.
+     */
+    public var retryable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable snake_case wire code; unknown codes are reported as `"unknown"`.
+         */code: String, 
+        /**
+         * The original human-readable detail, never localised or truncated.
+         */message: String, 
+        /**
+         * Whether the host should retry the operation.
+         */retryable: Bool) {
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+    }
+}
+
+#if compiler(>=6)
+extension ErrorInfoDto: Sendable {}
+#endif
+
+
+extension ErrorInfoDto: Equatable, Hashable {
+    public static func ==(lhs: ErrorInfoDto, rhs: ErrorInfoDto) -> Bool {
+        if lhs.code != rhs.code {
+            return false
+        }
+        if lhs.message != rhs.message {
+            return false
+        }
+        if lhs.retryable != rhs.retryable {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(code)
+        hasher.combine(message)
+        hasher.combine(retryable)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeErrorInfoDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ErrorInfoDto {
+        return
+            try ErrorInfoDto(
+                code: FfiConverterString.read(from: &buf), 
+                message: FfiConverterString.read(from: &buf), 
+                retryable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ErrorInfoDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterBool.write(value.retryable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeErrorInfoDto_lift(_ buf: RustBuffer) throws -> ErrorInfoDto {
+    return try FfiConverterTypeErrorInfoDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeErrorInfoDto_lower(_ value: ErrorInfoDto) -> RustBuffer {
+    return FfiConverterTypeErrorInfoDto.lower(value)
+}
+
+
+/**
  * 转发规则（T3 `enable_forward_endpoint` / v2 `enable_remote_endpoint`）：
  * 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
  */
@@ -4146,6 +4250,24 @@ public func buildPairingUri(name: String, product: String?, port: UInt16, addrs:
 })
 }
 /**
+ * Normalise either callback shape into one [`ErrorInfoDto`]:
+ * - `classify_error(code, Some(message))` for `on_error`;
+ * - `classify_error(detail, None)` for `on_state("error", detail)`, where the
+ * detail is a `"<code>: <message>"` wire string.
+ *
+ * Legacy tunnel prefixes (`forward_bind_failed:`, `tunnel_*`) map to their
+ * canonical codes; unrecognised text becomes `code = "unknown"` with the
+ * full text preserved in `message`.
+ */
+public func classifyError(codeOrDetail: String, message: String?) -> ErrorInfoDto  {
+    return try!  FfiConverterTypeErrorInfoDto_lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_classify_error(
+        FfiConverterString.lower(codeOrDetail),
+        FfiConverterOptionString.lower(message),$0
+    )
+})
+}
+/**
  * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
  */
 public func comparisonPin(localPk: Data, remotePk: Data) -> String  {
@@ -4164,6 +4286,16 @@ public func defaultRaceCandidates(addresses: [String]) -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_default_race_candidates(
         FfiConverterSequenceString.lower(addresses),$0
+    )
+})
+}
+/**
+ * Every code in the error contract, in a stable order. Use this to validate
+ * that a host handles the full set (and to detect a newer engine).
+ */
+public func errorCodes() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_error_codes($0
     )
 })
 }
@@ -4474,10 +4606,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 28829) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_classify_error() != 40540) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_error_codes() != 47804) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_generate_device_identity() != 39160) {

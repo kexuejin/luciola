@@ -5,6 +5,10 @@
 //! - Strict codec and payload parsing
 //! - Jitter delay calculation (anti-broadcast storm)
 //! - Alive reply deduplication window tracker
+//! - The shared FFI error taxonomy ([`ErrorCode`], [`ErrorInfo`])
+
+pub mod error;
+pub use error::{ErrorCode, ErrorInfo};
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};

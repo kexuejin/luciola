@@ -1,7 +1,10 @@
 package io.github.kexuejin.luciola
 
 import uniffi.luciola_uniffi.DeviceMeta
+import uniffi.luciola_uniffi.ErrorInfoDto
 import uniffi.luciola_uniffi.LogSink
+import uniffi.luciola_uniffi.classifyError
+import uniffi.luciola_uniffi.errorCodes
 import uniffi.luciola_uniffi.getDeviceMeta
 import uniffi.luciola_uniffi.localCandidateAddresses
 import uniffi.luciola_uniffi.setLogSink
@@ -19,6 +22,19 @@ fun luciolaSubnetBroadcasts(): List<String> = runCatching { subnetBroadcastAddre
 
 /** Bridge engine tracing logs to the host: see uniffi `setLogSink` semantics. */
 fun luciolaSetLogSink(sink: LogSink?) = setLogSink(sink)
+
+/** Every stable wire code in the shared error contract, in a stable order. */
+fun luciolaErrorCodes(): List<String> = errorCodes()
+
+/**
+ * Classify either callback shape into one [ErrorInfoDto]:
+ * `luciolaClassifyError(code, message)` for `on_error`, or
+ * `luciolaClassifyError(detail)` for `on_state("error", detail)`.
+ * Legacy tunnel prefixes normalise to their canonical code; unknown text is
+ * preserved in `message` with `code = "unknown"`.
+ */
+fun luciolaClassifyError(codeOrDetail: String, message: String? = null): ErrorInfoDto =
+    classifyError(codeOrDetail, message)
 
 /**
  * Race TCP dials across the given addresses (Happy Eyeballs): first connect

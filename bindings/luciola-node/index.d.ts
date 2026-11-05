@@ -3,6 +3,36 @@
  */
 
 /**
+ * A classified engine error: a stable machine-readable `code` plus the
+ * original human-readable `message`. `retryable` is a hint — an untrusted
+ * peer stays untrusted, while a busy port or a dropped socket often clears.
+ *
+ * Codes are `snake_case` and are part of the FFI contract: they may be
+ * appended to, never renamed or removed without a breaking release. An
+ * unrecognised code is reported as `"unknown"` with the whole text kept in
+ * `message`, so a newer engine degrades instead of crashing an older host.
+ */
+export interface JsErrorInfo {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+/**
+ * The closed set of stable wire codes delivered by `error` events. A host can
+ * validate its `switch` at startup and detect a newer engine by diffing this
+ * list against the codes it knows.
+ */
+export function getErrorCodes(): string[];
+
+/**
+ * Normalise a callback detail (`"<code>: <message>"`, including the legacy
+ * `forward_bind_failed:` / `tunnel_*` prefixes) into a structured record.
+ * Unrecognised text is preserved in `message` with `code = "unknown"`.
+ */
+export function classifyError(detail: string): JsErrorInfo;
+
+/**
  * Select the single best LAN IPv4 address for QR code generation / local direct connections.
  * Automatically handles physical NIC prioritization, virtual NIC filtering (Docker, Tailscale),
  * Windows ICS mobile hotspot exclusion, and WSL2 host physical passthrough.
@@ -126,13 +156,20 @@ export class DiscoverySession {
   /**
    * Start discovery and consume lifecycle events.
    * `found`/`updated` carry `peer`; `lost` carries `nodeId` (remove it from
-   * your UI); `error` carries `message` (e.g. bind_failed: port occupied).
+   * your UI); `error` carries the structured triple `code` / `message` /
+   * `retryable` (e.g. code `"bind_failed"` when the port is occupied).
+   * `message` is the human detail **without** a code prefix; branch on `code`.
    */
   start(callback: (event: {
     type: 'found' | 'updated' | 'lost' | 'error';
     peer?: JsPeerRecord;
     nodeId?: string;
+    /** Present on `error`: canonical wire code, e.g. `"bind_failed"`. */
+    code?: string;
+    /** Present on `error`: human detail, without a code prefix. */
     message?: string;
+    /** Present on `error`: whether retrying the operation may succeed. */
+    retryable?: boolean;
   }) => void): void;
   /**
    * Stop discovery session and broadcast exit to neighbors.
@@ -216,6 +253,23 @@ export function signMessage(seed: Buffer, message: Buffer): Buffer;
 export function verifyMessage(publicKey: Buffer, message: Buffer, signature: Buffer): boolean;
 
 /**
+ * One lifecycle event from a `SecureChannel` callback.
+ *
+ * `detail` is kept for backward compatibility: on `error` / `retrying` it is
+ * the legacy `"<code>: <message>"` wire string, on `connected` it is the
+ * peer fingerprint. The nested `error` object is the structured companion —
+ * it exists only for `state === "error" | "retrying"` so hosts can branch on
+ * `error.code` without parsing prose.
+ */
+export interface JsChannelEvent {
+  state?: string;
+  detail?: string;
+  message?: Buffer;
+  /** Structured companion for `error` and `retrying` states. */
+  error?: JsErrorInfo;
+}
+
+/**
  * One authenticated encrypted channel (SIGMA-style handshake: X25519 +
  * Ed25519 identity signatures + HKDF/AES-256-GCM, replay-proof counters).
  * Message-oriented: send() queues an encrypted frame; decrypted inbound
@@ -234,7 +288,7 @@ export class SecureChannel {
     port: number,
     pinnedPeerPublicKey: Buffer,
     autoReconnect: boolean,
-    onEvent: (event: { state?: string; detail?: string; message?: Buffer }) => void,
+    onEvent: (event: JsChannelEvent) => void,
   ): void;
   /**
    * Accept ONE connection; expectedPeerPublicKey pins the peer, or
@@ -243,7 +297,7 @@ export class SecureChannel {
   listen(
     port: number,
     expectedPeerPublicKey: Buffer | null | undefined,
-    onEvent: (event: { state?: string; detail?: string; message?: Buffer }) => void,
+    onEvent: (event: JsChannelEvent) => void,
   ): void;
   /**
    * Queue an encrypted frame. False when not connected OR the bounded queue
