@@ -12,12 +12,12 @@ categories = ["command-line-utilities", "network-programming"]
 description = "Command-line interface and diagnostic radar for the Luciola P2P discovery engine"
 
 [dependencies]
-luciola-ip = { path = "../luciola-ip", version = "0.9.3" }
-luciola-net = { path = "../luciola-net", version = "0.9.3" }
-luciola-proto = { path = "../luciola-proto", version = "0.9.3" }
-luciola = { path = "../luciola", version = "0.9.3" }
-luciola-tunnel = { path = "../luciola-tunnel", version = "0.9.3" }
-luciola-transfer = { path = "../luciola-transfer", version = "0.9.3" }
+luciola-ip = { path = "../luciola-ip", version = "0.10.0" }
+luciola-net = { path = "../luciola-net", version = "0.10.0" }
+luciola-proto = { path = "../luciola-proto", version = "0.10.0" }
+luciola = { path = "../luciola", version = "0.10.0" }
+luciola-tunnel = { path = "../luciola-tunnel", version = "0.10.0" }
+luciola-transfer = { path = "../luciola-transfer", version = "0.10.0" }
 clap.workspace = true
 rand.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "signal"] }

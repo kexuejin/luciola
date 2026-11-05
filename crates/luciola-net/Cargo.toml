@@ -12,8 +12,8 @@ categories = ["network-programming"]
 description = "Network interface intelligence, physical/virtual scoring, WSL2 passthrough, and subnet broadcast calculation"
 
 [dependencies]
-luciola-ip = { path = "../luciola-ip", version = "0.9.3" }
-luciola-proto = { path = "../luciola-proto", version = "0.9.3" }
+luciola-ip = { path = "../luciola-ip", version = "0.10.0" }
+luciola-proto = { path = "../luciola-proto", version = "0.10.0" }
 network-interface = "2.0"
 thiserror.workspace = true
 tracing.workspace = true

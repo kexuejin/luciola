@@ -652,7 +652,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "luciola"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "aes-gcm",
  "ed25519-dalek",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-cli"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "clap",
  "luciola",
@@ -696,11 +696,11 @@ dependencies = [
 
 [[package]]
 name = "luciola-ip"
-version = "0.9.3"
+version = "0.10.0"
 
 [[package]]
 name = "luciola-net"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "luciola-ip",
  "luciola-proto",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-node"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "luciola",
  "luciola-ip",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-proto"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "rand",
  "serde",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-transfer"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "luciola",
  "luciola-proto",
@@ -752,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-tunnel"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "luciola",
  "luciola-proto",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "luciola-uniffi"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "luciola",
  "luciola-ip",

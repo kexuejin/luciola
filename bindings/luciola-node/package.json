@@ -1,6 +1,6 @@
 {
   "name": "@luciola/core",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "Lightweight, resilient LAN peer discovery and interface intelligence for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
