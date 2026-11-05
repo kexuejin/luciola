@@ -30,14 +30,18 @@ pub const TUNNEL_OFFSET: u16 = 1;
 /// Screen/secondary data-plane port derived from discovery (discovery + 10).
 pub const SCREEN_OFFSET: u16 = 10;
 
+/// Transport protocol a port claim applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
+    /// UDP (discovery, datagrams).
     Udp,
+    /// TCP (secure channel, forwarding).
     Tcp,
 }
 
 impl Protocol {
+    /// Lowercase wire name (`udp` / `tcp`).
     pub fn as_str(self) -> &'static str {
         match self {
             Protocol::Udp => "udp",
@@ -50,8 +54,11 @@ impl Protocol {
 /// inbound secure listener (e.g. a dial-only helper).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PortPlan {
+    /// Product label this plan belongs to.
     pub product: String,
+    /// UDP discovery port.
     pub discovery_udp: u16,
+    /// Inbound secure-channel TCP port, when the product listens.
     #[serde(default)]
     pub channel_tcp: Option<u16>,
     /// Additional TCP ports owned by this product (screen channel, desktop
@@ -68,12 +75,16 @@ pub struct PortPlan {
 /// A single (protocol, port) claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortClaim {
+    /// Transport protocol of this claim.
     pub protocol: Protocol,
+    /// Claimed port number.
     pub port: u16,
+    /// True when an older release still binds this number.
     pub legacy: bool,
 }
 
 impl PortPlan {
+    /// Create a plan with no extra or legacy ports.
     pub fn new(product: impl Into<String>, discovery_udp: u16, channel_tcp: Option<u16>) -> Self {
         Self {
             product: product.into(),
@@ -135,6 +146,7 @@ impl PortPlan {
     }
 }
 
+/// Severity of a detected port conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     /// Blocks the plan: two live claims want the same socket.
@@ -144,6 +156,7 @@ pub enum Severity {
 }
 
 impl Severity {
+    /// Lowercase label (`error` / `warning`).
     pub fn as_str(self) -> &'static str {
         match self {
             Severity::Error => "error",
@@ -152,21 +165,31 @@ impl Severity {
     }
 }
 
+/// One detected port conflict between or within plans.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortConflict {
+    /// Whether this conflict blocks the plan.
     pub severity: Severity,
+    /// Protocol the conflicting claims share.
     pub protocol: Protocol,
+    /// Contested port.
     pub port: u16,
+    /// Products involved in the conflict.
     pub products: Vec<String>,
+    /// Human-readable explanation with a migration hint.
     pub message: String,
 }
 
 /// One machine-local probe result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortProbe {
+    /// Product that claims the port.
     pub product: String,
+    /// Protocol of the claim.
     pub protocol: Protocol,
+    /// Probed port number.
     pub port: u16,
+    /// Whether the port is currently bound on this machine.
     pub in_use: bool,
 }
 
@@ -280,11 +303,15 @@ pub fn probe(plans: &[PortPlan]) -> Vec<PortProbe> {
 /// fleet's allocations.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PortRegistry {
+    /// Registry schema version; only version 1 is accepted.
     pub version: u32,
+    /// Port block size each product reserves.
     #[serde(default = "default_block_size")]
     pub block_size: u16,
+    /// Free-form note kept with the registry.
     #[serde(default)]
     pub note: Option<String>,
+    /// One plan per product.
     pub products: Vec<PortPlan>,
 }
 
@@ -296,13 +323,16 @@ fn default_block_size() -> u16 {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PortRegistryError {
+    /// The registry JSON could not be parsed.
     #[error("invalid port registry JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// The registry declares a schema version this build does not support.
     #[error("registry version {0} is not supported (expected 1)")]
     UnsupportedVersion(u32),
 }
 
 impl PortRegistry {
+    /// Parse a registry document, rejecting unsupported schema versions.
     pub fn from_json(json: &str) -> Result<Self, PortRegistryError> {
         let registry: Self = serde_json::from_str(json)?;
         if registry.version != 1 {
@@ -311,10 +341,12 @@ impl PortRegistry {
         Ok(registry)
     }
 
+    /// Every conflict, including warnings.
     pub fn conflicts(&self) -> Vec<PortConflict> {
         conflicts(&self.products)
     }
 
+    /// Only the conflicts that block the plan.
     pub fn errors(&self) -> Vec<PortConflict> {
         self.conflicts()
             .into_iter()
@@ -322,6 +354,7 @@ impl PortRegistry {
             .collect()
     }
 
+    /// Probe each claimed port on this machine.
     pub fn probe(&self) -> Vec<PortProbe> {
         probe(&self.products)
     }

@@ -171,11 +171,14 @@ impl std::fmt::Display for ErrorCode {
 /// `error.to_string()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorInfo {
+    /// Stable machine-readable classification.
     pub code: ErrorCode,
+    /// The original human-readable detail, exactly as the source error rendered it.
     pub message: String,
 }
 
 impl ErrorInfo {
+    /// Pair a code with a human-readable message.
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -183,10 +186,12 @@ impl ErrorInfo {
         }
     }
 
+    /// The wire representation of [`Self::code`].
     pub fn code_str(&self) -> &'static str {
         self.code.as_str()
     }
 
+    /// Whether a host should retry the failed operation.
     pub fn retryable(&self) -> bool {
         self.code.retryable()
     }

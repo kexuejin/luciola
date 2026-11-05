@@ -52,9 +52,13 @@ use crate::TunnelError;
 /// - `dial_failed`：放行后拨号失败/超时/解析失败的 OPEN/DOPEN。
 #[derive(Debug, Default)]
 pub struct ForwardCounters {
+    /// Channels currently relaying bytes (derived gauge).
     pub channels_open: AtomicU64,
+    /// Channels granted since the guard was created.
     pub channels_total: AtomicU64,
+    /// OPEN / DOPEN rejected by the ACL (no dial was attempted).
     pub dial_denied: AtomicU64,
+    /// OPEN / DOPEN allowed by the ACL whose dial failed or timed out.
     pub dial_failed: AtomicU64,
 }
 
@@ -73,9 +77,13 @@ impl ForwardCounters {
 /// `ForwardCounters` 的纯值快照（可直接进 uniffi DTO）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ForwardStatus {
+    /// Channels currently relaying bytes.
     pub channels_open: u64,
+    /// Channels granted since the guard was created.
     pub channels_total: u64,
+    /// OPEN / DOPEN rejected by the ACL.
     pub dial_denied: u64,
+    /// Allowed dials that failed or timed out.
     pub dial_failed: u64,
 }
 
@@ -87,7 +95,9 @@ pub struct ForwardStatus {
 pub struct ForwardRule {
     /// IP 字面量或主机名（构造时规范化为小写；匹配区分两类，互不跨匹配）。
     pub host: String,
+    /// 区间下界（含）。
     pub port_from: u16,
+    /// 区间上界（含）。
     pub port_to: u16,
     /// v2：true 时本规则同时放行 UDP 数据报拨号（DOPEN）；false 仅 TCP（v1 语义）。
     pub udp: bool,
@@ -150,10 +160,12 @@ pub fn normalize_rule_host_text(host: &str) -> Option<String> {
 /// 服务端拨号白名单。**默认空表 = 全部拒绝**（deny-by-default，D7）。
 #[derive(Debug, Clone, Default)]
 pub struct ForwardAcl {
+    /// Allow rules; an empty list denies everything.
     pub rules: Vec<ForwardRule>,
 }
 
 impl ForwardAcl {
+    /// Build an ACL from an explicit rule list.
     pub fn new(rules: Vec<ForwardRule>) -> Self {
         Self { rules }
     }
@@ -361,6 +373,7 @@ pub struct UdpForwardGuard {
     children: Arc<StdMutex<Vec<JoinHandle<()>>>>,
     /// NAT 式映射表（src → 本地队列）；accept 任务维护，stop 时清空。
     mappings: Arc<StdMutex<HashMap<SocketAddr, mpsc::Sender<Vec<u8>>>>>,
+    /// 本转发的通道计数（生命周期与 Guard 相同）。
     pub counters: Arc<ForwardCounters>,
 }
 

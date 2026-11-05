@@ -2,6 +2,8 @@
 //!
 //! Lightweight, resilient peer discovery & interface intelligence for the real-world LAN.
 
+#![deny(missing_docs)]
+
 pub use luciola_ip as ip;
 
 pub mod errors;
@@ -27,8 +29,10 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum CoreError {
+    /// An operating-system I/O failure.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// Binding the discovery listener on `port` failed.
     #[error("bind error on port {0}: {1}")]
     BindFailed(u16, std::io::Error),
 }

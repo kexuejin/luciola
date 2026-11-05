@@ -46,6 +46,7 @@ pub struct TrustedDevice {
     pub public_key: Vec<u8>,
     /// Cached `sha256:` fingerprint of [TrustedDevice::public_key].
     pub fingerprint: String,
+    /// Current trust level granted to this device.
     pub level: TrustLevel,
     /// When the device was pinned (epoch milliseconds).
     pub pinned_at_ms: u64,
@@ -59,6 +60,7 @@ pub struct TrustStore {
 }
 
 impl TrustStore {
+    /// Create an empty trust store.
     pub fn new() -> Self {
         Self::default()
     }
@@ -85,14 +87,17 @@ impl TrustStore {
         before != self.devices.len()
     }
 
+    /// Every paired device, in insertion order.
     pub fn entries(&self) -> &[TrustedDevice] {
         &self.devices
     }
 
+    /// Serialise the store for persistence in the product's secret storage.
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }
 
+    /// Restore a store previously produced by [`Self::to_json`].
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
     }

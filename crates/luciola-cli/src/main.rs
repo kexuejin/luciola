@@ -1,3 +1,8 @@
+//! Command-line front end: IP inspection, discovery, beaconing, port
+//! forwarding and pin-verified file transfer.
+
+#![deny(missing_docs)]
+
 use clap::{Parser, Subcommand};
 use luciola::link::bind_dual_stack_listener;
 use luciola::link::secure::{accept_secure, connect_secure_raced};

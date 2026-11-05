@@ -45,18 +45,24 @@ use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
 
 /// Domain-separation prefix for the HKDF `info` field.
 pub const SESSION_INFO_CONTEXT: &[u8] = b"LUCIOLA_RELAY_V3 session keys";
+/// AEAD key length in bytes (AES-256-GCM).
 pub const AEAD_KEY_LEN: usize = 32;
+/// AEAD authentication tag length in bytes.
 pub const AEAD_TAG_LEN: usize = 16;
+/// X25519 ephemeral key length in bytes.
 pub const EPHEMERAL_KEY_LEN: usize = 32;
 
 /// Errors raised by the relay envelope cryptography helpers.
 #[derive(Error, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RelayCryptoError {
+    /// An ephemeral key had the wrong length.
     #[error("ephemeral key must be {0} bytes")]
     BadKeyLength(usize),
+    /// X25519 produced a low-order (degenerate) shared secret.
     #[error("X25519 exchange produced a degenerate (low-order) shared secret")]
     DegenerateSharedSecret,
+    /// AEAD decryption failed: tampering or a wrong key.
     #[error("AEAD decryption failed: frame was tampered with or the key is wrong")]
     AeadOpenFailed,
 }

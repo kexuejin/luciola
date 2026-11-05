@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::AsyncSeekExt;
 
+/// Tunables for [`FileSender`].
 #[derive(Debug, Clone)]
 pub struct SenderConfig {
     /// Payload bytes per chunk.
@@ -46,6 +47,7 @@ pub struct FileSender {
 }
 
 impl FileSender {
+    /// Open `src` for sending under `transfer_id`.
     pub async fn open(
         transfer_id: impl Into<String>,
         src: impl AsRef<std::path::Path>,
@@ -65,18 +67,22 @@ impl FileSender {
         })
     }
 
+    /// Identifier of the transfer being sent.
     pub fn transfer_id(&self) -> &str {
         &self.transfer_id
     }
 
+    /// Total size of the source file in bytes.
     pub fn total_size(&self) -> u64 {
         self.total_size
     }
 
+    /// Exclusive end of the contiguous prefix the peer has acknowledged.
     pub fn acked_up_to(&self) -> u64 {
         self.acked_up_to
     }
 
+    /// Number of chunks currently awaiting acknowledgement.
     pub fn in_flight_count(&self) -> usize {
         self.in_flight.len()
     }

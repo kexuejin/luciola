@@ -352,6 +352,9 @@ public interface SecureSessionInterface {
      */
     public fun `forwardStats`(): List<ForwardStatusDto>
     
+    /**
+     * Whether the channel currently holds an authenticated connection.
+     */
     public fun `isConnected`(): kotlin.Boolean
     
     /**
@@ -451,9 +454,15 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
      * attempt to actually use an object constructed this way will fail as there is no
      * connected Rust object.
      */
+    /**
+     * Create a channel bound to a 32-byte Ed25519 identity seed.
+     */
     public constructor(noPointer: NoPointer)
 
     
+    /**
+     * Create a channel bound to a 32-byte Ed25519 identity seed.
+     */
     public constructor(`identitySeed`: kotlin.ByteArray)
 
     override fun destroy()
@@ -507,6 +516,9 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
      */
     public override fun `forwardStats`(): List<ForwardStatusDto>
     
+    /**
+     * Whether the channel currently holds an authenticated connection.
+     */
     public override fun `isConnected`(): kotlin.Boolean
     
     /**
@@ -606,6 +618,9 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
  */
 public interface TrustStoreInterface {
     
+    /**
+     * Every paired device, in insertion order.
+     */
     public fun `entries`(): List<TrustedDeviceInfo>
     
     /**
@@ -643,15 +658,24 @@ public expect open class TrustStore: Disposable, TrustStoreInterface {
      * attempt to actually use an object constructed this way will fail as there is no
      * connected Rust object.
      */
+    /**
+     * Restore a trust store from its JSON form, or start empty.
+     */
     public constructor(noPointer: NoPointer)
 
     
+    /**
+     * Restore a trust store from its JSON form, or start empty.
+     */
     public constructor(`fromJson`: kotlin.String?)
 
     override fun destroy()
     override fun close()
 
     
+    /**
+     * Every paired device, in insertion order.
+     */
     public override fun `entries`(): List<TrustedDeviceInfo>
     
     /**
@@ -687,9 +711,21 @@ public expect open class TrustStore: Disposable, TrustStoreInterface {
  */
 
 public data class DeviceIdentityInfo (
+    /**
+     * 32-byte Ed25519 seed — persist it in secret storage, never log it.
+     */
     var `seed`: kotlin.ByteArray, 
+    /**
+     * Ed25519 public key derived from `seed`.
+     */
     var `publicKey`: kotlin.ByteArray, 
+    /**
+     * `sha256:<hex>` fingerprint of `public_key`.
+     */
     var `fingerprint`: kotlin.String, 
+    /**
+     * 6-digit on-screen comparison pin.
+     */
     var `shortPin`: kotlin.String
 ) {
     override fun equals(other: Any?): Boolean {
@@ -721,11 +757,29 @@ public data class DeviceIdentityInfo (
  */
 
 public data class DeviceMeta (
+    /**
+     * Form factor of the device.
+     */
     var `deviceType`: DeviceType, 
+    /**
+     * Emoji icon for peer-list UIs.
+     */
     var `icon`: kotlin.String, 
+    /**
+     * Operating-system name, e.g. `macOS` or `Android`.
+     */
     var `os`: kotlin.String, 
+    /**
+     * CPU architecture, e.g. `aarch64`.
+     */
     var `arch`: kotlin.String, 
+    /**
+     * Hardware model string, when the platform exposes one.
+     */
     var `model`: kotlin.String?, 
+    /**
+     * Stable per-device grouping id (display-grade, not a security identity).
+     */
     var `deviceId`: kotlin.String?
 ) {
     public companion object
@@ -738,8 +792,17 @@ public data class DeviceMeta (
  */
 
 public data class DialChannel (
+    /**
+     * Address this channel dialled.
+     */
     var `address`: kotlin.String, 
+    /**
+     * What happened to this channel.
+     */
     var `status`: DialStatus, 
+    /**
+     * Connect latency in milliseconds, when the attempt succeeded.
+     */
     var `rttMs`: kotlin.Double?
 ) {
     public companion object
@@ -752,11 +815,29 @@ public data class DialChannel (
  */
 
 public data class DiscoveredPeer (
+    /**
+     * Stable node identity.
+     */
     var `nodeId`: kotlin.String, 
+    /**
+     * Human-readable device name.
+     */
     var `name`: kotlin.String, 
+    /**
+     * Address the peer was last heard from.
+     */
     var `ip`: kotlin.String, 
+    /**
+     * Peer's UDP discovery port.
+     */
     var `udpPort`: kotlin.UShort, 
+    /**
+     * Peer's secure-channel TCP port.
+     */
     var `tcpPort`: kotlin.UShort, 
+    /**
+     * Optional hardware metadata.
+     */
     var `device`: DeviceMeta?, 
     /**
      * Stable per-device grouping id (display-grade).
@@ -811,8 +892,17 @@ public data class ErrorInfoDto (
  */
 
 public data class ForwardRuleDto (
+    /**
+     * IP literal or hostname (normalised to lowercase).
+     */
     var `host`: kotlin.String, 
+    /**
+     * Inclusive lower port bound.
+     */
     var `portFrom`: kotlin.UShort, 
+    /**
+     * Inclusive upper port bound.
+     */
     var `portTo`: kotlin.UShort, 
     /**
      * v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
@@ -830,12 +920,33 @@ public data class ForwardRuleDto (
  */
 
 public data class ForwardStatusDto (
+    /**
+     * Whether the forward / endpoint is currently bound.
+     */
     var `active`: kotlin.Boolean, 
+    /**
+     * Port actually bound (system-assigned when 0 was requested).
+     */
     var `listenPort`: kotlin.UShort, 
+    /**
+     * Channels currently relaying bytes.
+     */
     var `channelsOpen`: kotlin.ULong, 
+    /**
+     * Channels granted since registration.
+     */
     var `channelsTotal`: kotlin.ULong, 
+    /**
+     * OPEN / DOPEN rejected by the ACL.
+     */
     var `dialDenied`: kotlin.ULong, 
+    /**
+     * Allowed dials that failed or timed out.
+     */
     var `dialFailed`: kotlin.ULong, 
+    /**
+     * Row kind: local / udp_local / remote_endpoint / endpoint / remote.
+     */
     var `kind`: kotlin.String
 ) {
     public companion object
@@ -848,9 +959,21 @@ public data class ForwardStatusDto (
  */
 
 public data class LinkStats (
+    /**
+     * Frames written to the socket.
+     */
     var `framesSent`: kotlin.ULong, 
+    /**
+     * Frames read from the socket.
+     */
     var `framesReceived`: kotlin.ULong, 
+    /**
+     * Successful connections established (including reconnects).
+     */
     var `connectionsEstablished`: kotlin.ULong, 
+    /**
+     * Reconnect attempts started after a drop.
+     */
     var `reconnectAttempts`: kotlin.ULong, 
     /**
      * `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
@@ -876,7 +999,13 @@ public data class LinkStats (
  */
 
 public data class ManualPeer (
+    /**
+     * Peer host (IP literal or hostname).
+     */
     var `host`: kotlin.String, 
+    /**
+     * Peer UDP discovery port.
+     */
     var `port`: kotlin.UShort
 ) {
     public companion object
@@ -890,12 +1019,33 @@ public data class ManualPeer (
  */
 
 public data class PairingInfo (
+    /**
+     * Display name of the host device.
+     */
     var `name`: kotlin.String, 
+    /**
+     * Product label, when the host advertises one.
+     */
     var `product`: kotlin.String?, 
+    /**
+     * TCP service port to dial.
+     */
     var `port`: kotlin.UShort, 
+    /**
+     * Candidate addresses for the host, best first.
+     */
     var `addrs`: List<kotlin.String>, 
+    /**
+     * Host identity fingerprint (`sha256:<hex>`) — bind trust on it.
+     */
     var `fingerprint`: kotlin.String?, 
+    /**
+     * Host Ed25519 public key (base64) — the pin target.
+     */
     var `publicKey`: kotlin.String?, 
+    /**
+     * Optional 6-digit on-screen comparison pin.
+     */
     var `pin`: kotlin.String?
 ) {
     public companion object
@@ -908,8 +1058,17 @@ public data class PairingInfo (
  */
 
 public data class RaceOutcome (
+    /**
+     * Address that won the race, if any.
+     */
     var `winner`: kotlin.String?, 
+    /**
+     * Connect latency of the winner, in milliseconds.
+     */
     var `rttMs`: kotlin.Double?, 
+    /**
+     * Per-candidate outcome, in input order.
+     */
     var `channels`: List<DialChannel>
 ) {
     public companion object
@@ -917,9 +1076,18 @@ public data class RaceOutcome (
 
 
 
+/**
+ * X25519 ephemeral key pair for one relay session.
+ */
 
 public data class RelayEphemeralKeyPair (
+    /**
+     * X25519 secret key (32 bytes) — never send this on the wire.
+     */
     var `secret`: kotlin.ByteArray, 
+    /**
+     * X25519 public key (32 bytes) to send to the peer.
+     */
     var `public_`: kotlin.ByteArray
 ) {
     override fun equals(other: Any?): Boolean {
@@ -942,6 +1110,9 @@ public data class RelayEphemeralKeyPair (
 
 
 
+/**
+ * Per-direction AEAD keys derived for one relay session.
+ */
 
 public data class RelaySessionKeys (
     /**
@@ -978,11 +1149,29 @@ public data class RelaySessionKeys (
  */
 
 public data class TrustedDeviceInfo (
+    /**
+     * Stable per-device grouping id.
+     */
     var `deviceId`: kotlin.String, 
+    /**
+     * Human-readable name at pairing time.
+     */
     var `name`: kotlin.String, 
+    /**
+     * Ed25519 public key (32 bytes) — the security identity.
+     */
     var `publicKey`: kotlin.ByteArray, 
+    /**
+     * Cached `sha256:<hex>` fingerprint of `public_key`.
+     */
     var `fingerprint`: kotlin.String, 
+    /**
+     * Current trust level.
+     */
     var `level`: TrustLevel, 
+    /**
+     * When the device was pinned (epoch milliseconds).
+     */
     var `pinnedAtMs`: kotlin.ULong
 ) {
     override fun equals(other: Any?): Boolean {
@@ -1021,12 +1210,33 @@ public data class TrustedDeviceInfo (
 
 public enum class DeviceType {
     
+    /**
+     * Phone.
+     */
     MOBILE,
+    /**
+     * Tablet.
+     */
     TABLET,
+    /**
+     * Portable computer.
+     */
     LAPTOP,
+    /**
+     * Desktop computer.
+     */
     DESKTOP,
+    /**
+     * Headless server.
+     */
     SERVER,
+    /**
+     * Windows Subsystem for Linux guest.
+     */
     WSL,
+    /**
+     * Form factor could not be determined.
+     */
     UNKNOWN;
     public companion object
 }
@@ -1036,12 +1246,24 @@ public enum class DeviceType {
 
 
 
+/**
+ * Fate of one candidate in a Happy Eyeballs race.
+ */
 
 
 public enum class DialStatus {
     
+    /**
+     * Connected first; the caller dials on this address.
+     */
     WON,
+    /**
+     * A sibling channel won and this attempt was cancelled.
+     */
     CANCELLED,
+    /**
+     * The attempt exceeded its connect timeout.
+     */
     TIMEOUT;
     public companion object
 }
@@ -1057,12 +1279,18 @@ public enum class DialStatus {
  */
 public sealed class RelayCryptoException: kotlin.Exception() {
     
+    /**
+     * AEAD open failed: tampering or a wrong key/sequence.
+     */
     public class AeadOpenFailed(
     ) : RelayCryptoException() {
         override val message: String
             get() = ""
     }
     
+    /**
+     * The supplied AEAD key was not 32 bytes.
+     */
     public class BadKeyLength(
     ) : RelayCryptoException() {
         override val message: String
@@ -1109,6 +1337,9 @@ public enum class TrustLevel {
  */
 public interface LogSink {
     
+    /**
+     * Receive one engine log line. Do not call logging engine APIs here.
+     */
     public fun `log`(`level`: kotlin.String, `message`: kotlin.String)
     
     public companion object
@@ -1126,12 +1357,25 @@ public interface LogSink {
  */
 public interface OnPeerDiscovered {
     
+    /**
+     * A new peer appeared; add it to the host's peer table.
+     */
     public fun `onPeerDiscovered`(`peer`: DiscoveredPeer)
     
+    /**
+     * A known peer's profile or address changed; replace the entry.
+     */
     public fun `onPeerUpdated`(`peer`: DiscoveredPeer)
     
+    /**
+     * A peer exited or aged out; remove it from the host's peer table.
+     */
     public fun `onPeerLost`(`nodeId`: kotlin.String)
     
+    /**
+     * Fatal setup problem (e.g. discovery port occupied); `code` is a stable
+     * `snake_case` wire code (see `errorCodes()`).
+     */
     public fun `onError`(`code`: kotlin.String, `message`: kotlin.String)
     
     public companion object
@@ -1202,6 +1446,9 @@ public interface SecureSessionListener {
  */
 public expect fun `advertisedAddresses`(): List<kotlin.String>
 
+/**
+ * Build the canonical `luciola://pair` URI (URL-encoded).
+ */
 public expect fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?): kotlin.String
 
 /**
@@ -1284,6 +1531,9 @@ public expect fun `isVirtualNic`(`name`: kotlin.String): kotlin.Boolean
  */
 public expect fun `localCandidateAddresses`(): List<kotlin.String>
 
+/**
+ * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ */
 public expect fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo?
 
 /**

@@ -7,6 +7,9 @@
 //! - Alive reply deduplication window tracker
 //! - The shared FFI error taxonomy ([`ErrorCode`], [`ErrorInfo`])
 
+#![deny(missing_docs)]
+
+/// The shared FFI error taxonomy.
 pub mod error;
 pub use error::{ErrorCode, ErrorInfo};
 
@@ -20,8 +23,10 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ProtoError {
+    /// JSON serialisation or deserialisation failed.
     #[error("json serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    /// The envelope was structurally invalid (missing or malformed fields).
     #[error("invalid envelope: {0}")]
     InvalidEnvelope(String),
 }
@@ -30,16 +35,24 @@ pub enum ProtoError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceType {
+    /// Phone.
     Mobile,
+    /// Tablet.
     Tablet,
+    /// Portable computer.
     Laptop,
+    /// Desktop computer.
     Desktop,
+    /// Headless server.
     Server,
+    /// Windows Subsystem for Linux guest.
     Wsl,
+    /// Form factor could not be determined.
     Unknown,
 }
 
 impl DeviceType {
+    /// Emoji icon used by peer-list UIs.
     pub fn icon(&self) -> &'static str {
         match self {
             DeviceType::Mobile => "📱",
@@ -52,6 +65,7 @@ impl DeviceType {
         }
     }
 
+    /// Stable lowercase wire name (also the serde representation).
     pub fn as_str(&self) -> &'static str {
         match self {
             DeviceType::Mobile => "mobile",
@@ -68,11 +82,16 @@ impl DeviceType {
 /// Lightweight device metadata broadcast to peers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceMeta {
+    /// Form factor of the device.
     pub device_type: DeviceType,
+    /// Operating-system name, e.g. `macOS` or `Android`.
     pub os: String,
+    /// CPU architecture, e.g. `aarch64`.
     pub arch: String,
+    /// Hardware model string, when the platform exposes one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Human-readable host name, when the platform exposes one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,
     /// Stable per-device grouping id (display-grade, not a security identity).
@@ -83,12 +102,19 @@ pub struct DeviceMeta {
 /// Node presence profile exchanged across the network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
+    /// Stable node identity for this session.
     pub node_id: String,
+    /// Human-readable device name shown in peer lists.
     pub name: String,
+    /// Monotonic revision; peers keep the highest revision they see.
     pub profile_rev: u32,
+    /// Addresses the peer can be dialled on, best first.
     pub addresses: Vec<String>,
+    /// UDP discovery port.
     pub udp_port: u16,
+    /// Secure-channel TCP port advertised to peers.
     pub tcp_port: u16,
+    /// Optional hardware metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<DeviceMeta>,
     /// Stable per-device grouping id (display-grade, not a security identity).
@@ -116,13 +142,18 @@ pub struct Profile {
 /// Message types in the Luciola discovery protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MsgType {
+    /// Announcement broadcast when a node starts.
     Entry,
+    /// Reply to a probe, carrying the full profile.
     Alive,
+    /// Lightweight liveness update carrying a profile revision.
     Presence,
+    /// Best-effort goodbye broadcast on shutdown.
     Exit,
 }
 
 impl MsgType {
+    /// Lowercase wire name.
     pub fn as_str(&self) -> &'static str {
         match self {
             MsgType::Entry => "entry",
@@ -132,6 +163,7 @@ impl MsgType {
         }
     }
 
+    /// Parse a lowercase wire name; unknown names yield `None`.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "entry" => Some(MsgType::Entry),
@@ -153,12 +185,18 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// ignore the unknown field, so both directions interop).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
+    /// Wire protocol version; absent means the current version.
     #[serde(default = "current_version")]
     pub v: u32,
+    /// Unique frame id (`<from>:<timestamp-ms>`).
     pub id: String,
+    /// Message kind; see [`MsgType`].
     pub kind: String,
+    /// Sender node id.
     pub from: String,
+    /// Sender wall-clock timestamp in milliseconds since the Unix epoch.
     pub ts: u64,
+    /// Message-type-specific JSON payload.
     pub payload: serde_json::Value,
 }
 
@@ -167,6 +205,7 @@ fn current_version() -> u32 {
 }
 
 impl Envelope {
+    /// Build an envelope stamped with the current time and protocol version.
     pub fn new(kind: MsgType, from: String, payload: serde_json::Value) -> Self {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -183,22 +222,26 @@ impl Envelope {
         }
     }
 
+    /// Parse [`Self::kind`] into a [`MsgType`].
     pub fn msg_type(&self) -> Option<MsgType> {
         MsgType::parse(&self.kind)
     }
 
+    /// Decode the embedded [`Profile`] from an `entry` / `alive` payload.
     pub fn extract_profile(&self) -> Option<Profile> {
         let obj = self.payload.as_object()?;
         let profile_val = obj.get("profile")?;
         serde_json::from_value(profile_val.clone()).ok()
     }
 
+    /// Read the `profileRev` field from a `presence` payload.
     pub fn extract_presence_rev(&self) -> Option<u32> {
         let obj = self.payload.as_object()?;
         let rev_val = obj.get("profileRev")?;
         rev_val.as_u64().map(|v| v as u32)
     }
 
+    /// Read the optional `probeId` correlation id.
     pub fn extract_probe_id(&self) -> Option<String> {
         let obj = self.payload.as_object()?;
         let probe = obj.get("probeId")?;
@@ -210,14 +253,17 @@ impl Envelope {
 pub struct Codec;
 
 impl Codec {
+    /// Serialise an envelope to JSON bytes.
     pub fn encode(envelope: &Envelope) -> Result<Vec<u8>, ProtoError> {
         serde_json::to_vec(envelope).map_err(ProtoError::Serialization)
     }
 
+    /// Parse an envelope from JSON bytes.
     pub fn decode(bytes: &[u8]) -> Result<Envelope, ProtoError> {
         serde_json::from_slice(bytes).map_err(ProtoError::Serialization)
     }
 
+    /// Build an `entry` frame announcing `profile`.
     pub fn make_entry(profile: &Profile, probe_id: Option<&str>) -> Envelope {
         let mut map = serde_json::Map::new();
         map.insert(
@@ -237,6 +283,7 @@ impl Codec {
         )
     }
 
+    /// Build an `alive` reply carrying `profile`.
     pub fn make_alive(profile: &Profile, probe_id: Option<&str>) -> Envelope {
         let mut map = serde_json::Map::new();
         map.insert(
@@ -256,6 +303,7 @@ impl Codec {
         )
     }
 
+    /// Build a `presence` frame with a sequence number and profile revision.
     pub fn make_presence(node_id: &str, seq: u32, profile_rev: u32) -> Envelope {
         let mut map = serde_json::Map::new();
         map.insert("seq".to_string(), serde_json::Value::from(seq));
@@ -270,6 +318,7 @@ impl Codec {
         )
     }
 
+    /// Build an `exit` frame for `node_id`.
     pub fn make_exit(node_id: &str) -> Envelope {
         Envelope::new(MsgType::Exit, node_id.to_string(), serde_json::json!({}))
     }
@@ -324,8 +373,11 @@ mod version_tests {
 
 /// Jitter calculator preventing broadcast reply storm when multiple nodes discover each other.
 pub struct JitterScheduler {
+    /// Base delay in milliseconds for an undirected reply.
     pub base_ms: u64,
+    /// Upper bound of the jitter window, in milliseconds.
     pub max_ms: u64,
+    /// Fixed delay in milliseconds for a directed (unicast) reply.
     pub directed_reply_ms: u64,
 }
 
@@ -359,6 +411,7 @@ pub struct AliveDedupTracker {
 }
 
 impl AliveDedupTracker {
+    /// Create a tracker with the given deduplication window.
     pub fn new(dedup_window: Duration) -> Self {
         Self {
             dedup_window,

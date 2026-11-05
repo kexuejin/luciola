@@ -16,11 +16,17 @@ use crate::CoreError;
 /// Configuration options for the discovery engine.
 #[derive(Debug, Clone)]
 pub struct DiscoveryConfig {
+    /// This node's advertised profile.
     pub self_profile: Profile,
+    /// UDP port to listen on for discovery traffic.
     pub listen_port: u16,
+    /// UDP port to broadcast to (usually equal to `listen_port`).
     pub broadcast_port: u16,
+    /// How often an `alive` presence frame is broadcast.
     pub presence_interval: Duration,
+    /// Silence after which a peer is marked offline.
     pub offline_after: Duration,
+    /// Explicit `(host, port)` peers for cross-subnet or loopback setups.
     pub manual_peers: Vec<(String, u16)>,
     /// When the requested `listen_port` is taken, bind an ephemeral port
     /// instead of failing. Off by default.

@@ -11,11 +11,16 @@
 use crate::trust;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 
+/// Parsed `luciola://pair` payload (or a legacy `http://host:port` URI).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PairingPayload {
+    /// Display name of the host device.
     pub name: String,
+    /// Product label, when the host advertises one.
     pub product: Option<String>,
+    /// TCP service port to dial.
     pub port: u16,
+    /// Candidate addresses for the host, best first.
     pub addrs: Vec<String>,
     /// Host identity fingerprint (`sha256:<hex>`) — bind trust on this.
     pub fingerprint: Option<String>,

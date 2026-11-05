@@ -13,10 +13,15 @@ pub const HEADER_LEN: usize = 12;
 /// 协议 DATA 载荷上限（§1.1）。解码器按它校验；config.max_data_frame 只约束本地写入切片。
 pub const MAX_DATA_FRAME: usize = 64 * 1024;
 
+/// 打开一条流式通道。
 pub const T_OPEN: u8 = 0x01;
+/// 对 OPEN / DOPEN 的应答（status + 可选 detail）。
 pub const T_ACK: u8 = 0x02;
+/// 通道数据。
 pub const T_DATA: u8 = 0x03;
+/// 通道写方向结束（EOF）。
 pub const T_EOF: u8 = 0x04;
+/// 关闭一条通道（reason 见 [`CloseReason`]）。
 pub const T_CLOSE: u8 = 0x05;
 /// 会话级 keepalive 探测（v2；payload = 8 字节 nonce，ch_id 0）。v1 对端忽略。
 pub const T_PING: u8 = 0x06;
@@ -30,19 +35,28 @@ pub const T_DOPEN: u8 = 0x09;
 /// OPEN_ACK status（§1.1）。
 pub struct AckStatus;
 impl AckStatus {
+    /// 通道已建立。
     pub const OK: u8 = 0;
+    /// 目标被 ACL 白名单拒绝。
     pub const ACL_DENIED: u8 = 1;
+    /// 放行后拨号失败或超时。
     pub const DIAL_FAILED: u8 = 2;
+    /// 会话通道数已达上限。
     pub const CHANNEL_LIMIT: u8 = 3;
+    /// 目标地址不合法（bad_target）。
     pub const BAD_TARGET: u8 = 4;
 }
 
 /// CLOSE reason（§1.1）。
 pub struct CloseReason;
 impl CloseReason {
+    /// 正常结束（EOF 之后的收尾）。
     pub const NORMAL: u8 = 0;
+    /// 对端违反了线协议。
     pub const PROTOCOL_VIOLATION: u8 = 1;
+    /// 上游连接被重置。
     pub const UPSTREAM_RESET: u8 = 2;
+    /// 整个会话正在关闭。
     pub const SESSION_SHUTDOWN: u8 = 3;
 }
 
@@ -52,7 +66,9 @@ impl CloseReason {
 /// （v2 起 Responder 也可发 OPEN，即 remote forward；奇偶规则不变）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
+    /// 主动拨号方：分配奇数通道 ID。
     Initiator,
+    /// 接受方：分配偶数通道 ID（v2 起也可发 OPEN）。
     Responder,
 }
 
@@ -64,6 +80,7 @@ pub enum Role {
 pub struct DialTarget {
     /// IP 字面量或主机名（构造时小写规范化、去尾部点）。
     pub host: String,
+    /// 目标 TCP / UDP 端口。
     pub port: u16,
 }
 
@@ -76,6 +93,7 @@ impl DialTarget {
         }
     }
 
+    /// 由 socket 地址构造（取 IP 字面量与端口）。
     pub fn from_addr(addr: std::net::SocketAddr) -> Self {
         Self {
             host: addr.ip().to_string(),
@@ -160,7 +178,12 @@ pub enum MuxError {
     OpenTimeout(Duration),
     /// 对端 OPEN_ACK(非 0)：终态拒绝，通道已回收且不补发 CLOSE。
     #[error("open rejected by peer: status {status}, detail: {detail:?}")]
-    Rejected { status: u8, detail: Option<String> },
+    Rejected {
+        /// 对端返回的 [`AckStatus`] 值（非 0）。
+        status: u8,
+        /// 对端附带的可选说明。
+        detail: Option<String>,
+    },
     /// 目标不合法（§1.2 bad_target 判定，解析阶段拒绝）。
     #[error("invalid target: {0}")]
     InvalidTarget(String),
@@ -265,44 +288,67 @@ impl MuxConfig {
 /// 解码后的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
+    /// 打开一条流式通道。
     Open {
+        /// 发起方分配的通道 ID。
         ch_id: u32,
+        /// 目标主机（IP 字面量或主机名）。
         host: String,
+        /// 目标端口。
         port: u16,
     },
     /// 数据报通道 OPEN（v2 UDP 会话映射）；payload 与 OPEN 相同。
     DOpen {
+        /// 发起方分配的通道 ID。
         ch_id: u32,
+        /// 目标主机（IP 字面量或主机名）。
         host: String,
+        /// 目标端口。
         port: u16,
     },
+    /// 对 OPEN / DOPEN 的应答。
     Ack {
+        /// 被应答的通道 ID。
         ch_id: u32,
+        /// [`AckStatus`] 值。
         status: u8,
+        /// 可选的人类可读说明。
         detail: Option<String>,
     },
+    /// 通道数据。
     Data {
+        /// 目标通道 ID。
         ch_id: u32,
+        /// 载荷字节。
         bytes: Vec<u8>,
     },
+    /// 通道写方向结束。
     Eof {
+        /// 目标通道 ID。
         ch_id: u32,
     },
+    /// 关闭一条通道。
     Close {
+        /// 目标通道 ID。
         ch_id: u32,
+        /// [`CloseReason`] 值。
         reason: u8,
     },
     /// keepalive 探测（v2，ch_id 0）：收到即证明对端 v2，回 PONG(nonce)。
     Ping {
+        /// 随机 nonce，由 PONG 原样回显。
         nonce: u64,
     },
     /// PING 的应答（v2，ch_id 0）：收到即证明对端 v2。
     Pong {
+        /// 被回显的 PING nonce。
         nonce: u64,
     },
     /// 逐通道流控 credit（v2）：对端消费了 delta 字节，本端 outstanding 递减。
     Window {
+        /// 目标通道 ID。
         ch_id: u32,
+        /// 对端已消费的字节增量。
         delta: u32,
     },
 }

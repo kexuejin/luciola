@@ -3410,6 +3410,9 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
         this.pointer = null
         this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
     }
+    /**
+     * Create a channel bound to a 32-byte Ed25519 identity seed.
+     */
     public actual constructor(`identitySeed`: kotlin.ByteArray) : this(
         uniffiRustCall { uniffiRustCallStatus ->
             UniffiLib.uniffi_luciola_uniffi_fn_constructor_securesession_new(
@@ -3610,6 +3613,9 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
         })
     }
 
+    /**
+     * Whether the channel currently holds an authenticated connection.
+     */
     public actual override fun `isConnected`(): kotlin.Boolean {
         return FfiConverterBoolean.lift(callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
@@ -3903,6 +3909,9 @@ public actual open class TrustStore: Disposable, TrustStoreInterface {
         this.pointer = null
         this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
     }
+    /**
+     * Restore a trust store from its JSON form, or start empty.
+     */
     public actual constructor(`fromJson`: kotlin.String?) : this(
         uniffiRustCall { uniffiRustCallStatus ->
             UniffiLib.uniffi_luciola_uniffi_fn_constructor_truststore_new(
@@ -3986,6 +3995,9 @@ public actual open class TrustStore: Disposable, TrustStoreInterface {
     }
 
     
+    /**
+     * Every paired device, in insertion order.
+     */
     public actual override fun `entries`(): List<TrustedDeviceInfo> {
         return FfiConverterSequenceTypeTrustedDeviceInfo.lift(callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
@@ -5416,6 +5428,9 @@ public actual fun `advertisedAddresses`(): List<kotlin.String> {
     })
 }
 
+/**
+ * Build the canonical `luciola://pair` URI (URL-encoded).
+ */
 public actual fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?): kotlin.String {
     return FfiConverterString.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_build_pairing_uri(
@@ -5608,6 +5623,9 @@ public actual fun `localCandidateAddresses`(): List<kotlin.String> {
     })
 }
 
+/**
+ * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ */
 public actual fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo? {
     return FfiConverterOptionalTypePairingInfo.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_parse_pairing_uri(

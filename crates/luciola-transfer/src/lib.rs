@@ -20,6 +20,8 @@
 //!   retransmitted tail chunk (its final ACK lost in flight) still gets the
 //!   final ACK back, so the sender never hangs at 96–99%.
 
+#![deny(missing_docs)]
+
 pub mod protocol;
 pub mod receiver;
 pub mod sender;
@@ -34,14 +36,23 @@ use luciola_proto::{ErrorCode, ErrorInfo};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum TransferError {
+    /// An operating-system I/O failure while reading or writing the file.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// A wire frame could not be decoded.
     #[error("frame decode error: {0}")]
     Decode(String),
+    /// The operation is not valid in the current transfer state.
     #[error("transfer state error: {0}")]
     State(String),
+    /// The received byte count disagreed with the declared total size.
     #[error("size mismatch: expected {expected}, got {actual}")]
-    SizeMismatch { expected: u64, actual: u64 },
+    SizeMismatch {
+        /// Size declared in the intro frame.
+        expected: u64,
+        /// Size actually observed.
+        actual: u64,
+    },
 }
 
 impl From<&TransferError> for ErrorInfo {

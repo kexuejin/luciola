@@ -1281,7 +1281,7 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 28829.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 27091.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_func_classify_error() != 40540.toShort()) {
@@ -1326,7 +1326,7 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 57854.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 28415.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_func_race_connect() != 26451.toShort()) {
@@ -1419,7 +1419,7 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 30122.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 48101.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 14622.toShort()) {
@@ -1461,7 +1461,7 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward() != 19408.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 48483.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_truststore_level_of() != 49100.toShort()) {
@@ -1479,25 +1479,25 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 24675.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 15751.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 36036.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 40478.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 26187.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 64667.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated() != 47301.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated() != 20150.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost() != 28239.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost() != 2979.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error() != 29273.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error() != 7804.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161.toShort()) {
@@ -3073,6 +3073,9 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
         this.pointer = null
         this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
     }
+    /**
+     * Create a channel bound to a 32-byte Ed25519 identity seed.
+     */
     public actual constructor(`identitySeed`: kotlin.ByteArray) : this(
         uniffiRustCall { uniffiRustCallStatus ->
             UniffiLib.uniffi_luciola_uniffi_fn_constructor_securesession_new(
@@ -3273,6 +3276,9 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
         })
     }
 
+    /**
+     * Whether the channel currently holds an authenticated connection.
+     */
     public actual override fun `isConnected`(): kotlin.Boolean {
         return FfiConverterBoolean.lift(callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
@@ -3566,6 +3572,9 @@ public actual open class TrustStore: Disposable, TrustStoreInterface {
         this.pointer = null
         this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
     }
+    /**
+     * Restore a trust store from its JSON form, or start empty.
+     */
     public actual constructor(`fromJson`: kotlin.String?) : this(
         uniffiRustCall { uniffiRustCallStatus ->
             UniffiLib.uniffi_luciola_uniffi_fn_constructor_truststore_new(
@@ -3649,6 +3658,9 @@ public actual open class TrustStore: Disposable, TrustStoreInterface {
     }
 
     
+    /**
+     * Every paired device, in insertion order.
+     */
     public actual override fun `entries`(): List<TrustedDeviceInfo> {
         return FfiConverterSequenceTypeTrustedDeviceInfo.lift(callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
@@ -4985,6 +4997,9 @@ public actual fun `advertisedAddresses`(): List<kotlin.String> {
     })
 }
 
+/**
+ * Build the canonical `luciola://pair` URI (URL-encoded).
+ */
 public actual fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?): kotlin.String {
     return FfiConverterString.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_build_pairing_uri(
@@ -5177,6 +5192,9 @@ public actual fun `localCandidateAddresses`(): List<kotlin.String> {
     })
 }
 
+/**
+ * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ */
 public actual fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo? {
     return FfiConverterOptionalTypePairingInfo.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_parse_pairing_uri(

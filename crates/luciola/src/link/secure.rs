@@ -67,12 +67,16 @@ const READ_CHUNK: usize = 64 * 1024;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum LinkError {
+    /// An operating-system I/O failure on the underlying socket.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// The authenticated handshake failed.
     #[error("handshake failed: {0}")]
     Handshake(String),
+    /// The peer presented a key that does not match the pinned identity.
     #[error("peer key mismatch (untrusted device)")]
     UntrustedPeer,
+    /// AEAD verification failed: a frame was tampered with or the key is wrong.
     #[error("tampering detected: {0}")]
     Tamper(String),
 }
@@ -169,6 +173,7 @@ impl SecureStream {
         Ok(())
     }
 
+    /// `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
     pub fn peer_fingerprint(&self) -> String {
         trust::fingerprint(&self.peer_public_key)
     }
@@ -226,6 +231,7 @@ impl SecureRecvHalf {
         Ok(())
     }
 
+    /// `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
     pub fn peer_fingerprint(&self) -> String {
         trust::fingerprint(&self.peer_public_key)
     }
@@ -255,6 +261,7 @@ impl SecureSendHalf {
         self.write_half.shutdown().await
     }
 
+    /// `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
     pub fn peer_fingerprint(&self) -> String {
         trust::fingerprint(&self.peer_public_key)
     }

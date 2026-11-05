@@ -8,14 +8,23 @@ use crate::proto::Profile;
 /// A discovered peer node record in the registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerRecord {
+    /// Stable node identity.
     pub node_id: String,
+    /// Human-readable device name.
     pub name: String,
+    /// Last profile revision observed.
     pub profile_rev: u32,
+    /// Address the peer was last heard from.
     pub ip: String,
+    /// Peer's UDP discovery port.
     pub udp_port: u16,
+    /// Peer's secure-channel TCP port.
     pub tcp_port: u16,
+    /// Whether the peer is currently considered online.
     pub online: bool,
+    /// When the peer was last heard from.
     pub last_seen: Instant,
+    /// Optional hardware metadata.
     pub device: Option<luciola_proto::DeviceMeta>,
     /// Stable per-device grouping id (display-grade).
     pub device_id: Option<String>,
@@ -30,8 +39,11 @@ pub struct PeerRecord {
 /// Discovery events emitted by the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeerEvent {
+    /// A peer appeared for the first time.
     Found(PeerRecord),
+    /// A known peer's profile changed.
     Updated(PeerRecord),
+    /// A peer went offline; carries its node id.
     Lost(String),
 }
 
@@ -82,6 +94,7 @@ pub(crate) fn should_take_new_address(
 }
 
 impl PeerRegistry {
+    /// Create an empty registry.
     pub fn new() -> Self {
         Self {
             peers: HashMap::new(),
@@ -198,10 +211,12 @@ impl PeerRegistry {
         offline_ids
     }
 
+    /// Snapshot of every peer currently marked online.
     pub fn online_peers(&self) -> Vec<PeerRecord> {
         self.peers.values().filter(|p| p.online).cloned().collect()
     }
 
+    /// Last known profile revision for `node_id`.
     pub fn profile_rev_of(&self, node_id: &str) -> Option<u32> {
         self.peers.get(node_id).map(|p| p.profile_rev)
     }

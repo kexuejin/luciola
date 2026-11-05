@@ -1,3 +1,13 @@
+//! Node.js (N-API) bindings: discovery, secure channels, port forwarding,
+//! pairing and the shared error taxonomy.
+//!
+//! Every `#[napi]` item is part of the published `index.d.ts` contract; keep
+//! the TypeScript declarations in sync (see AGENTS.md §3).
+//!
+//! `missing_docs` is deliberately **not** denied crate-wide: `#[napi]` on a
+//! class generates undocumented wrapper functions we do not own, so the lint
+//! would fail on macro output. Every hand-written item here is documented.
+
 #[macro_use]
 extern crate napi_derive;
 
@@ -24,8 +34,11 @@ pub fn get_error_codes() -> Vec<String> {
 /// `onEvent` details emitted by older peers.
 #[napi(object)]
 pub struct JsErrorInfo {
+    /// Stable snake_case wire code; unknown codes are reported as `"unknown"`.
     pub code: String,
+    /// The original human-readable detail, without a code prefix.
     pub message: String,
+    /// Whether retrying the operation may succeed.
     pub retryable: bool,
 }
 
@@ -128,12 +141,19 @@ pub fn render_qr_ascii(content: String) -> Option<String> {
 #[napi(object)]
 #[derive(Clone)]
 pub struct JsDeviceMeta {
+    /// Form factor: mobile / tablet / laptop / desktop / server / wsl / unknown.
     pub device_type: String,
+    /// Emoji icon for peer-list UIs.
     pub icon: String,
+    /// Operating-system name.
     pub os: String,
+    /// CPU architecture.
     pub arch: String,
+    /// Hardware model string, when available.
     pub model: Option<String>,
+    /// Host name, when available.
     pub hostname: Option<String>,
+    /// Stable per-device grouping id (display-grade).
     pub device_id: Option<String>,
 }
 
@@ -155,21 +175,32 @@ pub fn get_device_meta() -> JsDeviceMeta {
 /// Manually configured peer for cross-subnet / VPN / localhost setups.
 #[napi(object)]
 pub struct JsManualPeer {
+    /// Peer host (IP literal or hostname).
     pub host: String,
+    /// Peer UDP discovery port.
     pub port: u32,
 }
 
 /// Discovered peer record returned to JavaScript.
 #[napi(object)]
 pub struct JsPeerRecord {
+    /// Stable node identity.
     pub node_id: String,
+    /// Human-readable device name.
     pub name: String,
+    /// Address the peer was last heard from.
     pub ip: String,
+    /// Peer's UDP discovery port.
     pub udp_port: u32,
+    /// Peer's secure-channel TCP port.
     pub tcp_port: u32,
+    /// Optional hardware metadata.
     pub device: Option<JsDeviceMeta>,
+    /// Stable per-device grouping id (display-grade).
     pub device_id: Option<String>,
+    /// Product label running on the peer.
     pub product: Option<String>,
+    /// Opaque application payload carried alongside discovery.
     pub extra: Option<String>,
 }
 
@@ -238,6 +269,8 @@ impl DiscoverySession {
     #[napi(constructor)]
     // napi 构造器的可选参数即公共 JS API，参数表由调用方约定（clippy 9/7）。
     #[allow(clippy::too_many_arguments)]
+    /// Create a discovery session. All arguments are optional; `port` defaults
+    /// to 17878, `name` to "NodeJS Peer".
     pub fn new(
         name: Option<String>,
         port: Option<u32>,
@@ -507,16 +540,22 @@ impl DiscoverySession {
 /// Per-channel dial outcome of a Happy Eyeballs race.
 #[napi(object)]
 pub struct JsDialChannel {
+    /// Address this channel dialled.
     pub address: String,
+    /// `won` / `cancelled` / `timeout`.
     pub status: String,
+    /// Connect latency in milliseconds, when the attempt succeeded.
     pub rtt_ms: Option<f64>,
 }
 
 /// Overall race outcome: winning address plus per-channel detail.
 #[napi(object)]
 pub struct JsRaceOutcome {
+    /// Address that won the race, if any.
     pub winner: Option<String>,
+    /// Connect latency of the winner, in milliseconds.
     pub rtt_ms: Option<f64>,
+    /// Per-candidate outcome, in input order.
     pub channels: Vec<JsDialChannel>,
 }
 
@@ -566,9 +605,13 @@ pub async fn happy_eyeballs_race(
 /// A generated or restored device identity. Keep `seed` secret.
 #[napi(object)]
 pub struct JsDeviceIdentity {
+    /// 32-byte Ed25519 seed — keep it secret.
     pub seed: Buffer,
+    /// Ed25519 public key derived from `seed`.
     pub public_key: Buffer,
+    /// `sha256:<hex>` fingerprint of `public_key`.
     pub fingerprint: String,
+    /// 6-digit on-screen comparison pin.
     pub short_pin: String,
 }
 
@@ -659,19 +702,28 @@ pub struct SecureChannel {
 /// Link health counters (same six fields as the uniffi `LinkStats`).
 #[napi(object)]
 pub struct JsLinkStats {
+    /// Frames written to the socket.
     pub frames_sent: i64,
+    /// Frames read from the socket.
     pub frames_received: i64,
+    /// Successful connections established (including reconnects).
     pub connections_established: i64,
+    /// Reconnect attempts started after a drop.
     pub reconnect_attempts: i64,
+    /// Frames accepted into the outbound queue.
     pub frames_enqueued: i64,
+    /// Frames taken from the outbound queue by the link loop.
     pub frames_dequeued: i64,
 }
 
 /// T3/T4 转发 ACL 规则（主机为 IP 字面量或主机名，与 uniffi ForwardRuleDto 同构）。
 #[napi(object)]
 pub struct JsForwardRule {
+    /// IP literal or hostname (normalised to lowercase).
     pub host: String,
+    /// Inclusive lower port bound.
     pub port_from: u16,
+    /// Inclusive upper port bound.
     pub port_to: u16,
     /// v2：true = 本规则同时放行 UDP 数据报拨号（DOPEN）；false 仅 TCP（v1 语义）。
     pub udp: bool,
@@ -681,12 +733,19 @@ pub struct JsForwardRule {
 /// `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
 #[napi(object)]
 pub struct JsForwardStatus {
+    /// Whether the forward / endpoint is currently bound.
     pub active: bool,
+    /// Port actually bound (system-assigned when 0 was requested).
     pub listen_port: u16,
+    /// Channels currently relaying bytes.
     pub channels_open: i64,
+    /// Channels granted since registration.
     pub channels_total: i64,
+    /// OPEN / DOPEN rejected by the ACL.
     pub dial_denied: i64,
+    /// Allowed dials that failed or timed out.
     pub dial_failed: i64,
+    /// Row kind: local / udp_local / remote_endpoint / endpoint / remote.
     pub kind: String,
 }
 
@@ -735,6 +794,7 @@ impl Default for LinkTimings {
 #[napi]
 impl SecureChannel {
     #[napi(constructor)]
+    /// Create a channel bound to a 32-byte Ed25519 identity seed.
     pub fn new(identity_seed: Buffer) -> Self {
         Self {
             identity_seed: identity_seed.to_vec(),
@@ -865,11 +925,13 @@ impl SecureChannel {
     }
 
     #[napi]
+    /// Whether the channel currently holds an authenticated connection.
     pub fn is_connected(&self) -> bool {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     #[napi]
+    /// Close the channel, stop reconnecting and pause the tunnel.
     pub fn close(&self) {
         if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
             let _ = tx.send(());
@@ -1248,12 +1310,19 @@ impl SecureChannel {
 /// host's identity fingerprint — bind trust on it.
 #[napi(object)]
 pub struct JsPairingInfo {
+    /// Display name of the host device.
     pub name: String,
+    /// Product label, when the host advertises one.
     pub product: Option<String>,
+    /// TCP service port to dial.
     pub port: u16,
+    /// Candidate addresses for the host, best first.
     pub addrs: Vec<String>,
+    /// Host identity fingerprint (`sha256:<hex>`) — bind trust on it.
     pub fingerprint: Option<String>,
+    /// Host Ed25519 public key (base64) — the pin target.
     pub public_key: Option<String>,
+    /// Optional 6-digit on-screen comparison pin.
     pub pin: Option<String>,
 }
 
@@ -1296,7 +1365,9 @@ pub fn parse_pairing_uri(uri: String) -> Option<JsPairingInfo> {
 /// 平台日志出口的一条日志：引擎内 tracing 以 (level, message) 送达 JS 回调。
 #[napi(object)]
 pub struct JsLogEvent {
+    /// Tracing level (`trace` / `debug` / `info` / `warn` / `error`).
     pub level: String,
+    /// Rendered log message.
     pub message: String,
 }
 

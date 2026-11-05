@@ -788,6 +788,7 @@ pub(crate) enum EndpointSide {
 
 /// Guard 统一取实际监听端口（stop 回退匹配用）。
 pub trait ListenPort {
+    /// The port the guard actually bound (system-assigned when 0 was requested).
     fn listen_port(&self) -> u16;
 }
 

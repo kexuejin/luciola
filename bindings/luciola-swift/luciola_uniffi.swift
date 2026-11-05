@@ -921,6 +921,9 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
      */
     func forwardStats()  -> [ForwardStatusDto]
     
+    /**
+     * Whether the channel currently holds an authenticated connection.
+     */
     func isConnected()  -> Bool
     
     /**
@@ -1050,6 +1053,9 @@ open class SecureSession: SecureSessionProtocol, @unchecked Sendable {
     public func uniffiClonePointer() -> UnsafeMutableRawPointer {
         return try! rustCall { uniffi_luciola_uniffi_fn_clone_securesession(self.pointer, $0) }
     }
+    /**
+     * Create a channel bound to a 32-byte Ed25519 identity seed.
+     */
 public convenience init(identitySeed: Data) {
     let pointer =
         try! rustCall() {
@@ -1158,6 +1164,9 @@ open func forwardStats() -> [ForwardStatusDto]  {
 })
 }
     
+    /**
+     * Whether the channel currently holds an authenticated connection.
+     */
 open func isConnected() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_is_connected(self.uniffiClonePointer(),$0
@@ -1397,6 +1406,9 @@ public func FfiConverterTypeSecureSession_lower(_ value: SecureSession) -> Unsaf
  */
 public protocol TrustStoreProtocol: AnyObject, Sendable {
     
+    /**
+     * Every paired device, in insertion order.
+     */
     func entries()  -> [TrustedDeviceInfo]
     
     /**
@@ -1464,6 +1476,9 @@ open class TrustStore: TrustStoreProtocol, @unchecked Sendable {
     public func uniffiClonePointer() -> UnsafeMutableRawPointer {
         return try! rustCall { uniffi_luciola_uniffi_fn_clone_truststore(self.pointer, $0) }
     }
+    /**
+     * Restore a trust store from its JSON form, or start empty.
+     */
 public convenience init(fromJson: String?) {
     let pointer =
         try! rustCall() {
@@ -1485,6 +1500,9 @@ public convenience init(fromJson: String?) {
     
 
     
+    /**
+     * Every paired device, in insertion order.
+     */
 open func entries() -> [TrustedDeviceInfo]  {
     return try!  FfiConverterSequenceTypeTrustedDeviceInfo.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_method_truststore_entries(self.uniffiClonePointer(),$0
@@ -1594,14 +1612,38 @@ public func FfiConverterTypeTrustStore_lower(_ value: TrustStore) -> UnsafeMutab
  * A generated or restored device identity. Keep `seed` secret.
  */
 public struct DeviceIdentityInfo {
+    /**
+     * 32-byte Ed25519 seed — persist it in secret storage, never log it.
+     */
     public var seed: Data
+    /**
+     * Ed25519 public key derived from `seed`.
+     */
     public var publicKey: Data
+    /**
+     * `sha256:<hex>` fingerprint of `public_key`.
+     */
     public var fingerprint: String
+    /**
+     * 6-digit on-screen comparison pin.
+     */
     public var shortPin: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(seed: Data, publicKey: Data, fingerprint: String, shortPin: String) {
+    public init(
+        /**
+         * 32-byte Ed25519 seed — persist it in secret storage, never log it.
+         */seed: Data, 
+        /**
+         * Ed25519 public key derived from `seed`.
+         */publicKey: Data, 
+        /**
+         * `sha256:<hex>` fingerprint of `public_key`.
+         */fingerprint: String, 
+        /**
+         * 6-digit on-screen comparison pin.
+         */shortPin: String) {
         self.seed = seed
         self.publicKey = publicKey
         self.fingerprint = fingerprint
@@ -1683,16 +1725,52 @@ public func FfiConverterTypeDeviceIdentityInfo_lower(_ value: DeviceIdentityInfo
  * Device hardware and OS metadata.
  */
 public struct DeviceMeta {
+    /**
+     * Form factor of the device.
+     */
     public var deviceType: DeviceType
+    /**
+     * Emoji icon for peer-list UIs.
+     */
     public var icon: String
+    /**
+     * Operating-system name, e.g. `macOS` or `Android`.
+     */
     public var os: String
+    /**
+     * CPU architecture, e.g. `aarch64`.
+     */
     public var arch: String
+    /**
+     * Hardware model string, when the platform exposes one.
+     */
     public var model: String?
+    /**
+     * Stable per-device grouping id (display-grade, not a security identity).
+     */
     public var deviceId: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(deviceType: DeviceType, icon: String, os: String, arch: String, model: String?, deviceId: String?) {
+    public init(
+        /**
+         * Form factor of the device.
+         */deviceType: DeviceType, 
+        /**
+         * Emoji icon for peer-list UIs.
+         */icon: String, 
+        /**
+         * Operating-system name, e.g. `macOS` or `Android`.
+         */os: String, 
+        /**
+         * CPU architecture, e.g. `aarch64`.
+         */arch: String, 
+        /**
+         * Hardware model string, when the platform exposes one.
+         */model: String?, 
+        /**
+         * Stable per-device grouping id (display-grade, not a security identity).
+         */deviceId: String?) {
         self.deviceType = deviceType
         self.icon = icon
         self.os = os
@@ -1788,13 +1866,31 @@ public func FfiConverterTypeDeviceMeta_lower(_ value: DeviceMeta) -> RustBuffer 
  * Per-channel dial outcome.
  */
 public struct DialChannel {
+    /**
+     * Address this channel dialled.
+     */
     public var address: String
+    /**
+     * What happened to this channel.
+     */
     public var status: DialStatus
+    /**
+     * Connect latency in milliseconds, when the attempt succeeded.
+     */
     public var rttMs: Double?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(address: String, status: DialStatus, rttMs: Double?) {
+    public init(
+        /**
+         * Address this channel dialled.
+         */address: String, 
+        /**
+         * What happened to this channel.
+         */status: DialStatus, 
+        /**
+         * Connect latency in milliseconds, when the attempt succeeded.
+         */rttMs: Double?) {
         self.address = address
         self.status = status
         self.rttMs = rttMs
@@ -1869,11 +1965,29 @@ public func FfiConverterTypeDialChannel_lower(_ value: DialChannel) -> RustBuffe
  * A discovered peer node in the local network.
  */
 public struct DiscoveredPeer {
+    /**
+     * Stable node identity.
+     */
     public var nodeId: String
+    /**
+     * Human-readable device name.
+     */
     public var name: String
+    /**
+     * Address the peer was last heard from.
+     */
     public var ip: String
+    /**
+     * Peer's UDP discovery port.
+     */
     public var udpPort: UInt16
+    /**
+     * Peer's secure-channel TCP port.
+     */
     public var tcpPort: UInt16
+    /**
+     * Optional hardware metadata.
+     */
     public var device: DeviceMeta?
     /**
      * Stable per-device grouping id (display-grade).
@@ -1891,7 +2005,25 @@ public struct DiscoveredPeer {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeId: String, name: String, ip: String, udpPort: UInt16, tcpPort: UInt16, device: DeviceMeta?, 
+    public init(
+        /**
+         * Stable node identity.
+         */nodeId: String, 
+        /**
+         * Human-readable device name.
+         */name: String, 
+        /**
+         * Address the peer was last heard from.
+         */ip: String, 
+        /**
+         * Peer's UDP discovery port.
+         */udpPort: UInt16, 
+        /**
+         * Peer's secure-channel TCP port.
+         */tcpPort: UInt16, 
+        /**
+         * Optional hardware metadata.
+         */device: DeviceMeta?, 
         /**
          * Stable per-device grouping id (display-grade).
          */deviceId: String?, 
@@ -2123,8 +2255,17 @@ public func FfiConverterTypeErrorInfoDto_lower(_ value: ErrorInfoDto) -> RustBuf
  * 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
  */
 public struct ForwardRuleDto {
+    /**
+     * IP literal or hostname (normalised to lowercase).
+     */
     public var host: String
+    /**
+     * Inclusive lower port bound.
+     */
     public var portFrom: UInt16
+    /**
+     * Inclusive upper port bound.
+     */
     public var portTo: UInt16
     /**
      * v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
@@ -2133,7 +2274,16 @@ public struct ForwardRuleDto {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(host: String, portFrom: UInt16, portTo: UInt16, 
+    public init(
+        /**
+         * IP literal or hostname (normalised to lowercase).
+         */host: String, 
+        /**
+         * Inclusive lower port bound.
+         */portFrom: UInt16, 
+        /**
+         * Inclusive upper port bound.
+         */portTo: UInt16, 
         /**
          * v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
          */udp: Bool) {
@@ -2219,17 +2369,59 @@ public func FfiConverterTypeForwardRuleDto_lower(_ value: ForwardRuleDto) -> Rus
  * `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
  */
 public struct ForwardStatusDto {
+    /**
+     * Whether the forward / endpoint is currently bound.
+     */
     public var active: Bool
+    /**
+     * Port actually bound (system-assigned when 0 was requested).
+     */
     public var listenPort: UInt16
+    /**
+     * Channels currently relaying bytes.
+     */
     public var channelsOpen: UInt64
+    /**
+     * Channels granted since registration.
+     */
     public var channelsTotal: UInt64
+    /**
+     * OPEN / DOPEN rejected by the ACL.
+     */
     public var dialDenied: UInt64
+    /**
+     * Allowed dials that failed or timed out.
+     */
     public var dialFailed: UInt64
+    /**
+     * Row kind: local / udp_local / remote_endpoint / endpoint / remote.
+     */
     public var kind: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(active: Bool, listenPort: UInt16, channelsOpen: UInt64, channelsTotal: UInt64, dialDenied: UInt64, dialFailed: UInt64, kind: String) {
+    public init(
+        /**
+         * Whether the forward / endpoint is currently bound.
+         */active: Bool, 
+        /**
+         * Port actually bound (system-assigned when 0 was requested).
+         */listenPort: UInt16, 
+        /**
+         * Channels currently relaying bytes.
+         */channelsOpen: UInt64, 
+        /**
+         * Channels granted since registration.
+         */channelsTotal: UInt64, 
+        /**
+         * OPEN / DOPEN rejected by the ACL.
+         */dialDenied: UInt64, 
+        /**
+         * Allowed dials that failed or timed out.
+         */dialFailed: UInt64, 
+        /**
+         * Row kind: local / udp_local / remote_endpoint / endpoint / remote.
+         */kind: String) {
         self.active = active
         self.listenPort = listenPort
         self.channelsOpen = channelsOpen
@@ -2332,9 +2524,21 @@ public func FfiConverterTypeForwardStatusDto_lower(_ value: ForwardStatusDto) ->
  * Link health counters for UI/diagnostics.
  */
 public struct LinkStats {
+    /**
+     * Frames written to the socket.
+     */
     public var framesSent: UInt64
+    /**
+     * Frames read from the socket.
+     */
     public var framesReceived: UInt64
+    /**
+     * Successful connections established (including reconnects).
+     */
     public var connectionsEstablished: UInt64
+    /**
+     * Reconnect attempts started after a drop.
+     */
     public var reconnectAttempts: UInt64
     /**
      * `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
@@ -2352,7 +2556,19 @@ public struct LinkStats {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(framesSent: UInt64, framesReceived: UInt64, connectionsEstablished: UInt64, reconnectAttempts: UInt64, 
+    public init(
+        /**
+         * Frames written to the socket.
+         */framesSent: UInt64, 
+        /**
+         * Frames read from the socket.
+         */framesReceived: UInt64, 
+        /**
+         * Successful connections established (including reconnects).
+         */connectionsEstablished: UInt64, 
+        /**
+         * Reconnect attempts started after a drop.
+         */reconnectAttempts: UInt64, 
         /**
          * `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
          *
@@ -2459,12 +2675,24 @@ public func FfiConverterTypeLinkStats_lower(_ value: LinkStats) -> RustBuffer {
  * A manually configured peer for cross-subnet / VPN / localhost setups.
  */
 public struct ManualPeer {
+    /**
+     * Peer host (IP literal or hostname).
+     */
     public var host: String
+    /**
+     * Peer UDP discovery port.
+     */
     public var port: UInt16
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(host: String, port: UInt16) {
+    public init(
+        /**
+         * Peer host (IP literal or hostname).
+         */host: String, 
+        /**
+         * Peer UDP discovery port.
+         */port: UInt16) {
         self.host = host
         self.port = port
     }
@@ -2533,17 +2761,59 @@ public func FfiConverterTypeManualPeer_lower(_ value: ManualPeer) -> RustBuffer 
  * fingerprint — bind trust on it; `pin` is the optional 6-digit compare.
  */
 public struct PairingInfo {
+    /**
+     * Display name of the host device.
+     */
     public var name: String
+    /**
+     * Product label, when the host advertises one.
+     */
     public var product: String?
+    /**
+     * TCP service port to dial.
+     */
     public var port: UInt16
+    /**
+     * Candidate addresses for the host, best first.
+     */
     public var addrs: [String]
+    /**
+     * Host identity fingerprint (`sha256:<hex>`) — bind trust on it.
+     */
     public var fingerprint: String?
+    /**
+     * Host Ed25519 public key (base64) — the pin target.
+     */
     public var publicKey: String?
+    /**
+     * Optional 6-digit on-screen comparison pin.
+     */
     public var pin: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, publicKey: String?, pin: String?) {
+    public init(
+        /**
+         * Display name of the host device.
+         */name: String, 
+        /**
+         * Product label, when the host advertises one.
+         */product: String?, 
+        /**
+         * TCP service port to dial.
+         */port: UInt16, 
+        /**
+         * Candidate addresses for the host, best first.
+         */addrs: [String], 
+        /**
+         * Host identity fingerprint (`sha256:<hex>`) — bind trust on it.
+         */fingerprint: String?, 
+        /**
+         * Host Ed25519 public key (base64) — the pin target.
+         */publicKey: String?, 
+        /**
+         * Optional 6-digit on-screen comparison pin.
+         */pin: String?) {
         self.name = name
         self.product = product
         self.port = port
@@ -2646,13 +2916,31 @@ public func FfiConverterTypePairingInfo_lower(_ value: PairingInfo) -> RustBuffe
  * Overall race outcome: winning address plus per-channel detail.
  */
 public struct RaceOutcome {
+    /**
+     * Address that won the race, if any.
+     */
     public var winner: String?
+    /**
+     * Connect latency of the winner, in milliseconds.
+     */
     public var rttMs: Double?
+    /**
+     * Per-candidate outcome, in input order.
+     */
     public var channels: [DialChannel]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(winner: String?, rttMs: Double?, channels: [DialChannel]) {
+    public init(
+        /**
+         * Address that won the race, if any.
+         */winner: String?, 
+        /**
+         * Connect latency of the winner, in milliseconds.
+         */rttMs: Double?, 
+        /**
+         * Per-candidate outcome, in input order.
+         */channels: [DialChannel]) {
         self.winner = winner
         self.rttMs = rttMs
         self.channels = channels
@@ -2723,13 +3011,28 @@ public func FfiConverterTypeRaceOutcome_lower(_ value: RaceOutcome) -> RustBuffe
 }
 
 
+/**
+ * X25519 ephemeral key pair for one relay session.
+ */
 public struct RelayEphemeralKeyPair {
+    /**
+     * X25519 secret key (32 bytes) — never send this on the wire.
+     */
     public var secret: Data
+    /**
+     * X25519 public key (32 bytes) to send to the peer.
+     */
     public var `public`: Data
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(secret: Data, `public`: Data) {
+    public init(
+        /**
+         * X25519 secret key (32 bytes) — never send this on the wire.
+         */secret: Data, 
+        /**
+         * X25519 public key (32 bytes) to send to the peer.
+         */`public`: Data) {
         self.secret = secret
         self.`public` = `public`
     }
@@ -2793,6 +3096,9 @@ public func FfiConverterTypeRelayEphemeralKeyPair_lower(_ value: RelayEphemeralK
 }
 
 
+/**
+ * Per-direction AEAD keys derived for one relay session.
+ */
 public struct RelaySessionKeys {
     /**
      * Key for frames THIS device sends.
@@ -2879,16 +3185,52 @@ public func FfiConverterTypeRelaySessionKeys_lower(_ value: RelaySessionKeys) ->
  * A paired device entry.
  */
 public struct TrustedDeviceInfo {
+    /**
+     * Stable per-device grouping id.
+     */
     public var deviceId: String
+    /**
+     * Human-readable name at pairing time.
+     */
     public var name: String
+    /**
+     * Ed25519 public key (32 bytes) — the security identity.
+     */
     public var publicKey: Data
+    /**
+     * Cached `sha256:<hex>` fingerprint of `public_key`.
+     */
     public var fingerprint: String
+    /**
+     * Current trust level.
+     */
     public var level: TrustLevel
+    /**
+     * When the device was pinned (epoch milliseconds).
+     */
     public var pinnedAtMs: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(deviceId: String, name: String, publicKey: Data, fingerprint: String, level: TrustLevel, pinnedAtMs: UInt64) {
+    public init(
+        /**
+         * Stable per-device grouping id.
+         */deviceId: String, 
+        /**
+         * Human-readable name at pairing time.
+         */name: String, 
+        /**
+         * Ed25519 public key (32 bytes) — the security identity.
+         */publicKey: Data, 
+        /**
+         * Cached `sha256:<hex>` fingerprint of `public_key`.
+         */fingerprint: String, 
+        /**
+         * Current trust level.
+         */level: TrustLevel, 
+        /**
+         * When the device was pinned (epoch milliseconds).
+         */pinnedAtMs: UInt64) {
         self.deviceId = deviceId
         self.name = name
         self.publicKey = publicKey
@@ -2987,12 +3329,33 @@ public func FfiConverterTypeTrustedDeviceInfo_lower(_ value: TrustedDeviceInfo) 
 
 public enum DeviceType {
     
+    /**
+     * Phone.
+     */
     case mobile
+    /**
+     * Tablet.
+     */
     case tablet
+    /**
+     * Portable computer.
+     */
     case laptop
+    /**
+     * Desktop computer.
+     */
     case desktop
+    /**
+     * Headless server.
+     */
     case server
+    /**
+     * Windows Subsystem for Linux guest.
+     */
     case wsl
+    /**
+     * Form factor could not be determined.
+     */
     case unknown
 }
 
@@ -3089,11 +3452,23 @@ extension DeviceType: Equatable, Hashable {}
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Fate of one candidate in a Happy Eyeballs race.
+ */
 
 public enum DialStatus {
     
+    /**
+     * Connected first; the caller dials on this address.
+     */
     case won
+    /**
+     * A sibling channel won and this attempt was cancelled.
+     */
     case cancelled
+    /**
+     * The attempt exceeded its connect timeout.
+     */
     case timeout
 }
 
@@ -3172,7 +3547,13 @@ public enum RelayCryptoError: Swift.Error {
 
     
     
+    /**
+     * AEAD open failed: tampering or a wrong key/sequence.
+     */
     case AeadOpenFailed
+    /**
+     * The supplied AEAD key was not 32 bytes.
+     */
     case BadKeyLength
 }
 
@@ -3338,6 +3719,9 @@ extension TrustLevel: Equatable, Hashable {}
  */
 public protocol LogSink: AnyObject, Sendable {
     
+    /**
+     * Receive one engine log line. Do not call logging engine APIs here.
+     */
     func log(level: String, message: String) 
     
 }
@@ -3462,12 +3846,25 @@ public func FfiConverterCallbackInterfaceLogSink_lower(_ v: LogSink) -> UInt64 {
  */
 public protocol OnPeerDiscovered: AnyObject, Sendable {
     
+    /**
+     * A new peer appeared; add it to the host's peer table.
+     */
     func onPeerDiscovered(peer: DiscoveredPeer) 
     
+    /**
+     * A known peer's profile or address changed; replace the entry.
+     */
     func onPeerUpdated(peer: DiscoveredPeer) 
     
+    /**
+     * A peer exited or aged out; remove it from the host's peer table.
+     */
     func onPeerLost(nodeId: String) 
     
+    /**
+     * Fatal setup problem (e.g. discovery port occupied); `code` is a stable
+     * `snake_case` wire code (see `errorCodes()`).
+     */
     func onError(code: String, message: String) 
     
 }
@@ -4236,6 +4633,9 @@ public func advertisedAddresses() -> [String]  {
     )
 })
 }
+/**
+ * Build the canonical `luciola://pair` URI (URL-encoded).
+ */
 public func buildPairingUri(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, publicKey: String?, pin: String?) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_build_pairing_uri(
@@ -4398,6 +4798,9 @@ public func localCandidateAddresses() -> [String]  {
     )
 })
 }
+/**
+ * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ */
 public func parsePairingUri(uri: String) -> PairingInfo?  {
     return try!  FfiConverterOptionTypePairingInfo.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_parse_pairing_uri(
@@ -4603,7 +5006,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_advertised_addresses() != 49550) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 28829) {
+    if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 27091) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_classify_error() != 40540) {
@@ -4648,7 +5051,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 57854) {
+    if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 28415) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_race_connect() != 26451) {
@@ -4741,7 +5144,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_forward_stats() != 30122) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 58467) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_is_connected() != 48101) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 14622) {
@@ -4783,7 +5186,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward() != 19408) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 19413) {
+    if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 48483) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_truststore_level_of() != 49100) {
@@ -4801,25 +5204,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 24675) {
+    if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 15751) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274) {
+    if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 36036) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 40478) {
+    if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 26187) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 64667) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated() != 47301) {
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_updated() != 20150) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost() != 28239) {
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_lost() != 2979) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error() != 29273) {
+    if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_error() != 7804) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state() != 43161) {

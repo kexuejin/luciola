@@ -6,6 +6,8 @@
 //! - WSL2 host physical IP resolution
 //! - Dual-pool candidate address selection (LAN vs Advertised)
 
+#![deny(missing_docs)]
+
 use luciola_ip::{get_ipv6_scope, is_private_or_local, is_proxy_tun_address, Ipv6Scope};
 use luciola_proto::{DeviceMeta, DeviceType, ErrorCode, ErrorInfo};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
@@ -16,8 +18,12 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum NetError {
+    /// Querying the system interface list failed.
     #[error("failed to query system network interfaces: {0}")]
-    QueryFailed(String),
+    QueryFailed(
+        /// The underlying interface-query error message.
+        String,
+    ),
 }
 
 impl From<&NetError> for ErrorInfo {
@@ -252,9 +258,13 @@ pub fn broadcasts_for(interfaces: &[NetworkInterface], include_virtual: bool) ->
 /// Scored candidate address for local peering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScoredAddress {
+    /// Candidate IP address (IPv4 or IPv6 literal).
     pub ip: String,
+    /// Name of the interface that owns the address.
     pub interface_name: String,
+    /// Ranking score; higher means a better LAN peer address.
     pub score: i32,
+    /// Whether [`Self::ip`] is an IPv6 address.
     pub is_ipv6: bool,
 }
 

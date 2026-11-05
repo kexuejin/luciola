@@ -17,7 +17,9 @@ use super::*;
 /// 通道模式：流式（TCP 语义）或数据报（UDP 语义，DATA 帧 = 一个数据报）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChanMode {
+    /// 流式通道（TCP 语义，有序字节流）。
     Stream,
+    /// 数据报通道（UDP 语义，一帧 = 一个数据报）。
     Datagram,
 }
 
@@ -312,7 +314,9 @@ pub(crate) fn remove_entry(
 /// accept_open() 返回的待决请求（§2.2）。grant/deny 至少调用一个；
 /// 未答复即 Drop → 自动 deny(2)（open_timeout 到期对端会收到终态帧）。
 pub struct OpenRequest {
+    /// 对端请求拨号的目标。
     pub target: DialTarget,
+    /// 对端分配的通道 ID。
     pub ch_id: u32,
     /// true = 数据报通道（DOPEN，UDP 会话映射）：用 grant_datagram() 应答。
     pub datagram: bool,

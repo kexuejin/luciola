@@ -19,24 +19,33 @@ use tokio::task::JoinSet;
 /// Per-channel outcome of a [`race_connect`] run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DialChannelOutcome {
+    /// Address this channel dialled.
     pub address: String,
+    /// What happened to this channel.
     pub status: DialStatus,
     /// Round-trip connect latency of the winning channel, in milliseconds.
     pub rtt_ms: Option<f64>,
 }
 
+/// Fate of one candidate in a Happy Eyeballs race.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialStatus {
+    /// Connected first; the caller dials on this address.
     Won,
+    /// A sibling channel won and this attempt was cancelled.
     Cancelled,
+    /// The attempt exceeded its connect timeout.
     Timeout,
 }
 
 /// Overall race outcome: the winning address (if any) plus per-channel detail.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaceOutcome {
+    /// Address that won the race, if any.
     pub winner: Option<String>,
+    /// Connect latency of the winner, in milliseconds.
     pub rtt_ms: Option<f64>,
+    /// Per-candidate outcome, in input order.
     pub channels: Vec<DialChannelOutcome>,
 }
 
@@ -148,6 +157,8 @@ pub async fn bind_dual_stack_listener(port: u16) -> std::io::Result<TcpListener>
 /// measures and selects, the caller connects on the winner.
 pub mod secure;
 
+/// Race TCP dials across `addresses` on `port`; the first connect wins and the
+/// rest are cancelled. Returns the winner plus per-channel detail.
 pub async fn race_connect(addresses: Vec<String>, port: u16, config: RaceConfig) -> RaceOutcome {
     // Dedupe preserving order.
     let mut seen = std::collections::HashSet::new();

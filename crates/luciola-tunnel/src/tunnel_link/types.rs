@@ -33,13 +33,18 @@ pub trait TunnelReporter: Send + Sync + 'static {
 pub enum TunnelBase {
     /// 发起端（消息链路 Dial 侧）：隧道主动拨 `secure_port + 1`。
     Dial {
+        /// 对端候选地址（Happy Eyeballs 拨号输入）。
         addresses: Vec<String>,
+        /// 消息链路 secure 端口；隧道端口默认 `secure_port + 1`。
         secure_port: u16,
+        /// 钉扎的对端 Ed25519 公钥。
         pinned_peer_public_key: Vec<u8>,
     },
     /// 服务端（消息链路 Listen 侧）：隧道监听 `secure_port + 1`。
     Listen {
+        /// 消息链路 secure 端口；隧道端口默认 `secure_port + 1`。
         secure_port: u16,
+        /// 期望的对端公钥；None = TOFU。
         expected_peer: Option<Vec<u8>>,
     },
 }

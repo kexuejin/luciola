@@ -1,3 +1,10 @@
+//! The Rust uniffi surface consumed by the KMP and Swift bindings.
+//!
+//! Every exported item here is part of the mobile contract: changing a
+//! signature requires regenerating both binding surfaces (see AGENTS.md §3).
+
+#![deny(missing_docs)]
+
 uniffi::setup_scaffolding!();
 
 use luciola_ip::{is_lan_address as ip_is_lan, is_proxy_tun_address};
@@ -9,41 +16,62 @@ use qrcode::QrCode;
 /// Device form factor classification.
 #[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceType {
+    /// Phone.
     Mobile,
+    /// Tablet.
     Tablet,
+    /// Portable computer.
     Laptop,
+    /// Desktop computer.
     Desktop,
+    /// Headless server.
     Server,
+    /// Windows Subsystem for Linux guest.
     Wsl,
+    /// Form factor could not be determined.
     Unknown,
 }
 
 /// A manually configured peer for cross-subnet / VPN / localhost setups.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ManualPeer {
+    /// Peer host (IP literal or hostname).
     pub host: String,
+    /// Peer UDP discovery port.
     pub port: u16,
 }
 
 /// Device hardware and OS metadata.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceMeta {
+    /// Form factor of the device.
     pub device_type: DeviceType,
+    /// Emoji icon for peer-list UIs.
     pub icon: String,
+    /// Operating-system name, e.g. `macOS` or `Android`.
     pub os: String,
+    /// CPU architecture, e.g. `aarch64`.
     pub arch: String,
+    /// Hardware model string, when the platform exposes one.
     pub model: Option<String>,
+    /// Stable per-device grouping id (display-grade, not a security identity).
     pub device_id: Option<String>,
 }
 
 /// A discovered peer node in the local network.
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveredPeer {
+    /// Stable node identity.
     pub node_id: String,
+    /// Human-readable device name.
     pub name: String,
+    /// Address the peer was last heard from.
     pub ip: String,
+    /// Peer's UDP discovery port.
     pub udp_port: u16,
+    /// Peer's secure-channel TCP port.
     pub tcp_port: u16,
+    /// Optional hardware metadata.
     pub device: Option<DeviceMeta>,
     /// Stable per-device grouping id (display-grade).
     pub device_id: Option<String>,
@@ -211,9 +239,14 @@ use tokio::sync::oneshot;
 /// fatal setup problems (e.g. discovery port occupied by another product).
 #[uniffi::export(callback_interface)]
 pub trait OnPeerDiscovered: Send + Sync {
+    /// A new peer appeared; add it to the host's peer table.
     fn on_peer_discovered(&self, peer: DiscoveredPeer);
+    /// A known peer's profile or address changed; replace the entry.
     fn on_peer_updated(&self, peer: DiscoveredPeer);
+    /// A peer exited or aged out; remove it from the host's peer table.
     fn on_peer_lost(&self, node_id: String);
+    /// Fatal setup problem (e.g. discovery port occupied); `code` is a stable
+    /// `snake_case` wire code (see `errorCodes()`).
     fn on_error(&self, code: String, message: String);
 }
 
@@ -536,23 +569,33 @@ impl DiscoverySession {
 /// Per-channel dial outcome.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct DialChannel {
+    /// Address this channel dialled.
     pub address: String,
+    /// What happened to this channel.
     pub status: DialStatus,
+    /// Connect latency in milliseconds, when the attempt succeeded.
     pub rtt_ms: Option<f64>,
 }
 
+/// Fate of one candidate in a Happy Eyeballs race.
 #[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialStatus {
+    /// Connected first; the caller dials on this address.
     Won,
+    /// A sibling channel won and this attempt was cancelled.
     Cancelled,
+    /// The attempt exceeded its connect timeout.
     Timeout,
 }
 
 /// Overall race outcome: winning address plus per-channel detail.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct RaceOutcome {
+    /// Address that won the race, if any.
     pub winner: Option<String>,
+    /// Connect latency of the winner, in milliseconds.
     pub rtt_ms: Option<f64>,
+    /// Per-candidate outcome, in input order.
     pub channels: Vec<DialChannel>,
 }
 
@@ -630,20 +673,30 @@ pub enum TrustLevel {
 /// A paired device entry.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct TrustedDeviceInfo {
+    /// Stable per-device grouping id.
     pub device_id: String,
+    /// Human-readable name at pairing time.
     pub name: String,
+    /// Ed25519 public key (32 bytes) — the security identity.
     pub public_key: Vec<u8>,
+    /// Cached `sha256:<hex>` fingerprint of `public_key`.
     pub fingerprint: String,
+    /// Current trust level.
     pub level: TrustLevel,
+    /// When the device was pinned (epoch milliseconds).
     pub pinned_at_ms: u64,
 }
 
 /// A generated or restored device identity. Keep `seed` secret.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct DeviceIdentityInfo {
+    /// 32-byte Ed25519 seed — persist it in secret storage, never log it.
     pub seed: Vec<u8>,
+    /// Ed25519 public key derived from `seed`.
     pub public_key: Vec<u8>,
+    /// `sha256:<hex>` fingerprint of `public_key`.
     pub fingerprint: String,
+    /// 6-digit on-screen comparison pin.
     pub short_pin: String,
 }
 
@@ -658,6 +711,7 @@ pub struct TrustStore {
 #[uniffi::export]
 impl TrustStore {
     #[uniffi::constructor]
+    /// Restore a trust store from its JSON form, or start empty.
     pub fn new(from_json: Option<String>) -> Self {
         let inner = from_json
             .and_then(|j| luciola::trust::TrustStore::from_json(&j).ok())
@@ -702,6 +756,7 @@ impl TrustStore {
         self.inner.lock().unwrap().remove(&fingerprint)
     }
 
+    /// Every paired device, in insertion order.
     pub fn entries(&self) -> Vec<TrustedDeviceInfo> {
         self.inner
             .lock()
@@ -792,12 +847,16 @@ pub fn verify_message(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>)
 // steps on CryptoKit and `core/tests/fixtures/wire/cases.json` pins both to
 // identical vectors. See luciola::relay_crypto for the protocol details.
 
+/// X25519 ephemeral key pair for one relay session.
 #[derive(uniffi::Record)]
 pub struct RelayEphemeralKeyPair {
+    /// X25519 secret key (32 bytes) — never send this on the wire.
     pub secret: Vec<u8>,
+    /// X25519 public key (32 bytes) to send to the peer.
     pub public: Vec<u8>,
 }
 
+/// Per-direction AEAD keys derived for one relay session.
 #[derive(uniffi::Record)]
 pub struct RelaySessionKeys {
     /// Key for frames THIS device sends.
@@ -894,8 +953,10 @@ pub fn relay_aead_seal(key: Vec<u8>, seq: u64, aad: Vec<u8>, plaintext: Vec<u8>)
 /// Errors surfaced by the relay crypto exports.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum RelayCryptoError {
+    /// AEAD open failed: tampering or a wrong key/sequence.
     #[error("AEAD open failed: frame tampered with, or the wrong key/seq")]
     AeadOpenFailed,
+    /// The supplied AEAD key was not 32 bytes.
     #[error("AEAD key must be 32 bytes")]
     BadKeyLength,
 }
@@ -950,9 +1011,13 @@ enum LinkRole {
 /// Link health counters for UI/diagnostics.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct LinkStats {
+    /// Frames written to the socket.
     pub frames_sent: u64,
+    /// Frames read from the socket.
     pub frames_received: u64,
+    /// Successful connections established (including reconnects).
     pub connections_established: u64,
+    /// Reconnect attempts started after a drop.
     pub reconnect_attempts: u64,
     /// `send()` 被调用且 **try_send 成功**（= 入队成功）的次数。
     ///
@@ -969,8 +1034,11 @@ pub struct LinkStats {
 /// 单主机（IP 字面量或主机名）上的端口区间，含端点；`udp` 同时放行 DOPEN。
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ForwardRuleDto {
+    /// IP literal or hostname (normalised to lowercase).
     pub host: String,
+    /// Inclusive lower port bound.
     pub port_from: u16,
+    /// Inclusive upper port bound.
     pub port_to: u16,
     /// v2：true = 本规则同时放行 UDP 数据报拨号；false 仅 TCP（v1 语义）。
     pub udp: bool,
@@ -980,12 +1048,19 @@ pub struct ForwardRuleDto {
 /// `kind` ∈ {"local", "udp_local", "remote_endpoint", "endpoint", "remote"}。
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ForwardStatusDto {
+    /// Whether the forward / endpoint is currently bound.
     pub active: bool,
+    /// Port actually bound (system-assigned when 0 was requested).
     pub listen_port: u16,
+    /// Channels currently relaying bytes.
     pub channels_open: u64,
+    /// Channels granted since registration.
     pub channels_total: u64,
+    /// OPEN / DOPEN rejected by the ACL.
     pub dial_denied: u64,
+    /// Allowed dials that failed or timed out.
     pub dial_failed: u64,
+    /// Row kind: local / udp_local / remote_endpoint / endpoint / remote.
     pub kind: String,
 }
 
@@ -1052,6 +1127,7 @@ struct LinkStatsCounters {
 #[uniffi::export]
 impl SecureSession {
     #[uniffi::constructor]
+    /// Create a channel bound to a 32-byte Ed25519 identity seed.
     pub fn new(identity_seed: Vec<u8>) -> Self {
         let tunnel = TunnelLink::new(identity_seed.clone());
         Self {
@@ -1154,6 +1230,7 @@ impl SecureSession {
         }
     }
 
+    /// Whether the channel currently holds an authenticated connection.
     pub fn is_connected(&self) -> bool {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -1558,15 +1635,23 @@ impl SecureSession {
 /// fingerprint — bind trust on it; `pin` is the optional 6-digit compare.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
 pub struct PairingInfo {
+    /// Display name of the host device.
     pub name: String,
+    /// Product label, when the host advertises one.
     pub product: Option<String>,
+    /// TCP service port to dial.
     pub port: u16,
+    /// Candidate addresses for the host, best first.
     pub addrs: Vec<String>,
+    /// Host identity fingerprint (`sha256:<hex>`) — bind trust on it.
     pub fingerprint: Option<String>,
+    /// Host Ed25519 public key (base64) — the pin target.
     pub public_key: Option<String>,
+    /// Optional 6-digit on-screen comparison pin.
     pub pin: Option<String>,
 }
 
+/// Build the canonical `luciola://pair` URI (URL-encoded).
 #[uniffi::export]
 pub fn build_pairing_uri(
     name: String,
@@ -1588,6 +1673,7 @@ pub fn build_pairing_uri(
     )
 }
 
+/// Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
 #[uniffi::export]
 pub fn parse_pairing_uri(uri: String) -> Option<PairingInfo> {
     luciola::pairing::parse_pairing_uri(&uri).map(|p| PairingInfo {
@@ -1610,6 +1696,7 @@ pub fn parse_pairing_uri(uri: String) -> Option<PairingInfo> {
 /// 回调内不要再调用会打日志的引擎 API（无重入防护）。
 #[uniffi::export(callback_interface)]
 pub trait LogSink: Send + Sync + 'static {
+    /// Receive one engine log line. Do not call logging engine APIs here.
     fn log(&self, level: String, message: String);
 }
 

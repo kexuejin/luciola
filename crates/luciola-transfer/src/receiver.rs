@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+/// Tunables for [`FileReceiver`].
 #[derive(Debug, Clone)]
 pub struct ReceiverConfig {
     /// How long after completion a retransmitted tail chunk still earns the
@@ -69,10 +70,12 @@ impl FileReceiver {
         })
     }
 
+    /// Identifier of the transfer being received.
     pub fn transfer_id(&self) -> &str {
         &self.transfer_id
     }
 
+    /// Declared total size in bytes.
     pub fn total_size(&self) -> u64 {
         self.total_size
     }
@@ -85,6 +88,7 @@ impl FileReceiver {
         }
     }
 
+    /// Whether the whole file has been written and acked.
     pub fn is_complete(&self) -> bool {
         self.acked_up_to() >= self.total_size
     }
@@ -166,6 +170,7 @@ impl FileReceiver {
         Ok(hasher.finalize().into())
     }
 
+    /// Destination path this receiver writes to.
     pub fn dest(&self) -> &std::path::Path {
         &self.dest
     }

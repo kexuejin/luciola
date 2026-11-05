@@ -83,6 +83,15 @@ primary one is cited.
 
 ### Changed
 
+- **The public Rust API is documented and the gap is now enforced.** All 411
+  `missing_docs` warnings are gone: `#![deny(missing_docs)]` is enabled in
+  `luciola-proto`, `luciola-net`, `luciola-transfer`, `luciola-tunnel`,
+  `luciola` and `luciola-uniffi`. Documentation comments flow into the
+  generated Kotlin/Swift bindings, and — because uniffi folds docs into its
+  metadata checksum — both binding surfaces were regenerated. The Node surface
+  is fully documented too, but cannot deny the lint crate-wide: `#[napi]` on a
+  class generates undocumented wrapper functions, so the lint would fail on
+  macro output.
 - **Node discovery `error` events (behaviour change).** `message` is now the
   human detail without a code prefix; the code moved to its own field. A host
   that parsed the old flattened `"<code>: <message>"` string must switch on

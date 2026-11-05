@@ -13,17 +13,24 @@
 //! file so the receiving side can construct its [`crate::FileReceiver`] before
 //! the first chunk lands (receiver-side `total_size` is required upfront).
 
+/// Magic prefix of a data chunk frame (`'T','C'`).
 pub const MAGIC_CHUNK: [u8; 2] = [0x54, 0x43]; // 'T', 'C' (Transfer Chunk)
+/// Magic prefix of an acknowledgement frame (`'T','A'`).
 pub const MAGIC_ACK: [u8; 2] = [0x54, 0x41]; // 'T', 'A' (Transfer Ack)
+/// Magic prefix of the intro frame (`'T','I'`).
 pub const MAGIC_INTRO: [u8; 2] = [0x54, 0x49]; // 'T', 'I' (Transfer Intro)
 
 /// One piece of the file, positioned absolutely. `payload` may be empty
 /// (keepalive-style re-ack request is expressed as a 0-length chunk at 0).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileChunk {
+    /// Transfer this chunk belongs to.
     pub transfer_id: String,
+    /// Absolute byte offset of `payload` inside the file.
     pub offset: u64,
+    /// Total file size declared by the sender.
     pub total_size: u64,
+    /// Bytes at `offset`; may be empty for a zero-length marker.
     pub payload: Vec<u8>,
 }
 
@@ -31,7 +38,9 @@ pub struct FileChunk {
 /// disk at the receiver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileAck {
+    /// Transfer this acknowledgement belongs to.
     pub transfer_id: String,
+    /// Exclusive end of the contiguous prefix durably written.
     pub acked_up_to: u64,
 }
 
@@ -79,6 +88,7 @@ impl<'a> Reader<'a> {
 }
 
 impl FileChunk {
+    /// Encode this chunk into its self-describing wire frame.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(2 + 1 + self.transfer_id.len() + 20 + self.payload.len());
         buf.extend_from_slice(&MAGIC_CHUNK);
@@ -91,6 +101,7 @@ impl FileChunk {
         buf
     }
 
+    /// Decode a chunk frame; truncated frames and bad magic are rejected.
     pub fn decode(buf: &[u8]) -> Result<Self, crate::TransferError> {
         let mut r = Reader { buf, pos: 0 };
         let magic = r.take(2)?;
@@ -112,6 +123,7 @@ impl FileChunk {
 }
 
 impl FileAck {
+    /// Encode this acknowledgement into its wire frame.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(2 + 1 + self.transfer_id.len() + 8);
         buf.extend_from_slice(&MAGIC_ACK);
@@ -121,6 +133,7 @@ impl FileAck {
         buf
     }
 
+    /// Decode an acknowledgement frame; bad magic is rejected.
     pub fn decode(buf: &[u8]) -> Result<Self, crate::TransferError> {
         let mut r = Reader { buf, pos: 0 };
         let magic = r.take(2)?;
@@ -139,12 +152,16 @@ impl FileAck {
 /// Wire intro: names the transfer and the file before the first chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileIntro {
+    /// Transfer this intro opens.
     pub transfer_id: String,
+    /// Peer-supplied file name (the receiver must keep only its basename).
     pub file_name: String,
+    /// Total file size the receiver must pre-allocate.
     pub total_size: u64,
 }
 
 impl FileIntro {
+    /// Encode this intro into its wire frame.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf =
             Vec::with_capacity(2 + 1 + self.transfer_id.len() + 2 + self.file_name.len() + 8);
@@ -157,6 +174,7 @@ impl FileIntro {
         buf
     }
 
+    /// Decode an intro frame; truncated frames and bad magic are rejected.
     pub fn decode(buf: &[u8]) -> Result<Self, crate::TransferError> {
         let mut r = Reader { buf, pos: 0 };
         let magic = r.take(2)?;

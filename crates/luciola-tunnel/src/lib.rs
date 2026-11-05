@@ -16,6 +16,8 @@
 //! start_* / start_forward_endpoint 在调用处捕获 Handle ——
 //! 全部必须在 tokio runtime 上下文中调用。
 
+#![deny(missing_docs)]
+
 pub mod forward;
 pub mod mux;
 pub mod tunnel_link;
@@ -37,16 +39,22 @@ pub use mux::{
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TunnelError {
+    /// The dial target was rejected by validation (bad_target).
     #[error("invalid target: {0}")]
     InvalidTarget(String),
+    /// A forward rule failed to parse or validate.
     #[error("invalid forward rule: {0}")]
     InvalidRule(String),
+    /// A listener could not bind the requested port.
     #[error("listen bind failed: {0}")]
     Bind(String),
+    /// The forward endpoint has been stopped.
     #[error("forward endpoint stopped: {0}")]
     Stopped(String),
+    /// A mux-level failure (see [`MuxError`]).
     #[error(transparent)]
     Mux(#[from] MuxError),
+    /// An operating-system I/O failure.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     /// 同步段：基址未注入（先 connect()/listen()）或推导不能。
