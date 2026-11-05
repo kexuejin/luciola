@@ -36,7 +36,7 @@ primary one is cited.
 > unpublished version in a dependency is how a consumer repo ends up with
 > `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
-## [Unreleased]
+## [0.10.0] — 2026-11-05
 
 ### Breaking
 

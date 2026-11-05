@@ -3,6 +3,42 @@
 Breaking changes and behavioural shifts between published versions, from the
 consumer's point of view. For what each release added, see [CHANGELOG.md](../CHANGELOG.md).
 
+## 0.10.0
+
+1. **Every public error enum is `#[non_exhaustive]`.** `ProtoError`,
+   `NetError`, `CoreError`, `LinkError`, `RelayCryptoError`,
+   `PortRegistryError`, `TransferError`, `TunnelError`, `MuxError`. Rust
+   callers that matched one of these exhaustively need a `_ =>` arm; in
+   exchange a new variant can ship in a patch release. The FFI surfaces are
+   unaffected — they project onto the `ErrorCode` table, whose unknown codes
+   degrade to `unknown`.
+2. **Errors are classified, not string-matched.** `luciola_proto::ErrorCode`
+   (21 stable `snake_case` codes) and `ErrorInfo { code, message, retryable }`
+   are now the shared taxonomy; every crate maps its own enum through
+   `From<&Err> for ErrorInfo`. `ErrorInfo::wire_detail()` keeps the legacy
+   `"<code>: <message>"` shape and `parse_detail()` inverts it, including the
+   TUNNEL_SPEC prefixes (`forward_bind_failed:`, `tunnel_bind_failed:`,
+   `tunnel_link_failed:`, `tunnel_handshake_failed:`). Hosts that branch on
+   error strings should branch on the code instead — the strings were never a
+   contract.
+3. **Node discovery `error` events changed shape (behavioural break).**
+   `message` is now the bare human detail; `code` and `retryable` are separate
+   fields. A host that parsed the old flattened `"<code>: <message>"` string
+   must read `code`. `SecureChannel` `error`/`retrying` events gained a nested
+   `error` object next to the legacy `detail` string, which still parses.
+   `getErrorCodes()` and `classifyError(detail)` are new. uniffi and KMP/Swift
+   keep their existing `onError(code, message)` signatures — additive only.
+4. **Regenerate the bindings.** The uniffi interface gained `errorCodes()`,
+   `classifyError()` and `ErrorInfoDto`, and the new doc comments are folded
+   into the metadata checksum: an old KMP/Swift binding paired with the 0.10.0
+   dylib fails loudly (checksum mismatch). Consumers pin the git commit or
+   build the bindings locally until 0.10.0 reaches the registries — 0.10.0 is
+   **not published** at the time of writing.
+5. **`luciola-cli transfer send|recv|pin` exists.** Not a breaking change for
+   library consumers: `luciola-transfer` still has no KMP / Swift / Node
+   surface, and both sides must supply a pinned peer key — there is no TOFU
+   path by design (see [DECISIONS.md](DECISIONS.md)).
+
 ## 0.9.1
 
 1. **A stalled channel no longer stalls the session (behavioural shift).**
