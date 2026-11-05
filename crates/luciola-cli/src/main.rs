@@ -34,6 +34,8 @@ pub fn render_qr_terminal(content: &str) -> Option<String> {
     Some(string)
 }
 
+mod transfer;
+
 #[derive(Parser)]
 #[command(name = "luciola-cli")]
 #[command(about = "Luciola: resilient LAN peer discovery and interface intelligence", long_about = None)]
@@ -100,6 +102,51 @@ enum Commands {
     Forward {
         #[command(subcommand)]
         action: ForwardCommands,
+    },
+    /// Transfer one file over an authenticated secure channel (pin is required; no TOFU)
+    Transfer {
+        #[command(subcommand)]
+        action: TransferCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TransferCommands {
+    /// Send a file: dial the peer's secure port, slide a window, exit when done
+    Send {
+        /// Path of the file to send
+        #[arg(long)]
+        file: String,
+        /// Peer secure endpoint host:port (IPv6 uses [::1]:port)
+        #[arg(long)]
+        connect: String,
+        /// Local identity seed (hex, 32 bytes)
+        #[arg(long)]
+        seed: String,
+        /// Peer public-key pin (raw 32 bytes as hex; `transfer pin --seed` derives it)
+        #[arg(long)]
+        pin_peer: String,
+    },
+    /// Receive a file: listen on a secure port, exit after one completed transfer
+    Recv {
+        /// Listen port (0 = system-assigned; dual-stack IPv4+IPv6)
+        #[arg(long, default_value_t = 3020)]
+        port: u16,
+        /// Local identity seed (hex, 32 bytes)
+        #[arg(long)]
+        seed: String,
+        /// Sender public-key pin (raw 32 bytes as hex). Missing pin = deny, no TOFU
+        #[arg(long)]
+        accept_pin: String,
+        /// Destination directory (default: current dir; only the basename is used)
+        #[arg(long, default_value = ".")]
+        out: String,
+    },
+    /// Print this identity's public key hex (for --pin-peer / --accept-pin)
+    Pin {
+        /// Identity seed (hex, 32 bytes)
+        #[arg(long)]
+        seed: String,
     },
 }
 
@@ -548,6 +595,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?
             }
             ForwardCommands::Pin { seed } => {
+                let id = luciola::trust::identity_from_seed(&parse_seed(&seed)?);
+                println!("public_key={}", encode_hex(&id.public_key));
+                println!("fingerprint={}", id.fingerprint);
+                println!("short_pin={}", id.short_pin);
+            }
+        },
+        Commands::Transfer { action } => match action {
+            TransferCommands::Send {
+                file,
+                connect,
+                seed,
+                pin_peer,
+            } => {
+                let seed = parse_seed(&seed)?;
+                let pin = parse_pin(&pin_peer)?;
+                let (host, port) = parse_host_port(&connect)?;
+                let src = std::path::PathBuf::from(&file);
+                let total = std::fs::metadata(&src)
+                    .map_err(|e| format!("--file: {e}"))?
+                    .len();
+                let id = transfer::make_transfer_id(&file, total);
+                println!("📡 Dialing {host}:{port} …");
+                let stream = luciola::link::secure::connect_secure_raced(
+                    vec![host.clone()],
+                    port,
+                    &seed,
+                    &pin,
+                )
+                .await
+                .map_err(|e| format!("secure dial failed: {e}"))?;
+                println!("🔐 Secure channel established, sending {file} ({total} bytes) …");
+                let tx = luciola_transfer::FileSender::open(id, &src, Default::default())
+                    .await
+                    .map_err(|e| format!("open file: {e}"))?;
+                let done = transfer::run_send(stream, tx, &file).await?;
+                println!(
+                    "✅ Transfer complete: {}/{} bytes acked (in flight: {})",
+                    done.acked_up_to(),
+                    done.total_size(),
+                    done.in_flight_count()
+                );
+            }
+            TransferCommands::Recv {
+                port,
+                seed,
+                accept_pin,
+                out,
+            } => {
+                let seed = parse_seed(&seed)?;
+                let pin = parse_pin(&accept_pin)?;
+                let listener = luciola::link::bind_dual_stack_listener(port)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let local = listener.local_addr().map_err(|e| e.to_string())?;
+                println!("🎧 Listening on {local} (pin-verified, deny-by-default) …");
+                let stream = luciola::link::secure::accept_secure(&listener, &seed, Some(&pin))
+                    .await
+                    .map_err(|e| format!("secure accept failed: {e}"))?;
+                println!("🔐 Peer verified, receiving into {} …", out);
+                let rx =
+                    transfer::run_recv(stream, std::path::Path::new(&out), Duration::from_secs(30))
+                        .await?;
+                let (acked, dest) = (rx.acked_up_to(), rx.dest().display().to_string());
+                let sha = rx.finalize().await.map_err(|e| e.to_string())?;
+                println!(
+                    "✅ Received {acked} bytes into {dest} — SHA-256: {}",
+                    encode_hex(&sha)
+                );
+            }
+            TransferCommands::Pin { seed } => {
                 let id = luciola::trust::identity_from_seed(&parse_seed(&seed)?);
                 println!("public_key={}", encode_hex(&id.public_key));
                 println!("fingerprint={}", id.fingerprint);

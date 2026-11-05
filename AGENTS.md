@@ -20,7 +20,7 @@ crates/
   luciola/           tokio engine: dual-stack discovery, Happy Eyeballs racing, SecureStream, trust store
   luciola-transfer/  chunked file transfer data plane (feature-gated as "transfer" in luciola)
   luciola-tunnel/    mux v1 + local port forwarding over a SecureStream
-  luciola-cli/       ip / scan / beacon / agent / forward
+  luciola-cli/       ip / scan / beacon / agent / ports / forward / transfer
 bindings/
   luciola-kmp/       KMP library: Android AAR + JVM + iOS klib
   luciola-uniffi/    the Rust uniffi crate — every generated binding comes from here

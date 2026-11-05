@@ -684,6 +684,7 @@ dependencies = [
  "luciola-ip",
  "luciola-net",
  "luciola-proto",
+ "luciola-transfer",
  "luciola-tunnel",
  "qrcode",
  "rand",

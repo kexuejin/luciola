@@ -50,7 +50,7 @@ node server.js       # 然后打开 http://localhost:3000
 - 🔐 **信任与配对原语** — Ed25519 设备身份、`sha256:` 指纹、6 位屏上比对 PIN、分级信任库(Full=无感推送,Partial=逐次确认,未配对=默认拒绝)。*发现开放,数据面不开放。*
 - 📡 **带身份的信标** — 发现档案可携带设备 Ed25519 公钥,「信标里宣告的身份」与「加密信道出示的身份」完全一致;线格式对旧版对端双向兼容。
 - 🔒 **认证加密信道** — SIGMA 式握手(X25519 + Ed25519 全 transcript 签名 + HKDF + AES-256-GCM,计数器防重放)、默认拒绝 pin 校验、TOFU、断线退避重连、keepalive 判死、有界队列。单个双栈监听器同收 IPv4+IPv6;`dial()` 自动补链路本地作用域;`stop()` 无僵尸 accept。
-- 📦 **文件传输数据面**(`luciola-transfer`) — 滑动窗口分块:绝对偏移落盘(乱序安全)、连续前缀 ACK、超时重传、30 秒完成应答缓存;50 MiB 真实加密信道 E2E,SHA-256 一致。
+- 📦 **文件传输数据面**(`luciola-transfer`) — 滑动窗口分块:绝对偏移落盘(乱序安全)、连续前缀 ACK、超时重传、30 秒完成应答缓存;50 MiB 真实加密信道 E2E,SHA-256 一致。现附 `luciola-cli transfer send|recv` 生产驱动:双栈 pin 校验监听、落盘只取 basename(防路径穿越)、进度回显与完成校验和。**目前仅 Rust 核心 + CLI**,尚无 KMP/Swift/Node 绑定面。
 - 🚇 **隧道:加密转发与多路复用**(`luciola-tunnel`) — 在一条 `SecureStream` 上做 TCP/UDP 多路复用、端口转发(ssh `-L`/`-R` 等价物)与 UDP 会话映射:手机浏览器直连本机环回,透明访问电脑端 Web/NAS/AI 服务。逐通道 WINDOW 流控(消除跨通道级联停顿)、PING/PONG keepalive、主机名解析钉扎、空闲回收——线格式对 v1 对端全兼容;默认拒绝 ACL,独立监督链路。
 - 🧭 **内置监督自愈** — 重启身份稳定、`bind_failed` 端口冲突显式上报(同机多产品)、看门狗 + 网络变化防抖重建、Android MulticastLock 处理。
 - 🔌 **一个核心,全平台** — Rust 核心;KMP 库(`io.github.kexuejin:luciola`,AAR 内嵌 arm64 `.so`,JVM/iOS 变体齐全)、iOS Swift 绑定 + xcframework、Node.js N-API,以及向同机多产品分发发现事件的桌面 agent。
@@ -102,6 +102,12 @@ cargo run -p luciola-cli -- agent   # 设备级发现 daemon(unix socket 事件�
 cargo run -p luciola-cli -- forward serve --tunnel-port 3001 --seed <hex> --pin-peer <pin> --allow 127.0.0.1:3080
 cargo run -p luciola-cli -- forward dial --listen 3080 --connect <peer-ip>:3001 --target 127.0.0.1:3080 --seed <hex> --pin-peer <pin>
 cargo run -p luciola-cli -- forward pin --seed <hex>  # 查看公钥指纹与 PIN
+
+# 经 pin 校验的加密信道传单个文件(无 TOFU)。双方先用 transfer pin --seed 取公钥,
+# 再把「对端」的公钥填进 --accept-pin / --pin-peer。
+cargo run -p luciola-cli -- transfer recv --port 3020 --seed <hex-b> --accept-pin <pub-a> --out ./received
+cargo run -p luciola-cli -- transfer send --file ./photo.zip --connect <peer-ip>:3020 --seed <hex-a> --pin-peer <pub-b>
+cargo run -p luciola-cli -- transfer pin --seed <hex>  # 打印公钥、指纹与 PIN
 ```
 
 ### KMP 库(Android / JVM / iOS)

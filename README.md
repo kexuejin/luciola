@@ -50,7 +50,7 @@ node server.js       # then open http://localhost:3000
 - 🔐 **Trust & pairing primitives** — Ed25519 identities, `sha256:` fingerprints, 6-digit comparison PINs, leveled trust store (Full = silent push, Partial = per-action confirm, unpaired = deny). *Discovery is open; data planes are not.*
 - 📡 **Keyed beacons** — discovery profiles carry the device's Ed25519 public key, so the advertised identity is the channel identity; wire-compatible both ways with pre-key peers.
 - 🔒 **Authenticated encrypted channels** — SIGMA-style handshake (X25519 + Ed25519 transcript signatures + HKDF + AES-256-GCM, replay-proof counters), deny-by-default pinning, TOFU capture, auto-reconnect with backoff, keepalive, bounded queues. One dual-stack listener serves IPv4+IPv6; `dial()` injects link-local scope ids; `stop()` leaves no zombie accepts.
-- 📦 **File-transfer data plane** (`luciola-transfer`) — sliding-window chunks with absolute-offset writes (out-of-order safe), contiguous-prefix ACKs, timeout retransmit, 30 s completion cache; 50 MiB E2E over a real secure channel, SHA-256 verified. **Rust-core only today**: no CLI command and no FFI surface yet — the crate's own tests are its only driver, so it is not reachable from Android/iOS/Node until it is wired through.
+- 📦 **File-transfer data plane** (`luciola-transfer`) — sliding-window chunks with absolute-offset writes (out-of-order safe), contiguous-prefix ACKs, timeout retransmit, 30 s completion cache; 50 MiB E2E over a real secure channel, SHA-256 verified. A `luciola-cli transfer send|recv` driver now ships with it: dual-stack pin-verified listener, basename-only destination (no path traversal), progress reporting and a verified checksum on completion. **Rust core + CLI only** — no KMP/Swift/Node surface yet.
 - 🚇 **Tunnel — encrypted forwarding & multiplexing** (`luciola-tunnel`) — TCP/UDP multiplexing with port forwarding (ssh `-L`/`-R` equivalents) and UDP session mapping over a `SecureStream`: a phone browser hits loopback and transparently reaches the desktop's web/NAS/AI services. Per-channel WINDOW flow control (no cross-channel stalls), PING/PONG keepalive, hostname resolve pinning, idle recycling — wire-compatible with v1 peers; deny-by-default ACL, independent supervisor link.
 - 🧭 **Supervision built in** — stable identity across restarts, `bind_failed` port-conflict events for same-device multi-product setups, watchdog + debounced network-change rebuilds, Android `MulticastLock` handling.
 - 🔌 **One core, every platform** — Rust core; KMP library (`io.github.kexuejin:luciola`, arm64 `.so` inside the AAR, JVM/iOS variants), Swift bindings + xcframework, Node.js N-API, and a desktop agent that funnels discovery to same-machine products over a unix socket.
@@ -109,6 +109,12 @@ cargo run -p luciola-cli -- agent   # per-device discovery daemon (unix-socket e
 cargo run -p luciola-cli -- forward serve --tunnel-port 3001 --seed <hex> --pin-peer <pin> --allow 127.0.0.1:3080
 cargo run -p luciola-cli -- forward dial --listen 3080 --connect <peer-ip>:3001 --target 127.0.0.1:3080 --seed <hex> --pin-peer <pin>
 cargo run -p luciola-cli -- forward pin --seed <hex>  # derive public key & PIN
+
+# Single-file transfer over a pin-verified secure channel (no TOFU).
+# Both peers derive their key with `transfer pin --seed` and pin the OTHER side.
+cargo run -p luciola-cli -- transfer recv --port 3020 --seed <hex-b> --accept-pin <pub-a> --out ./received
+cargo run -p luciola-cli -- transfer send --file ./photo.zip --connect <peer-ip>:3020 --seed <hex-a> --pin-peer <pub-b>
+cargo run -p luciola-cli -- transfer pin --seed <hex>  # print public key, fingerprint & PIN
 ```
 
 ### KMP library (Android / JVM / iOS)

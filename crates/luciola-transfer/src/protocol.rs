@@ -4,12 +4,18 @@
 //! one encrypted-channel message:
 //!
 //! ```text
+//! intro: 'T''I' | id_len:u8 | id | name_len:u16be | name | total_size:u64be
 //! chunk: 'T''C' | id_len:u8 | id | offset:u64be | total_size:u64be | payload_len:u32be | payload
 //! ack:   'T''A' | id_len:u8 | id | acked_up_to:u64be
 //! ```
+//!
+//! `FileIntro` is the first message on the wire: it names the transfer and the
+//! file so the receiving side can construct its [`crate::FileReceiver`] before
+//! the first chunk lands (receiver-side `total_size` is required upfront).
 
 pub const MAGIC_CHUNK: [u8; 2] = [0x54, 0x43]; // 'T', 'C' (Transfer Chunk)
 pub const MAGIC_ACK: [u8; 2] = [0x54, 0x41]; // 'T', 'A' (Transfer Ack)
+pub const MAGIC_INTRO: [u8; 2] = [0x54, 0x49]; // 'T', 'I' (Transfer Intro)
 
 /// One piece of the file, positioned absolutely. `payload` may be empty
 /// (keepalive-style re-ack request is expressed as a 0-length chunk at 0).
@@ -130,9 +136,61 @@ impl FileAck {
     }
 }
 
+/// Wire intro: names the transfer and the file before the first chunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileIntro {
+    pub transfer_id: String,
+    pub file_name: String,
+    pub total_size: u64,
+}
+
+impl FileIntro {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf =
+            Vec::with_capacity(2 + 1 + self.transfer_id.len() + 2 + self.file_name.len() + 8);
+        buf.extend_from_slice(&MAGIC_INTRO);
+        buf.push(self.transfer_id.len() as u8);
+        buf.extend_from_slice(self.transfer_id.as_bytes());
+        buf.extend_from_slice(&(self.file_name.len() as u16).to_be_bytes());
+        buf.extend_from_slice(self.file_name.as_bytes());
+        put_u64(&mut buf, self.total_size);
+        buf
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, crate::TransferError> {
+        let mut r = Reader { buf, pos: 0 };
+        let magic = r.take(2)?;
+        if magic != MAGIC_INTRO {
+            return Err(crate::TransferError::Decode("bad intro magic".into()));
+        }
+        let transfer_id = r.id()?;
+        let name_len = r.u16()? as usize;
+        let file_name = String::from_utf8(r.take(name_len)?.to_vec())
+            .map_err(|_| crate::TransferError::Decode("file name not UTF-8".into()))?;
+        let total_size = r.u64()?;
+        Ok(Self {
+            transfer_id,
+            file_name,
+            total_size,
+        })
+    }
+}
+
+impl Reader<'_> {
+    fn u16(&mut self) -> Result<u16, crate::TransferError> {
+        let b = self.take(2)?;
+        Ok(u16::from_be_bytes([b[0], b[1]]))
+    }
+}
+
 /// Distinguish a frame kind without fully decoding (receiver loop dispatch).
 pub fn is_chunk_frame(buf: &[u8]) -> bool {
     buf.len() >= 2 && buf[..2] == MAGIC_CHUNK
+}
+
+/// True when the buffer starts with the intro magic.
+pub fn is_intro_frame(buf: &[u8]) -> bool {
+    buf.len() >= 2 && buf[0] == MAGIC_INTRO[0] && buf[1] == MAGIC_INTRO[1]
 }
 
 #[cfg(test)]
@@ -201,5 +259,37 @@ mod tests {
         };
         assert!(is_chunk_frame(&chunk.encode()));
         assert!(!is_chunk_frame(&ack.encode()));
+    }
+
+    #[test]
+    fn intro_roundtrip() {
+        let intro = FileIntro {
+            transfer_id: "t-1".into(),
+            file_name: "report 最终版.pdf".into(),
+            total_size: 12_345_678,
+        };
+        let decoded = FileIntro::decode(&intro.encode()).unwrap();
+        assert_eq!(decoded, intro);
+        assert!(is_intro_frame(&intro.encode()));
+        assert!(!is_intro_frame(
+            &FileAck {
+                transfer_id: "t".into(),
+                acked_up_to: 1
+            }
+            .encode()
+        ));
+    }
+
+    #[test]
+    fn intro_rejects_truncation_and_bad_magic() {
+        let mut buf = FileIntro {
+            transfer_id: "t".into(),
+            file_name: "x".into(),
+            total_size: 1,
+        }
+        .encode();
+        assert!(FileIntro::decode(&buf[..buf.len() - 1]).is_err());
+        buf[1] = b'X';
+        assert!(FileIntro::decode(&buf).is_err());
     }
 }

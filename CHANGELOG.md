@@ -35,6 +35,29 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
+## [Unreleased]
+
+### Added
+
+- **`luciola-cli transfer send|recv|pin`**: the first production driver for the
+  `luciola-transfer` state machine. A new `FileIntro` wire frame names the
+  transfer and file so the receiver can size its state before the first chunk;
+  `run_send` / `run_recv` pump both directions over a real `SecureStream`
+  (serial driving deadlocks once the window exceeds the socket buffer). Pins
+  are mandatory on both sides — deny-by-default, no TOFU. The receiver keeps
+  only the basename of the peer-supplied file name, so a malicious
+  `../../…` cannot escape `--out`, and prints a SHA-256 receipt at completion.
+- Process-level CLI tests: a real two-process loopback transfer (ephemeral
+  port read back from the listening line), a wrong-pin rejection that asserts
+  no file is written, and a `transfer pin` identity check. The unit tests in
+  `src/transfer.rs` cover a 512 KiB round trip and the path-traversal guard.
+
+### Changed
+
+- README / README.zh-CN now describe the transfer CLI instead of the
+  "Rust-core only, no CLI command" downgrade note. The crate remains without
+  a KMP / Swift / Node surface.
+
 ## [0.9.3] — 2026-11-05
 
 ### Fixed
