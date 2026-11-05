@@ -1071,6 +1071,26 @@ public enum class TrustLevel {
 
 
 /**
+ * 平台日志出口（可选）：宿主实现 [`LogSink`] 后调 [`set_log_sink`]，引擎内
+ * 的 tracing 日志以 (level, message) 文本送达 FFI。
+ *
+ * 进程内全局 tracing subscriber 只能安装一次：首次调用会尝试安装桥接
+ * subscriber；宿主应用若已自带 subscriber（如 Android Logcat 桥），安装会
+ * 失败并被忽略——此时日志归宿主自己的 subscriber 处理，这是有意的让位。
+ * 回调内不要再调用会打日志的引擎 API（无重入防护）。
+ */
+public interface LogSink {
+    
+    public fun `log`(`level`: kotlin.String, `message`: kotlin.String)
+    
+    public companion object
+}
+
+
+
+
+
+/**
  * Callbacks from the discovery engine. Products must implement all four;
  * `on_peer_updated` fires on profile/address changes, `on_peer_lost` when a
  * peer exits or ages out (update your peer table), `on_error` reports
@@ -1114,6 +1134,8 @@ public interface SecureSessionListener {
     
     public companion object
 }
+
+
 
 
 
@@ -1280,6 +1302,12 @@ public expect fun `renderQrAscii`(`content`: kotlin.String): kotlin.String?
  * Select the best local IPv4 address for QR code / LAN access.
  */
 public expect fun `selectLanIp`(): kotlin.String?
+
+/**
+ * 安装（或替换）平台日志出口。传 `None` 仅清空出口，不卸载 subscriber
+ * （全局 subscriber 无法卸载）。
+ */
+public expect fun `setLogSink`(`sink`: LogSink?)
 
 /**
  * Sign a message with a persisted seed.

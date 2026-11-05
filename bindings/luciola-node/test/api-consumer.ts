@@ -6,6 +6,7 @@
 // integrators.
 import {
   buildPairingUri,
+  setLogSink,
   generateDeviceIdentity,
   parsePairingUri,
   DiscoverySession,
@@ -62,3 +63,11 @@ const enqueued: number = stats.framesEnqueued;
 const dequeued: number = stats.framesDequeued;
 console.log(enqueued, dequeued);
 channel.close();
+
+// Log sink: the documented call shape accepts a callback or null.
+setLogSink(null);
+setLogSink((event) => {
+  const level: string = event.level;
+  const message: string = event.message;
+  console.log(level, message);
+});

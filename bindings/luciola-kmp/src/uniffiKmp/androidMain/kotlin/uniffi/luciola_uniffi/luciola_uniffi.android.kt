@@ -889,6 +889,9 @@ internal typealias UniffiForeignFutureStructVoidUniffiByValue = UniffiForeignFut
 internal interface UniffiForeignFutureCompleteVoid: com.sun.jna.Callback {
     public fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoidUniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceLogSinkMethod0: com.sun.jna.Callback {
+    public fun callback(`uniffiHandle`: Long,`level`: RustBufferByValue,`message`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfaceOnPeerDiscoveredMethod0: com.sun.jna.Callback {
     public fun callback(`uniffiHandle`: Long,`peer`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
@@ -907,6 +910,37 @@ internal interface UniffiCallbackInterfaceSecureSessionListenerMethod0: com.sun.
 internal interface UniffiCallbackInterfaceSecureSessionListenerMethod1: com.sun.jna.Callback {
     public fun callback(`uniffiHandle`: Long,`message`: RustBufferByValue,`peerFingerprint`: RustBufferByValue,`remoteAddr`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+@Structure.FieldOrder("log", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceLogSinkStruct(
+    @JvmField public var `log`: UniffiCallbackInterfaceLogSinkMethod0?,
+    @JvmField public var `uniffiFree`: UniffiCallbackInterfaceFree?,
+) : com.sun.jna.Structure() {
+    internal constructor(): this(
+        
+        `log` = null,
+        
+        `uniffiFree` = null,
+        
+    )
+
+    internal class UniffiByValue(
+        `log`: UniffiCallbackInterfaceLogSinkMethod0?,
+        `uniffiFree`: UniffiCallbackInterfaceFree?,
+    ): UniffiVTableCallbackInterfaceLogSink(`log`,`uniffiFree`,), Structure.ByValue
+}
+
+internal typealias UniffiVTableCallbackInterfaceLogSink = UniffiVTableCallbackInterfaceLogSinkStruct
+
+internal fun UniffiVTableCallbackInterfaceLogSink.uniffiSetValue(other: UniffiVTableCallbackInterfaceLogSink) {
+    `log` = other.`log`
+    `uniffiFree` = other.`uniffiFree`
+}
+internal fun UniffiVTableCallbackInterfaceLogSink.uniffiSetValue(other: UniffiVTableCallbackInterfaceLogSinkUniffiByValue) {
+    `log` = other.`log`
+    `uniffiFree` = other.`uniffiFree`
+}
+
+internal typealias UniffiVTableCallbackInterfaceLogSinkUniffiByValue = UniffiVTableCallbackInterfaceLogSinkStruct.UniffiByValue
 @Structure.FieldOrder("onPeerDiscovered", "onPeerUpdated", "onPeerLost", "onError", "uniffiFree")
 internal open class UniffiVTableCallbackInterfaceOnPeerDiscoveredStruct(
     @JvmField public var `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0?,
@@ -993,6 +1027,10 @@ internal fun UniffiVTableCallbackInterfaceSecureSessionListener.uniffiSetValue(o
 }
 
 internal typealias UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByValue = UniffiVTableCallbackInterfaceSecureSessionListenerStruct.UniffiByValue
+
+
+
+
 
 
 
@@ -1314,6 +1352,9 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_func_select_lan_ip() != 61023.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_func_set_log_sink() != 14223.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_func_sign_message() != 47227.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
@@ -1434,6 +1475,9 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 40478.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
@@ -1532,6 +1576,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_select_lan_ip(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_set_log_sink(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_sign_message(
@@ -1654,6 +1701,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_constructor_truststore_new(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_logsink_log(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered(
     ): Short
     @JvmStatic
@@ -1685,6 +1735,7 @@ internal object UniffiLib : Library {
         Native.register(UniffiLib::class.java, findLibraryName("luciola_uniffi"))
         // No need to check the contract version and checksums, since 
         // we already did that with `IntegrityCheckingUniffiLib` above.
+        uniffiCallbackInterfaceLogSink.register(this)
         uniffiCallbackInterfaceOnPeerDiscovered.register(this)
         uniffiCallbackInterfaceSecureSessionListener.register(this)
     }
@@ -1952,6 +2003,10 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(
+        `vtable`: UniffiVTableCallbackInterfaceLogSink,
+    ): Unit
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(
         `vtable`: UniffiVTableCallbackInterfaceOnPeerDiscovered,
     ): Unit
@@ -2111,6 +2166,11 @@ internal object UniffiLib : Library {
     external fun uniffi_luciola_uniffi_fn_func_select_lan_ip(
         uniffiCallStatus: UniffiRustCallStatus,
     ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_set_log_sink(
+        `sink`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_func_sign_message(
         `seed`: RustBufferByValue,
@@ -4163,6 +4223,54 @@ public object FfiConverterTypeTrustLevel: FfiConverterRustBuffer<TrustLevel> {
 
 
 // Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceLogSink {
+    internal object `log`: UniffiCallbackInterfaceLogSinkMethod0 {
+        override fun callback (
+            `uniffiHandle`: Long,
+            `level`: RustBufferByValue,
+            `message`: RustBufferByValue,
+            `uniffiOutReturn`: Pointer,
+            uniffiCallStatus: UniffiRustCallStatus,
+        ) {
+            val uniffiObj = FfiConverterTypeLogSink.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`log`(
+                    FfiConverterString.lift(`level`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit ->
+                @Suppress("UNUSED_EXPRESSION")
+                uniffiOutReturn
+                Unit
+            }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeLogSink.handleMap.remove(handle)
+        }
+    }
+
+    internal val vtable = UniffiVTableCallbackInterfaceLogSink(
+        `log`,
+        uniffiFree,
+    )
+
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(vtable)
+    }
+}
+
+public object FfiConverterTypeLogSink : FfiConverterCallbackInterface<LogSink>()
+
+
+
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
 internal object uniffiCallbackInterfaceOnPeerDiscovered {
     internal object `onPeerDiscovered`: UniffiCallbackInterfaceOnPeerDiscoveredMethod0 {
         override fun callback (
@@ -4573,6 +4681,35 @@ public object FfiConverterOptionalTypeTrustLevel: FfiConverterRustBuffer<TrustLe
         } else {
             buf.put(1)
             FfiConverterTypeTrustLevel.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalTypeLogSink: FfiConverterRustBuffer<LogSink?> {
+    override fun read(buf: ByteBuffer): LogSink? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeLogSink.read(buf)
+    }
+
+    override fun allocationSize(value: LogSink?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeLogSink.allocationSize(value)
+        }
+    }
+
+    override fun write(value: LogSink?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeLogSink.write(value, buf)
         }
     }
 }
@@ -5122,6 +5259,19 @@ public actual fun `selectLanIp`(): kotlin.String? {
             uniffiRustCallStatus,
         )
     })
+}
+
+/**
+ * 安装（或替换）平台日志出口。传 `None` 仅清空出口，不卸载 subscriber
+ * （全局 subscriber 无法卸载）。
+ */
+public actual fun `setLogSink`(`sink`: LogSink?) {
+    uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_set_log_sink(
+            FfiConverterOptionalTypeLogSink.lower(`sink`),
+            uniffiRustCallStatus,
+        )
+    }
 }
 
 /**

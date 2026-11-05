@@ -251,6 +251,13 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureStr
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_LOG_SINK_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_LOG_SINK_METHOD0
+typedef void (*UniffiCallbackInterfaceLogSinkMethod0)(uint64_t, RustBuffer, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_ON_PEER_DISCOVERED_METHOD0
 typedef void (*UniffiCallbackInterfaceOnPeerDiscoveredMethod0)(uint64_t, RustBuffer, void* _Nonnull, 
@@ -291,6 +298,14 @@ typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod0)(uint64_t, Ru
 typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(uint64_t, RustBuffer, RustBuffer, RustBuffer, void* _Nonnull, 
         RustCallStatus *_Nonnull uniffiCallStatus
     );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_LOG_SINK
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_LOG_SINK
+typedef struct UniffiVTableCallbackInterfaceLogSink {
+    UniffiCallbackInterfaceLogSinkMethod0 _Nonnull log;
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+} UniffiVTableCallbackInterfaceLogSink;
 
 #endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_ON_PEER_DISCOVERED
@@ -528,6 +543,11 @@ RustBuffer uniffi_luciola_uniffi_fn_method_truststore_to_json(void*_Nonnull ptr,
 void uniffi_luciola_uniffi_fn_method_truststore_trust_device(void*_Nonnull ptr, RustBuffer device, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_LOGSINK
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_LOGSINK
+void uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(const UniffiVTableCallbackInterfaceLogSink* _Nonnull vtable
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_ONPEERDISCOVERED
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_ONPEERDISCOVERED
 void uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(const UniffiVTableCallbackInterfaceOnPeerDiscovered* _Nonnull vtable
@@ -672,6 +692,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_render_qr_ascii(RustBuffer content, Rus
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SELECT_LAN_IP
 RustBuffer uniffi_luciola_uniffi_fn_func_select_lan_ip(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SET_LOG_SINK
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SET_LOG_SINK
+void uniffi_luciola_uniffi_fn_func_set_log_sink(RustBuffer sink, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_SIGN_MESSAGE
@@ -1126,6 +1151,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_select_lan_ip(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SET_LOG_SINK
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SET_LOG_SINK
+uint16_t uniffi_luciola_uniffi_checksum_func_set_log_sink(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SIGN_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_SIGN_MESSAGE
 uint16_t uniffi_luciola_uniffi_checksum_func_sign_message(void
@@ -1363,6 +1394,12 @@ uint16_t uniffi_luciola_uniffi_checksum_constructor_securesession_new(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_CONSTRUCTOR_TRUSTSTORE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_CONSTRUCTOR_TRUSTSTORE_NEW
 uint16_t uniffi_luciola_uniffi_checksum_constructor_truststore_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_LOGSINK_LOG
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_LOGSINK_LOG
+uint16_t uniffi_luciola_uniffi_checksum_method_logsink_log(void
     
 );
 #endif

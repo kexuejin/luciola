@@ -378,3 +378,20 @@ export function parsePairingUri(uri: string): JsPairingInfo | null;
  * NOTE: event callbacks are invoked from engine threads and MUST NOT throw —
  * wrap their bodies in try/catch (an uncaught throw can abort the process).
  */
+
+/** One bridged engine log line (tracing event). */
+export interface JsLogEvent {
+  level: string;
+  message: string;
+}
+
+/**
+ * Install (or clear) the platform log sink: engine tracing logs arrive as
+ * { level, message }. The process-wide tracing subscriber can only be
+ * installed once - the first call tries; if the host already installed its
+ * own subscriber, this bridge silently yields to it. Do not call
+ * logging engine APIs from inside the callback.
+ */
+export function setLogSink(
+  callback: ((event: JsLogEvent) => void) | null,
+): void;

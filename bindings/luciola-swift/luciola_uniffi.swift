@@ -3224,6 +3224,133 @@ extension TrustLevel: Equatable, Hashable {}
 
 
 /**
+ * 平台日志出口（可选）：宿主实现 [`LogSink`] 后调 [`set_log_sink`]，引擎内
+ * 的 tracing 日志以 (level, message) 文本送达 FFI。
+ *
+ * 进程内全局 tracing subscriber 只能安装一次：首次调用会尝试安装桥接
+ * subscriber；宿主应用若已自带 subscriber（如 Android Logcat 桥），安装会
+ * 失败并被忽略——此时日志归宿主自己的 subscriber 处理，这是有意的让位。
+ * 回调内不要再调用会打日志的引擎 API（无重入防护）。
+ */
+public protocol LogSink: AnyObject, Sendable {
+    
+    func log(level: String, message: String) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceLogSink {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceLogSink] = [UniffiVTableCallbackInterfaceLogSink(
+        log: { (
+            uniffiHandle: UInt64,
+            level: RustBuffer,
+            message: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceLogSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.log(
+                     level: try FfiConverterString.lift(level),
+                     message: try FfiConverterString.lift(message)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceLogSink.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface LogSink: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitLogSink() {
+    uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(UniffiCallbackInterfaceLogSink.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceLogSink {
+    fileprivate static let handleMap = UniffiHandleMap<LogSink>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceLogSink : FfiConverter {
+    typealias SwiftType = LogSink
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceLogSink_lift(_ handle: UInt64) throws -> LogSink {
+    return try FfiConverterCallbackInterfaceLogSink.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceLogSink_lower(_ v: LogSink) -> UInt64 {
+    return FfiConverterCallbackInterfaceLogSink.lower(v)
+}
+
+
+
+
+/**
  * Callbacks from the discovery engine. Products must implement all four;
  * `on_peer_updated` fires on profile/address changes, `on_peer_lost` when a
  * peer exits or ages out (update your peer table), `on_error` reports
@@ -3778,6 +3905,30 @@ fileprivate struct FfiConverterOptionTypeTrustLevel: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionCallbackInterfaceLogSink: FfiConverterRustBuffer {
+    typealias SwiftType = LogSink?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterCallbackInterfaceLogSink.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterCallbackInterfaceLogSink.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]?
 
@@ -4258,6 +4409,16 @@ public func selectLanIp() -> String?  {
 })
 }
 /**
+ * 安装（或替换）平台日志出口。传 `None` 仅清空出口，不卸载 subscriber
+ * （全局 subscriber 无法卸载）。
+ */
+public func setLogSink(sink: LogSink?)  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_set_log_sink(
+        FfiConverterOptionCallbackInterfaceLogSink.lower(sink),$0
+    )
+}
+}
+/**
  * Sign a message with a persisted seed.
  */
 public func signMessage(seed: Data, message: Data) -> Data  {
@@ -4385,6 +4546,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_select_lan_ip() != 61023) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_set_log_sink() != 14223) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_sign_message() != 47227) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4505,6 +4669,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 2274) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 40478) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_onpeerdiscovered_on_peer_discovered() != 31116) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4524,6 +4691,7 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitLogSink()
     uniffiCallbackInitOnPeerDiscovered()
     uniffiCallbackInitSecureSessionListener()
     return InitializationResult.ok

@@ -1,8 +1,10 @@
 package io.github.kexuejin.luciola
 
 import uniffi.luciola_uniffi.DeviceMeta
+import uniffi.luciola_uniffi.LogSink
 import uniffi.luciola_uniffi.getDeviceMeta
 import uniffi.luciola_uniffi.localCandidateAddresses
+import uniffi.luciola_uniffi.setLogSink
 import uniffi.luciola_uniffi.subnetBroadcastAddresses
 
 /**
@@ -14,6 +16,9 @@ fun luciolaDeviceMeta(): DeviceMeta = getDeviceMeta()
 fun luciolaLocalCandidates(): List<String> = runCatching { localCandidateAddresses() }.getOrElse { emptyList() }
 
 fun luciolaSubnetBroadcasts(): List<String> = runCatching { subnetBroadcastAddresses() }.getOrElse { emptyList() }
+
+/** Bridge engine tracing logs to the host: see uniffi `setLogSink` semantics. */
+fun luciolaSetLogSink(sink: LogSink?) = setLogSink(sink)
 
 /**
  * Race TCP dials across the given addresses (Happy Eyeballs): first connect

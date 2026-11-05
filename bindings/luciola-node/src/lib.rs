@@ -1235,3 +1235,81 @@ pub fn parse_pairing_uri(uri: String) -> Option<JsPairingInfo> {
         pin: p.pin,
     })
 }
+
+/// 平台日志出口的一条日志：引擎内 tracing 以 (level, message) 送达 JS 回调。
+#[napi(object)]
+pub struct JsLogEvent {
+    pub level: String,
+    pub message: String,
+}
+
+/// 安装（或清除）平台日志出口。进程内全局 tracing subscriber 只能安装一次：
+/// 首次调用尝试安装桥接 subscriber；宿主已自带 subscriber 时安装失败并被
+/// 忽略（日志归宿主处理，有意让位）。回调内不要再调用会打日志的引擎 API。
+#[napi]
+pub fn set_log_sink(callback: Option<JsFunction>) -> Result<()> {
+    let tsfn: Option<ThreadsafeFunction<JsLogEvent, ErrorStrategy::Fatal>> = match callback {
+        Some(cb) => Some(cb.create_threadsafe_function(
+            0,
+            |ctx: ThreadSafeCallContext<JsLogEvent>| {
+                Ok(vec![
+                    ctx.env.create_string(&ctx.value.level)?.into_unknown(),
+                    ctx.env.create_string(&ctx.value.message)?.into_unknown(),
+                ])
+            },
+        )?),
+        None => None,
+    };
+    *LOG_SINK_TSFN.lock().unwrap() = tsfn;
+    LOG_SUBSCRIBER_ONCE.call_once(|| {
+        use tracing_subscriber::prelude::*;
+        let _ = tracing_subscriber::registry()
+            .with(NodeSinkBridge)
+            .try_init();
+    });
+    Ok(())
+}
+
+static LOG_SINK_TSFN: std::sync::Mutex<
+    Option<ThreadsafeFunction<JsLogEvent, ErrorStrategy::Fatal>>,
+> = std::sync::Mutex::new(None);
+static LOG_SUBSCRIBER_ONCE: std::sync::Once = std::sync::Once::new();
+
+struct NodeSinkBridge;
+
+struct NodeMessageVisitor(String);
+
+impl tracing::field::Visit for NodeMessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        if !self.0.is_empty() {
+            self.0.push(' ');
+        }
+        let _ = write!(self.0, "{}={:?}", field.name(), value);
+    }
+}
+
+impl<S> tracing_subscriber::Layer<S> for NodeSinkBridge
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let level = event.metadata().level().to_string();
+        let mut visitor = NodeMessageVisitor(String::new());
+        event.record(&mut visitor);
+        let tsfn = LOG_SINK_TSFN.lock().unwrap().clone();
+        if let Some(tsfn) = tsfn {
+            tsfn.call(
+                JsLogEvent {
+                    level,
+                    message: visitor.0,
+                },
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+        }
+    }
+}

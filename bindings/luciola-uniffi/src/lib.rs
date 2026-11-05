@@ -1540,3 +1540,63 @@ pub fn parse_pairing_uri(uri: String) -> Option<PairingInfo> {
         pin: p.pin,
     })
 }
+
+/// 平台日志出口（可选）：宿主实现 [`LogSink`] 后调 [`set_log_sink`]，引擎内
+/// 的 tracing 日志以 (level, message) 文本送达 FFI。
+///
+/// 进程内全局 tracing subscriber 只能安装一次：首次调用会尝试安装桥接
+/// subscriber；宿主应用若已自带 subscriber（如 Android Logcat 桥），安装会
+/// 失败并被忽略——此时日志归宿主自己的 subscriber 处理，这是有意的让位。
+/// 回调内不要再调用会打日志的引擎 API（无重入防护）。
+#[uniffi::export(callback_interface)]
+pub trait LogSink: Send + Sync + 'static {
+    fn log(&self, level: String, message: String);
+}
+
+static LOG_SINK: std::sync::Mutex<Option<std::sync::Arc<dyn LogSink>>> =
+    std::sync::Mutex::new(None);
+static LOG_SUBSCRIBER: std::sync::Once = std::sync::Once::new();
+
+struct SinkBridge;
+
+struct MessageVisitor(String);
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        if !self.0.is_empty() {
+            self.0.push_str(" ");
+        }
+        let _ = write!(self.0, "{}={:?}", field.name(), value);
+    }
+}
+
+impl<S> tracing_subscriber::Layer<S> for SinkBridge
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let level = event.metadata().level().to_string();
+        let mut visitor = MessageVisitor(String::new());
+        event.record(&mut visitor);
+        let sink = LOG_SINK.lock().unwrap().as_ref().map(std::sync::Arc::clone);
+        if let Some(sink) = sink {
+            sink.log(level, visitor.0);
+        }
+    }
+}
+
+/// 安装（或替换）平台日志出口。传 `None` 仅清空出口，不卸载 subscriber
+/// （全局 subscriber 无法卸载）。
+#[uniffi::export]
+pub fn set_log_sink(sink: Option<Box<dyn LogSink>>) {
+    *LOG_SINK.lock().unwrap() = sink.map(std::sync::Arc::from);
+    LOG_SUBSCRIBER.call_once(|| {
+        use tracing_subscriber::prelude::*;
+        let _ = tracing_subscriber::registry().with(SinkBridge).try_init();
+    });
+}
