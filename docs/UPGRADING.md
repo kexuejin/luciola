@@ -31,9 +31,11 @@ consumer's point of view. For what each release added, see [CHANGELOG.md](../CHA
 4. **Regenerate the bindings.** The uniffi interface gained `errorCodes()`,
    `classifyError()` and `ErrorInfoDto`, and the new doc comments are folded
    into the metadata checksum: an old KMP/Swift binding paired with the 0.10.0
-   dylib fails loudly (checksum mismatch). Consumers pin the git commit or
-   build the bindings locally until 0.10.0 reaches the registries — 0.10.0 is
-   **not published** at the time of writing.
+   dylib fails loudly (checksum mismatch). Regenerate with
+   `scripts/generate-kmp-bindings.sh` and
+   `cargo run -p luciola-uniffi --bin uniffi-bindgen -- generate --language swift`,
+   or take the committed artifacts — 0.10.0 is on crates.io, Maven Central and
+   the `v0.10.0` release.
 5. **`luciola-cli transfer send|recv|pin` exists.** Not a breaking change for
    library consumers: `luciola-transfer` still has no KMP / Swift / Node
    surface, and both sides must supply a pinned peer key — there is no TOFU

@@ -1,1 +1,4 @@
 LuciolaUniFFI.xcframework/
+# Release packaging output (built by build-xcframework.sh, uploaded to the tag)
+LuciolaUniFFI-*.zip
+LuciolaUniFFI-*.zip.sha256
