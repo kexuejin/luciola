@@ -35,6 +35,7 @@ pub use mux::{
 
 /// 面向 forward/FFI 层（T2/T3）的错误类型。
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TunnelError {
     #[error("invalid target: {0}")]
     InvalidTarget(String),

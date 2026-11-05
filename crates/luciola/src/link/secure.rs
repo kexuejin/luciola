@@ -63,7 +63,9 @@ pub const DEFAULT_DIAL_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Durat
 /// single read chunk (each read is a cancellation point)
 const READ_CHUNK: usize = 64 * 1024;
 
+/// Errors raised while establishing or reading an authenticated secure link.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum LinkError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

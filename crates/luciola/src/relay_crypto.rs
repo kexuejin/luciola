@@ -49,7 +49,9 @@ pub const AEAD_KEY_LEN: usize = 32;
 pub const AEAD_TAG_LEN: usize = 16;
 pub const EPHEMERAL_KEY_LEN: usize = 32;
 
+/// Errors raised by the relay envelope cryptography helpers.
 #[derive(Error, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RelayCryptoError {
     #[error("ephemeral key must be {0} bytes")]
     BadKeyLength(usize),

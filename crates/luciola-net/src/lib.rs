@@ -12,7 +12,9 @@ use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use thiserror::Error;
 
+/// Errors raised while enumerating the machine's network interfaces.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum NetError {
     #[error("failed to query system network interfaces: {0}")]
     QueryFailed(String),

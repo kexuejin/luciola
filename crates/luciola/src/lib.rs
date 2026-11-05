@@ -25,6 +25,7 @@ use thiserror::Error;
 
 /// crate 级错误：绑定层把它映射成各自的错误回调/枚举。
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum CoreError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

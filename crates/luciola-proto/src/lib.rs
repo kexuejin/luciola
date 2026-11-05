@@ -16,7 +16,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
+/// Errors raised while encoding or decoding a wire envelope.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ProtoError {
     #[error("json serialization error: {0}")]
     Serialization(#[from] serde_json::Error),

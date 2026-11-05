@@ -292,7 +292,9 @@ fn default_block_size() -> u16 {
     BLOCK_SIZE
 }
 
+/// Errors raised while loading or saving the port registry.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PortRegistryError {
     #[error("invalid port registry JSON: {0}")]
     Json(#[from] serde_json::Error),

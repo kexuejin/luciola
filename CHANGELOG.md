@@ -37,6 +37,17 @@ primary one is cited.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Rust API:** every public error enum is now `#[non_exhaustive]`:
+  `ProtoError`, `NetError`, `CoreError`, `LinkError`, `RelayCryptoError`,
+  `PortRegistryError`, `TransferError`, `TunnelError`, `MuxError`.
+  Downstream code that matched one of these exhaustively must add a `_ =>`
+  arm. This is the point of the 0.10 window: a new error variant can ship in
+  a patch release without breaking a consumer's build. The FFI surfaces are
+  unaffected — they already project onto the stable `ErrorCode` table, whose
+  unknown codes degrade to `unknown`.
+
 ### Added
 
 - **`luciola-cli transfer send|recv|pin`**: the first production driver for the

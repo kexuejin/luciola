@@ -30,7 +30,9 @@ pub use sender::{FileSender, SenderConfig};
 
 use luciola_proto::{ErrorCode, ErrorInfo};
 
+/// Errors raised by the file-transfer state machine.
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum TransferError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

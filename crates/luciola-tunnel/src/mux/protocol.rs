@@ -150,6 +150,7 @@ impl fmt::Display for DialTarget {
 
 /// mux 层错误（§2.2）。
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum MuxError {
     /// 会话已终止：连接断开、对端 CLOSE(ch 0) 或本端 shutdown()。
     #[error("session closed")]
