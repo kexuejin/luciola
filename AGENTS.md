@@ -37,6 +37,11 @@ scripts/             binding generation + publishing (see §3, §9)
 The Rust workspace version lives in the root `Cargo.toml` under
 `[workspace.package]`; every crate uses `version.workspace = true`.
 
+Deliberate non-goals — the single-file binding crates, the unpublished npm
+package, the `missing_docs` gap in `luciola-node`, and mandatory transfer
+pinning — are recorded with their reasoning in `docs/DECISIONS.md`. Read it
+before "fixing" one of them.
+
 ## 2. Local gate = CI gate. Run it before proposing anything.
 
 ```

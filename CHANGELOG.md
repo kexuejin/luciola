@@ -12,28 +12,29 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.9.3** (workspace
-> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Release state,
-> checked 2026-11-05 rather than assumed:
+> **Published-versus-repo version note.** The repository is at **0.10.0** (workspace
+> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). The registries
+> still serve **0.9.3**, verified 2026-11-05 rather than assumed:
 >
-> - **crates.io — published and verified.** `luciola`, `luciola-ip`, `luciola-proto`,
->   `luciola-net`, `luciola-transfer`, `luciola-tunnel`, `luciola-cli` all answer
->   `0.9.3` from the registry API.
-> - **Maven Central — published and verified.** The `0.9.3` deployment reached
->   `PUBLISHED` on the Central Portal; repo1 serves the root Gradle module
+> - **crates.io — 0.9.3 published and verified.** `luciola`, `luciola-ip`,
+>   `luciola-proto`, `luciola-net`, `luciola-transfer`, `luciola-tunnel`,
+>   `luciola-cli` all answer `0.9.3` from the registry API.
+> - **Maven Central — 0.9.3 published and verified.** The `0.9.3` deployment
+>   reached `PUBLISHED` on the Central Portal; repo1 serves the root Gradle module
 >   metadata (`io.github.kexuejin:luciola:0.9.3`), the `luciola-android` AAR,
 >   `luciola-jvm`, and the `luciola-iosarm64` / `luciola-iossimulatorarm64`
->   klibs. This bundle is the first to carry the KMP `LogSink` callback.
-> - **iOS — published.** `LuciolaUniFFI-0.9.3.zip` (28,841,376 bytes, xcframework
->   for device and simulator, `luciola_uniffi.swift`, FFI headers) plus its
->   `.sha256` (`50d2f03e…f26cd`) are release assets on tag `v0.9.3`.
+>   klibs. That bundle is the first to carry the KMP `LogSink` callback.
+> - **iOS — 0.9.3 published.** `LuciolaUniFFI-0.9.3.zip` (xcframework for device
+>   and simulator, `luciola_uniffi.swift`, FFI headers) plus its `.sha256` are
+>   release assets on tag `v0.9.3`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
-> A consumer that needs an engine change that is not released yet must pin the **git
-> commit**, not a version number: `{ git = "https://github.com/kexuejin/luciola", rev =
-> "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
-> up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
+> **0.10.0 is not published yet.** Until the `v0.10.0` release completes, pin the
+> **git commit** rather than the version number:
+> `{ git = "https://github.com/kexuejin/luciola", rev = "<sha>" }`. Naming an
+> unpublished version in a dependency is how a consumer repo ends up with
+> `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
 ## [Unreleased]
 
