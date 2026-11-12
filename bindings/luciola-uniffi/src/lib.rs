@@ -1401,7 +1401,6 @@ impl SecureSession {
 
     fn spawn_link(&self, role: LinkRole, listener: Box<dyn SecureSessionListener>) {
         use luciola::link::secure::SecureStream;
-        use tokio::io::AsyncWriteExt as _;
 
         self.disconnect();
         let listener: std::sync::Arc<dyn SecureSessionListener> = listener.into();
@@ -1567,7 +1566,7 @@ impl SecureSession {
                             let mut buf: Vec<u8> = Vec::new();
                             tokio::select! {
                                 _ = &mut shutdown => {
-                                    let _ = stream.socket_mut().shutdown().await;
+                                    let _ = stream.shutdown().await;
                                     break 'outer;
                                 }
                                 _ = keepalive.tick() => {
@@ -1603,11 +1602,8 @@ impl SecureSession {
                                     }
                                     if !buf.is_empty() {
                                         stats.frames_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        let remote_addr = stream
-                                            .socket_mut()
-                                            .peer_addr()
-                                            .ok()
-                                            .map(|a| a.to_string());
+                                        let remote_addr =
+                                            stream.remote_addr().map(|a| a.to_string());
                                         let fp = stream.peer_fingerprint();
                                         listener.on_message(buf.clone(), fp, remote_addr);
                                     }
@@ -1631,6 +1627,17 @@ impl SecureSession {
 // Pairing payload exports (luciola://pair v2)
 // ---------------------------------------------------------------------------
 
+/// The network transport channel currently backing a session.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelType {
+    /// Local network direct link.
+    LanDirect,
+    /// Direct P2P connection established across WAN.
+    HolePunchedDirect,
+    /// End-to-end encrypted link relayed through an external relay server.
+    RelayForwarded,
+}
+
 /// Canonical pairing payload. `fingerprint` is the host's identity
 /// fingerprint — bind trust on it; `pin` is the optional 6-digit compare.
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -1649,6 +1656,8 @@ pub struct PairingInfo {
     pub public_key: Option<String>,
     /// Optional 6-digit on-screen comparison pin.
     pub pin: Option<String>,
+    /// Optional pre-shared key for WAN rendezvous room derivation.
+    pub psk: Option<String>,
 }
 
 /// Build the canonical `luciola://pair` URI (URL-encoded).
@@ -1673,7 +1682,32 @@ pub fn build_pairing_uri(
     )
 }
 
-/// Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+/// Build a v3 `luciola://pair` URI (carrying optional PSK for WAN rendezvous).
+#[uniffi::export]
+#[allow(clippy::too_many_arguments)]
+pub fn build_pairing_uri_v3(
+    name: String,
+    product: Option<String>,
+    port: u16,
+    addrs: Vec<String>,
+    fingerprint: Option<String>,
+    public_key: Option<String>,
+    pin: Option<String>,
+    psk: Option<String>,
+) -> String {
+    luciola::pairing::build_pairing_uri_v3(
+        &name,
+        product.as_deref(),
+        port,
+        &addrs,
+        fingerprint.as_deref(),
+        public_key.as_deref(),
+        pin.as_deref(),
+        psk.as_deref(),
+    )
+}
+
+/// Parse a pairing URI (`luciola://pair` v1/v2/v3 or plain `http://host:port`).
 #[uniffi::export]
 pub fn parse_pairing_uri(uri: String) -> Option<PairingInfo> {
     luciola::pairing::parse_pairing_uri(&uri).map(|p| PairingInfo {
@@ -1684,7 +1718,24 @@ pub fn parse_pairing_uri(uri: String) -> Option<PairingInfo> {
         fingerprint: p.fingerprint,
         public_key: p.public_key,
         pin: p.pin,
+        psk: p.psk,
     })
+}
+
+/// Derive a deterministic Cloudflare Worker rendezvous room ID from two public keys and an optional PSK.
+#[uniffi::export]
+pub fn derive_rendezvous_room_id(
+    my_pk: String,
+    peer_pk: String,
+    psk: Option<String>,
+    epoch: Option<u64>,
+) -> String {
+    luciola::pairing::derive_rendezvous_room_id_flexible(
+        my_pk.as_bytes(),
+        peer_pk.as_bytes(),
+        psk.as_deref().map(|s| s.as_bytes()),
+        epoch,
+    )
 }
 
 /// 平台日志出口（可选）：宿主实现 [`LogSink`] 后调 [`set_log_sink`]，引擎内

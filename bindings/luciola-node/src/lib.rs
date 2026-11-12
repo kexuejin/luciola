@@ -1095,7 +1095,6 @@ impl SecureChannel {
         use napi::threadsafe_function::{
             ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode,
         };
-        use tokio::io::AsyncWriteExt as _;
 
         let tsfn: ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal> = on_event
             .create_threadsafe_function(0, |ctx| {
@@ -1255,7 +1254,7 @@ impl SecureChannel {
                             let mut buf: Vec<u8> = Vec::new();
                             tokio::select! {
                                 _ = &mut shutdown => {
-                                    let _ = stream.socket_mut().shutdown().await;
+                                    let _ = stream.shutdown().await;
                                     break 'outer;
                                 }
                                 _ = keepalive.tick() => {
@@ -1324,6 +1323,8 @@ pub struct JsPairingInfo {
     pub public_key: Option<String>,
     /// Optional 6-digit on-screen comparison pin.
     pub pin: Option<String>,
+    /// Optional pre-shared key for WAN rendezvous room derivation.
+    pub psk: Option<String>,
 }
 
 /// Build the canonical pairing URI (URL-encoded).
@@ -1348,7 +1349,32 @@ pub fn build_pairing_uri(
     )
 }
 
-/// Parse a pairing URI (`luciola://pair?...` v1/v2 or plain `http://host:port`).
+/// Build a v3 pairing URI (carrying optional PSK for WAN rendezvous).
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn build_pairing_uri_v3(
+    name: String,
+    product: Option<String>,
+    port: u16,
+    addrs: Vec<String>,
+    fingerprint: Option<String>,
+    public_key: Option<String>,
+    pin: Option<String>,
+    psk: Option<String>,
+) -> String {
+    luciola::pairing::build_pairing_uri_v3(
+        &name,
+        product.as_deref(),
+        port,
+        &addrs,
+        fingerprint.as_deref(),
+        public_key.as_deref(),
+        pin.as_deref(),
+        psk.as_deref(),
+    )
+}
+
+/// Parse a pairing URI (`luciola://pair?...` v1/v2/v3 or plain `http://host:port`).
 #[napi]
 pub fn parse_pairing_uri(uri: String) -> Option<JsPairingInfo> {
     luciola::pairing::parse_pairing_uri(&uri).map(|p| JsPairingInfo {
@@ -1359,7 +1385,25 @@ pub fn parse_pairing_uri(uri: String) -> Option<JsPairingInfo> {
         fingerprint: p.fingerprint,
         public_key: p.public_key,
         pin: p.pin,
+        psk: p.psk,
     })
+}
+
+/// Derive deterministic Cloudflare Worker rendezvous room ID from two public keys and optional PSK.
+#[napi]
+pub fn derive_rendezvous_room_id(
+    my_pk: String,
+    peer_pk: String,
+    psk: Option<String>,
+    epoch: Option<i64>,
+) -> String {
+    let epoch_u64 = epoch.and_then(|e| if e >= 0 { Some(e as u64) } else { None });
+    luciola::pairing::derive_rendezvous_room_id_flexible(
+        my_pk.as_bytes(),
+        peer_pk.as_bytes(),
+        psk.as_deref().map(|s| s.as_bytes()),
+        epoch_u64,
+    )
 }
 
 /// 平台日志出口的一条日志：引擎内 tracing 以 (level, message) 送达 JS 回调。

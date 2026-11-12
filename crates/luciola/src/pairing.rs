@@ -28,6 +28,13 @@ pub struct PairingPayload {
     pub public_key: Option<String>,
     /// Optional 6-digit on-screen comparison pin.
     pub pin: Option<String>,
+    /// Optional high-entropy pre-shared secret for WAN rendezvous room derivation.
+    ///
+    /// This is **secret key material**: the v3 pairing URI (and any QR code
+    /// carrying it) contains it in plaintext. It is hashed with SHA-256 before
+    /// use; do not display, log or persist it as ordinary metadata. A missing
+    /// PSK yields no rendezvous room (see `derive_rendezvous_room_id_flexible`).
+    pub psk: Option<String>,
 }
 
 fn encode(s: &str) -> String {
@@ -41,7 +48,7 @@ fn decode(s: &str) -> Option<String> {
         .map(|c| c.into_owned())
 }
 
-/// Build the canonical pairing URI.
+/// Build the canonical pairing URI (v2 without PSK).
 pub fn build_pairing_uri(
     name: &str,
     product: Option<&str>,
@@ -50,6 +57,30 @@ pub fn build_pairing_uri(
     fingerprint: Option<&str>,
     public_key: Option<&str>,
     pin: Option<&str>,
+) -> String {
+    build_pairing_uri_v3(
+        name,
+        product,
+        port,
+        addrs,
+        fingerprint,
+        public_key,
+        pin,
+        None,
+    )
+}
+
+/// Build the canonical pairing URI (v3 with optional PSK for WAN rendezvous).
+#[allow(clippy::too_many_arguments)]
+pub fn build_pairing_uri_v3(
+    name: &str,
+    product: Option<&str>,
+    port: u16,
+    addrs: &[String],
+    fingerprint: Option<&str>,
+    public_key: Option<&str>,
+    pin: Option<&str>,
+    psk: Option<&str>,
 ) -> String {
     let mut q = format!("luciola://pair?name={}", encode(name));
     if let Some(p) = product {
@@ -75,6 +106,9 @@ pub fn build_pairing_uri(
     if let Some(pin) = pin {
         q.push_str(&format!("&pin={}", encode(pin)));
     }
+    if let Some(psk) = psk {
+        q.push_str(&format!("&psk={}", encode(psk)));
+    }
     q
 }
 
@@ -90,6 +124,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
         let mut fingerprint = None;
         let mut public_key = None;
         let mut pin = None;
+        let mut psk = None;
         for pair in query.split('&') {
             let (k, v) = pair.split_once('=')?;
             let v = decode(v)?;
@@ -103,6 +138,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
                 "fp" => fingerprint = Some(v),
                 "pk" => public_key = Some(v),
                 "pin" => pin = Some(v),
+                "psk" => psk = Some(v),
                 _ => {}
             }
         }
@@ -119,6 +155,7 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
             fingerprint,
             public_key,
             pin,
+            psk,
         });
     }
     // Legacy plain HTTP form: http://host:port or http://[v6]:port/path
@@ -142,12 +179,97 @@ pub fn parse_pairing_uri(uri: &str) -> Option<PairingPayload> {
         fingerprint: None,
         public_key: None,
         pin: None,
+        psk: None,
     })
 }
 
 /// Convenience: fingerprint for a public key (same as `trust::fingerprint`).
 pub fn fingerprint_of(public_key: &[u8]) -> String {
     trust::fingerprint(public_key)
+}
+
+/// Deterministically derives a 32-character hex rendezvous room ID from two peers' public keys,
+/// a pre-shared key (PSK), and a time epoch.
+///
+/// Both peers sort their public keys lexicographically to guarantee identical room generation,
+/// preventing third parties from discovering or predicting the rendezvous room without the PSK.
+/// Callers MUST supply a real PSK: an all-zero key makes the room predictable from public keys.
+pub fn derive_rendezvous_room_id(
+    my_pk: &[u8; 32],
+    peer_pk: &[u8; 32],
+    psk: &[u8; 32],
+    epoch: u64,
+) -> String {
+    let (lo, hi) = if my_pk < peer_pk {
+        (my_pk, peer_pk)
+    } else {
+        (peer_pk, my_pk)
+    };
+
+    let mut ikm = Vec::with_capacity(25 + 32 + 32 + 8);
+    ikm.extend_from_slice(b"LUCIOLA_WAN_RENDEZVOUS_V2");
+    ikm.extend_from_slice(lo);
+    ikm.extend_from_slice(hi);
+    ikm.extend_from_slice(&epoch.to_be_bytes());
+
+    let (prk, _) = hkdf::Hkdf::<sha2::Sha256>::extract(Some(psk), &ikm);
+
+    let mut hex_str = String::with_capacity(32);
+    for b in &prk[..16] {
+        use std::fmt::Write;
+        let _ = write!(hex_str, "{:02x}", b);
+    }
+    hex_str
+}
+
+/// Flexible helper to derive a deterministic 32-character hex rendezvous room ID from arbitrary byte slices or strings.
+///
+/// Keys not exactly 32 bytes in length are normalized via SHA-256.
+/// If `epoch` is `None`, defaults to the current 10-minute epoch window (`unix_seconds / 600`).
+///
+/// A PSK is **required**: without one this returns an empty string rather than
+/// deriving a room from an all-zero key, which any third party could predict
+/// from the two public keys. The signalling service rejects an empty room ID.
+pub fn derive_rendezvous_room_id_flexible(
+    my_pk: &[u8],
+    peer_pk: &[u8],
+    psk: Option<&[u8]>,
+    epoch: Option<u64>,
+) -> String {
+    use sha2::Digest;
+    use zeroize::Zeroizing;
+
+    // Fail closed instead of silently substituting a zero key (§10).
+    let Some(psk_bytes) = psk else {
+        return String::new();
+    };
+    let psk_arr: [u8; 32] = if psk_bytes.len() == 32 {
+        psk_bytes.try_into().unwrap()
+    } else {
+        sha2::Sha256::digest(psk_bytes).into()
+    };
+    let psk_32 = Zeroizing::new(psk_arr);
+
+    let my_key_32: [u8; 32] = if my_pk.len() == 32 {
+        my_pk.try_into().unwrap()
+    } else {
+        sha2::Sha256::digest(my_pk).into()
+    };
+
+    let peer_key_32: [u8; 32] = if peer_pk.len() == 32 {
+        peer_pk.try_into().unwrap()
+    } else {
+        sha2::Sha256::digest(peer_pk).into()
+    };
+
+    let current_epoch = epoch.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 600)
+            .unwrap_or(0)
+    });
+
+    derive_rendezvous_room_id(&my_key_32, &peer_key_32, &psk_32, current_epoch)
 }
 
 #[cfg(test)]
@@ -198,5 +320,70 @@ mod tests {
     fn missing_addrs_rejected() {
         assert!(parse_pairing_uri("luciola://pair?name=X&port=80").is_none());
         assert!(parse_pairing_uri("weird://nope").is_none());
+    }
+
+    #[test]
+    fn v3_pairing_with_psk_roundtrip() {
+        let uri = build_pairing_uri_v3(
+            "Phone",
+            Some("app"),
+            9000,
+            &["192.168.1.100".into()],
+            Some("sha256:11223344"),
+            Some("pk_base64_here"),
+            Some("123456"),
+            Some("cHNrX2Jhc2U2NF8zMmJ5dGVzX2tleV9leGFtcGxl"),
+        );
+        let p = parse_pairing_uri(&uri).unwrap();
+        assert_eq!(p.name, "Phone");
+        assert_eq!(
+            p.psk.as_deref(),
+            Some("cHNrX2Jhc2U2NF8zMmJ5dGVzX2tleV9leGFtcGxl")
+        );
+    }
+
+    #[test]
+    fn missing_psk_yields_no_rendezvous_room() {
+        // A zero-key fallback would make the room predictable from public keys.
+        assert_eq!(
+            derive_rendezvous_room_id_flexible(&[1u8; 32], &[2u8; 32], None, Some(1000)),
+            ""
+        );
+        assert_eq!(
+            derive_rendezvous_room_id_flexible(&[1u8; 32], &[2u8; 32], Some(b"psk"), Some(1000))
+                .len(),
+            32
+        );
+    }
+
+    #[test]
+    fn deterministic_rendezvous_room_id() {
+        let pk_a = [1u8; 32];
+        let pk_b = [2u8; 32];
+        let psk = [42u8; 32];
+        let epoch = 1000;
+
+        let room_a = derive_rendezvous_room_id(&pk_a, &pk_b, &psk, epoch);
+        let room_b = derive_rendezvous_room_id(&pk_b, &pk_a, &psk, epoch);
+
+        assert_eq!(
+            room_a, room_b,
+            "Room IDs derived from either peer must match symmetrically"
+        );
+        assert_eq!(
+            room_a.len(),
+            32,
+            "Room ID must be 32 hex characters (16 bytes)"
+        );
+
+        // Different epoch must yield different room
+        let room_next_epoch = derive_rendezvous_room_id(&pk_a, &pk_b, &psk, epoch + 1);
+        assert_ne!(room_a, room_next_epoch);
+
+        // Different PSK must yield different room
+        let mut psk_diff = psk;
+        psk_diff[0] ^= 1;
+        let room_diff_psk = derive_rendezvous_room_id(&pk_a, &pk_b, &psk_diff, epoch);
+        assert_ne!(room_a, room_diff_psk);
     }
 }

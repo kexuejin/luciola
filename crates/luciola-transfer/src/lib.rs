@@ -53,6 +53,16 @@ pub enum TransferError {
         /// Size actually observed.
         actual: u64,
     },
+    /// Transfer size exceeds the quota limit for the current channel type (e.g. over Relay).
+    #[error("transfer size ({size} bytes) exceeds limit ({limit} bytes) for channel {channel}")]
+    ChannelLimitExceeded {
+        /// Attempted transfer size in bytes.
+        size: u64,
+        /// Maximum allowed bytes on this channel.
+        limit: u64,
+        /// The channel type label over which transfer was attempted.
+        channel: String,
+    },
 }
 
 impl From<&TransferError> for ErrorInfo {
@@ -62,6 +72,7 @@ impl From<&TransferError> for ErrorInfo {
             TransferError::Decode(_) => ErrorCode::DecodeError,
             TransferError::State(_) => ErrorCode::StateError,
             TransferError::SizeMismatch { .. } => ErrorCode::SizeMismatch,
+            TransferError::ChannelLimitExceeded { .. } => ErrorCode::QuotaExceeded,
         };
         Self::new(code, e.to_string())
     }
@@ -70,6 +81,18 @@ impl From<&TransferError> for ErrorInfo {
 #[cfg(test)]
 mod error_taxonomy_tests {
     use super::*;
+
+    #[test]
+    fn channel_limit_exceeded_maps_to_quota_exceeded() {
+        let e = TransferError::ChannelLimitExceeded {
+            size: 200 * 1024 * 1024,
+            limit: 100 * 1024 * 1024,
+            channel: "relay_forwarded".into(),
+        };
+        let info = ErrorInfo::from(&e);
+        assert_eq!(info.code, ErrorCode::QuotaExceeded);
+        assert!(!info.retryable());
+    }
 
     #[test]
     fn transfer_errors_classify_without_losing_the_message() {

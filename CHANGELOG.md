@@ -12,9 +12,14 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.10.0** (workspace
-> `Cargo.toml`, path-dep requirements, KMP `version`, npm `version`). Release state,
-> checked 2026-11-05 against the registries rather than assumed:
+> **Published-versus-repo version note.** The repository is at **0.11.0-local.1**,
+> a **local-only validation build** (workspace `Cargo.toml`, path-dep
+> requirements, KMP `version`, npm `version`). That version is on **no registry**:
+> it exists only in `~/.m2` via `scripts/publish-maven-local.sh` so downstream
+> products can validate the WAN API before a public release. The install
+> snippets in the README still name 0.10.0, the last verified public release;
+> do not copy `0.11.0-local.1` into a consumer that cannot see `mavenLocal()`.
+> Release state, checked 2026-11-05 against the registries rather than assumed:
 >
 > - **crates.io — 0.10.0 published and verified.** `luciola`, `luciola-ip`,
 >   `luciola-proto`, `luciola-net`, `luciola-transfer`, `luciola-tunnel`,
@@ -34,6 +39,89 @@ primary one is cited.
 > commit**, not a version number: `{ git = "https://github.com/kexuejin/luciola", rev =
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
+
+## [Unreleased] — 0.11.0-local.1 (local validation build, 2026-11-12)
+
+Published to **mavenLocal only**. crates.io, Maven Central, npm, the git tag and
+`origin/main` are all untouched; the public registries remain at 0.10.0 until
+downstream products finish validation.
+
+### Added (Rust core tier — local validation only)
+
+- `luciola::wan`: `connect_wan`, `WanConfig`, `WanError` and `current_epoch`.
+  Encrypted WSS rendezvous, candidate exchange, UDP hole punching, a reliable
+  **ordered** UDP data plane (ARQ), and an end-to-end encrypted relay fallback
+  over the same WebSocket. Both sides commit to one data plane via an encrypted
+  `RouteDecision`; the returned `SecureStream` reports
+  `HolePunchedDirect` or `RelayForwarded` in `channel_type()`.
+- `SecureStream` transport abstraction: `ByteStream` / `ErasedStream` let the
+  unchanged handshake run over TCP, the UDP ARQ or an ordered WebSocket.
+  `socket_mut()` is replaced by `shutdown()` / `remote_addr()`; `into_split()`
+  now splits the erased stream. Existing LAN TCP callers are source-compatible.
+- `luciola::stun`: RFC 5389 Binding client (IPv4/IPv6 XOR-MAPPED-ADDRESS,
+  Binding Error Response, strict length/padding checks, 5 s query deadline)
+  and a `luciola stun` CLI probe with `--timeout-secs`, shared default servers
+  and a non-zero exit code on failure. The probe no longer claims a NAT
+  mapping-behaviour classification that one Binding response cannot support.
+- `luciola::traversal`: `TraversalSession` keeps **one** UDP socket for STUN,
+  punching and the data plane; `peer_udp_targets` preserves the reflexive port.
+  UDP bind failure returns `io::Result` rather than panicking, and a failed
+  candidate race returns `NoRoute` rather than falsely reporting a relay.
+- `luciola::pairing`: v3 pairing URI carrying an optional PSK, and deterministic
+  HKDF-SHA256 rendezvous room derivation.
+- `luciola-proto`: `ChannelType`, `RelayConfig`, `TraversalCandidates` (with
+  `udp_port`) and the `quota_exceeded` error code.
+- `deploy/cloudflare-signaling`: Worker + Durable Object rendezvous service
+  with `src/auth.js` and an `npm test` suite. Ed25519 edge verification is
+  aligned with the Rust client, with bounded epoch windows, nonce replay
+  protection, join/message rate limits, a 32 KiB frame cap, hibernation and
+  blind forwarding of opaque encrypted frames.
+- All three binding surfaces regenerated (KMP, Swift, Node) and verified
+  byte-identical to a fresh bindgen run.
+
+### Fixed
+
+- `SecureStream`'s AES-GCM strictly-increasing counter nonce is no longer
+  exposed to UDP reordering: the ARQ layer delivers ordered bytes. UDP
+  half-close now retransmits `CLOSE`, waits for the peer's final sequence and
+  has a bounded idle timeout instead of hanging or truncating the tail.
+- Relay writes are chunked under the receive cap and use an explicit ordered
+  EOF marker; route decisions can no longer diverge between the two peers.
+- `FileSender::check_channel_policy` is now called by the real CLI send path
+  before the first intro frame, so the relay byte cap is actually enforced.
+- `SECURITY.md`, `RelayConfig` docs and the Worker README no longer describe
+  the WAN data plane as absent/unwired.
+- Aliyun Gradle mirrors are opt-in **fallbacks**
+  (`-PluciolaUseAliyunMirrors=true`), placed after `mavenCentral()` / `google()`
+  so official registries always resolve first and can never be shadowed in a
+  published build; `AGENTS.md` documents the constrained-network flag and
+  `node_modules/` is gitignored.
+
+### Changed
+
+- `RelayConfig::default()` is now deny-by-default (`allow_relay` and
+  `allow_wan_signaling` both `false`) in line with SECURITY.md.
+- A missing PSK no longer silently becomes an all-zero HKDF key:
+  `derive_rendezvous_room_id_flexible` returns an empty room ID instead.
+- `SECURITY.md` now documents the implemented signalling/data planes, the
+  cloud-side observer, encrypted frame guarantees, Worker abuse controls and
+  the extended pre-audit review checklist.
+
+### Verification layer and remaining limits
+
+Verified locally: full gate (`cargo fmt --all -- --check`, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test --all-targets
+--all-features`), KMP compile, Node build/tests, Worker `npm test`; loopback
+integration tests for a 64 KiB encrypted relay transfer over a local
+blind-forwarding WebSocket, a real secure handshake over the UDP ARQ stream,
+ARQ loss/reorder recovery, and STUN CLI process tests.
+
+**Not** verified: no real-NAT / carrier-grade-NAT field test, no deployed
+public Worker, no mobile background presence (iOS needs a push wake for an
+always-on signalling socket), no WAN surface in the KMP/Swift/Node bindings,
+no epoch-skew tolerance, and no external audit of the new ARQ, signalling
+frame composition or Worker auth path. WAN remains unvalidated on real
+networks — this is why the build is mavenLocal-only.
 
 ## [0.10.0] — 2026-11-05
 

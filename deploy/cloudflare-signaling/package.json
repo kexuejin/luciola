@@ -1,0 +1,15 @@
+{
+  "name": "luciola-signaling",
+  "version": "0.11.0-local.1",
+  "description": "Cloudflare Worker Durable Object signaling service for luciola WAN rendezvous",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^3.100.0"
+  }
+}

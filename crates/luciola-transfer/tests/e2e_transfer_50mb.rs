@@ -185,6 +185,7 @@ async fn e2e_50mb_over_real_secure_session() {
             chunk_size: 256 * 1024,
             window: 8,
             retransmit_after: Duration::from_secs(2),
+            ..Default::default()
         },
     )
     .await
@@ -241,6 +242,7 @@ async fn out_of_order_arrival_lands_byte_exact() {
             chunk_size: CHUNK,
             window: SIZE / CHUNK, // whole file in flight at once
             retransmit_after: Duration::from_secs(5),
+            ..Default::default()
         },
     )
     .await
@@ -309,6 +311,7 @@ async fn final_ack_loss_recovers_via_answer_cache() {
             chunk_size: CHUNK,
             window: 8,
             retransmit_after: Duration::from_millis(120),
+            ..Default::default()
         },
     )
     .await

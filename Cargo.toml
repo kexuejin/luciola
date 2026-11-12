@@ -14,7 +14,7 @@ members = [
 
 [workspace.package]
 rust-version = "1.88"
-version = "0.10.0"
+version = "0.11.0-local.1"
 edition = "2021"
 authors = ["Luciola Contributors"]
 license = "MIT OR Apache-2.0"
@@ -41,3 +41,5 @@ percent-encoding = "2.3"
 socket2 = "0.5"
 zeroize = "1.8"
 clap = { version = "4.5", features = ["derive"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"

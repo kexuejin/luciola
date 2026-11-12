@@ -2789,6 +2789,10 @@ public struct PairingInfo {
      * Optional 6-digit on-screen comparison pin.
      */
     public var pin: String?
+    /**
+     * Optional pre-shared key for WAN rendezvous room derivation.
+     */
+    public var psk: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2813,7 +2817,10 @@ public struct PairingInfo {
          */publicKey: String?, 
         /**
          * Optional 6-digit on-screen comparison pin.
-         */pin: String?) {
+         */pin: String?, 
+        /**
+         * Optional pre-shared key for WAN rendezvous room derivation.
+         */psk: String?) {
         self.name = name
         self.product = product
         self.port = port
@@ -2821,6 +2828,7 @@ public struct PairingInfo {
         self.fingerprint = fingerprint
         self.publicKey = publicKey
         self.pin = pin
+        self.psk = psk
     }
 }
 
@@ -2852,6 +2860,9 @@ extension PairingInfo: Equatable, Hashable {
         if lhs.pin != rhs.pin {
             return false
         }
+        if lhs.psk != rhs.psk {
+            return false
+        }
         return true
     }
 
@@ -2863,6 +2874,7 @@ extension PairingInfo: Equatable, Hashable {
         hasher.combine(fingerprint)
         hasher.combine(publicKey)
         hasher.combine(pin)
+        hasher.combine(psk)
     }
 }
 
@@ -2881,7 +2893,8 @@ public struct FfiConverterTypePairingInfo: FfiConverterRustBuffer {
                 addrs: FfiConverterSequenceString.read(from: &buf), 
                 fingerprint: FfiConverterOptionString.read(from: &buf), 
                 publicKey: FfiConverterOptionString.read(from: &buf), 
-                pin: FfiConverterOptionString.read(from: &buf)
+                pin: FfiConverterOptionString.read(from: &buf), 
+                psk: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -2893,6 +2906,7 @@ public struct FfiConverterTypePairingInfo: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.fingerprint, into: &buf)
         FfiConverterOptionString.write(value.publicKey, into: &buf)
         FfiConverterOptionString.write(value.pin, into: &buf)
+        FfiConverterOptionString.write(value.psk, into: &buf)
     }
 }
 
@@ -3320,6 +3334,95 @@ public func FfiConverterTypeTrustedDeviceInfo_lift(_ buf: RustBuffer) throws -> 
 public func FfiConverterTypeTrustedDeviceInfo_lower(_ value: TrustedDeviceInfo) -> RustBuffer {
     return FfiConverterTypeTrustedDeviceInfo.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * The network transport channel currently backing a session.
+ */
+
+public enum ChannelType {
+    
+    /**
+     * Local network direct link.
+     */
+    case lanDirect
+    /**
+     * Direct P2P connection established across WAN.
+     */
+    case holePunchedDirect
+    /**
+     * End-to-end encrypted link relayed through an external relay server.
+     */
+    case relayForwarded
+}
+
+
+#if compiler(>=6)
+extension ChannelType: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChannelType: FfiConverterRustBuffer {
+    typealias SwiftType = ChannelType
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChannelType {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lanDirect
+        
+        case 2: return .holePunchedDirect
+        
+        case 3: return .relayForwarded
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ChannelType, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lanDirect:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .holePunchedDirect:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .relayForwarded:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChannelType_lift(_ buf: RustBuffer) throws -> ChannelType {
+    return try FfiConverterTypeChannelType.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChannelType_lower(_ value: ChannelType) -> RustBuffer {
+    return FfiConverterTypeChannelType.lower(value)
+}
+
+
+extension ChannelType: Equatable, Hashable {}
+
+
+
+
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -4650,6 +4753,23 @@ public func buildPairingUri(name: String, product: String?, port: UInt16, addrs:
 })
 }
 /**
+ * Build a v3 `luciola://pair` URI (carrying optional PSK for WAN rendezvous).
+ */
+public func buildPairingUriV3(name: String, product: String?, port: UInt16, addrs: [String], fingerprint: String?, publicKey: String?, pin: String?, psk: String?) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_build_pairing_uri_v3(
+        FfiConverterString.lower(name),
+        FfiConverterOptionString.lower(product),
+        FfiConverterUInt16.lower(port),
+        FfiConverterSequenceString.lower(addrs),
+        FfiConverterOptionString.lower(fingerprint),
+        FfiConverterOptionString.lower(publicKey),
+        FfiConverterOptionString.lower(pin),
+        FfiConverterOptionString.lower(psk),$0
+    )
+})
+}
+/**
  * Normalise either callback shape into one [`ErrorInfoDto`]:
  * - `classify_error(code, Some(message))` for `on_error`;
  * - `classify_error(detail, None)` for `on_state("error", detail)`, where the
@@ -4686,6 +4806,19 @@ public func defaultRaceCandidates(addresses: [String]) -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_luciola_uniffi_fn_func_default_race_candidates(
         FfiConverterSequenceString.lower(addresses),$0
+    )
+})
+}
+/**
+ * Derive a deterministic Cloudflare Worker rendezvous room ID from two public keys and an optional PSK.
+ */
+public func deriveRendezvousRoomId(myPk: String, peerPk: String, psk: String?, epoch: UInt64?) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_derive_rendezvous_room_id(
+        FfiConverterString.lower(myPk),
+        FfiConverterString.lower(peerPk),
+        FfiConverterOptionString.lower(psk),
+        FfiConverterOptionUInt64.lower(epoch),$0
     )
 })
 }
@@ -4799,7 +4932,7 @@ public func localCandidateAddresses() -> [String]  {
 })
 }
 /**
- * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ * Parse a pairing URI (`luciola://pair` v1/v2/v3 or plain `http://host:port`).
  */
 public func parsePairingUri(uri: String) -> PairingInfo?  {
     return try!  FfiConverterOptionTypePairingInfo.lift(try! rustCall() {
@@ -5009,6 +5142,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri() != 27091) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_build_pairing_uri_v3() != 30826) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_classify_error() != 40540) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5016,6 +5152,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_derive_rendezvous_room_id() != 8384) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_error_codes() != 47804) {
@@ -5051,7 +5190,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_local_candidate_addresses() != 47155) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 28415) {
+    if (uniffi_luciola_uniffi_checksum_func_parse_pairing_uri() != 46692) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_race_connect() != 26451) {

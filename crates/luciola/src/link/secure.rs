@@ -1,5 +1,12 @@
-//! Authenticated encrypted channels over TCP — the "door" for the trust
-//! primitives in [`crate::trust`].
+//! Authenticated encrypted channels — the "door" for the trust primitives in
+//! [`crate::trust`].
+//!
+//! The channel is **transport-agnostic**: the socket is a boxed
+//! [`AsyncRead`] + [`AsyncWrite`] byte stream. LAN peers still use TCP; WAN
+//! peers use a reliable-ordered UDP stream (the `wan::udp` ARQ adapter) or a
+//! WebSocket relay adapter. Every transport must deliver bytes **in order**:
+//! the AES-256-GCM frame nonce is a strictly increasing counter, so a datagram
+//! transport that exposed reordering directly would break authentication.
 //!
 //! Handshake (SIGMA-like, 1.5 round trips, all RustCrypto primitives):
 //!
@@ -28,9 +35,13 @@ use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll};
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use x25519_dalek::{EphemeralSecret, PublicKey as XPublicKey};
 
@@ -41,6 +52,83 @@ const PUB_LEN: usize = 32;
 const SIG_LEN: usize = 64;
 /// Largest plaintext frame accepted (guards against length-field DoS).
 pub const MAX_FRAME_LEN: u32 = 8 * 1024 * 1024;
+
+/// An ordered, full-duplex byte stream usable as a secure-channel transport.
+///
+/// This is the **only** contract `SecureStream` puts on its transport. TCP,
+/// the reliable UDP adapter and the WebSocket relay adapter all implement it.
+/// Deliberately a single non-auto supertrait so it is object-safe; `Send` is
+/// required because bindings move channels between runtimes.
+pub trait ByteStream: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T> ByteStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+
+/// Object-safe wrapper that keeps the concrete transport behind `SecureStream`.
+///
+/// Implementing `AsyncRead`/`AsyncWrite` explicitly (rather than relying on
+/// tokio's `Box<T>` blanket impl) makes the object-safety requirement visible
+/// at the type boundary and keeps `poll_*` forwarding cancellation-safe.
+pub struct ErasedStream {
+    inner: Box<dyn ByteStream>,
+    remote: Option<SocketAddr>,
+}
+
+impl ErasedStream {
+    /// Wrap any ordered byte stream, recording its remote endpoint for
+    /// diagnostics (the WAN adapters know it even without a TCP socket).
+    pub fn new<S>(socket: S, remote: Option<SocketAddr>) -> Self
+    where
+        S: ByteStream + 'static,
+    {
+        Self {
+            inner: Box::new(socket),
+            remote,
+        }
+    }
+
+    /// Remote endpoint, when the transport has one.
+    pub fn remote_addr(&self) -> Option<SocketAddr> {
+        self.remote
+    }
+
+    /// Replace the recorded remote endpoint (used after hole punching resolves
+    /// the peer's reflexive address).
+    pub fn set_remote_addr(&mut self, remote: SocketAddr) {
+        self.remote = Some(remote);
+    }
+}
+
+impl AsyncRead for ErasedStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        Pin::new(&mut *this.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for ErasedStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        Pin::new(&mut *this.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        Pin::new(&mut *this.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        Pin::new(&mut *this.inner).poll_shutdown(cx)
+    }
+}
 
 /// How long the LISTENING side waits for the initiator's first flight.
 ///
@@ -126,7 +214,7 @@ fn derive_keys(
 
 /// An established, mutually authenticated, encrypted channel.
 pub struct SecureStream {
-    socket: TcpStream,
+    socket: ErasedStream,
     send_cipher: Aes256Gcm,
     recv_cipher: Aes256Gcm,
     send_counter: AtomicU64,
@@ -138,9 +226,20 @@ pub struct SecureStream {
     in_buf: Vec<u8>,
     /// Peer's Ed25519 public key, verified during the handshake.
     pub peer_public_key: Vec<u8>,
+    channel_type: crate::proto::ChannelType,
 }
 
 impl SecureStream {
+    /// Returns the underlying transport channel type.
+    pub fn channel_type(&self) -> crate::proto::ChannelType {
+        self.channel_type
+    }
+
+    /// Sets the underlying transport channel type.
+    pub fn set_channel_type(&mut self, channel: crate::proto::ChannelType) {
+        self.channel_type = channel;
+    }
+
     /// Send one encrypted frame.
     pub async fn send(&mut self, plaintext: &[u8]) -> Result<(), LinkError> {
         let counter = self.send_counter.fetch_add(1, Ordering::SeqCst);
@@ -178,9 +277,41 @@ impl SecureStream {
         trust::fingerprint(&self.peer_public_key)
     }
 
-    /// Direct socket access (used by supervisors for graceful shutdown).
-    pub fn socket_mut(&mut self) -> &mut TcpStream {
-        &mut self.socket
+    /// Remote endpoint of the underlying transport, when known.
+    pub fn remote_addr(&self) -> Option<SocketAddr> {
+        self.socket.remote_addr()
+    }
+
+    /// Record the remote endpoint (WAN adapters resolve it during punching).
+    pub fn set_remote_addr(&mut self, remote: SocketAddr) {
+        self.socket.set_remote_addr(remote);
+    }
+
+    /// Graceful shutdown of the outbound direction (supervisor disconnect).
+    pub async fn shutdown(&mut self) -> io::Result<()> {
+        AsyncWriteExt::shutdown(&mut self.socket).await
+    }
+
+    /// Wrap an already-established ordered byte stream in the secure frame
+    /// codec. Used by the WAN orchestration after a transport is punched or a
+    /// relay bridge is opened; cryptographic state comes from the handshake.
+    pub fn from_erased_parts(
+        socket: ErasedStream,
+        send_cipher: Aes256Gcm,
+        recv_cipher: Aes256Gcm,
+        peer_public_key: Vec<u8>,
+        channel_type: crate::proto::ChannelType,
+    ) -> Self {
+        Self {
+            socket,
+            send_cipher,
+            recv_cipher,
+            send_counter: AtomicU64::new(0),
+            recv_counter: 0,
+            in_buf: Vec::new(),
+            peer_public_key,
+            channel_type,
+        }
     }
 
     /// 拆成独立的读/写半句柄，供全双工任务各自持有（如 mux 的 reader/writer 任务）。
@@ -188,7 +319,7 @@ impl SecureStream {
     /// 读半句柄保留取消安全的 `in_buf` 半帧状态；写半句柄的计数器从原子量转成
     /// 独享所有权——拆分后每个方向只有一个任务触碰，不再需要原子。
     pub fn into_split(self) -> (SecureRecvHalf, SecureSendHalf) {
-        let (read_half, write_half) = self.socket.into_split();
+        let (read_half, write_half) = tokio::io::split(self.socket);
         (
             SecureRecvHalf {
                 read_half,
@@ -209,7 +340,7 @@ impl SecureStream {
 
 /// The receive half of a split [`SecureStream`].
 pub struct SecureRecvHalf {
-    read_half: tokio::net::tcp::OwnedReadHalf,
+    read_half: tokio::io::ReadHalf<ErasedStream>,
     recv_cipher: Aes256Gcm,
     recv_counter: u64,
     in_buf: Vec<u8>,
@@ -239,7 +370,7 @@ impl SecureRecvHalf {
 
 /// The send half of a split [`SecureStream`].
 pub struct SecureSendHalf {
-    write_half: tokio::net::tcp::OwnedWriteHalf,
+    write_half: tokio::io::WriteHalf<ErasedStream>,
     send_cipher: Aes256Gcm,
     send_counter: u64,
     peer_public_key: Vec<u8>,
@@ -257,8 +388,8 @@ impl SecureSendHalf {
     }
 
     /// Graceful FIN on the write direction (read half keeps receiving).
-    pub async fn shutdown(&mut self) -> std::io::Result<()> {
-        self.write_half.shutdown().await
+    pub async fn shutdown(&mut self) -> io::Result<()> {
+        AsyncWriteExt::shutdown(&mut self.write_half).await
     }
 
     /// `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
@@ -412,9 +543,19 @@ pub async fn handshake_client_timed(
     pinned_peer_public_key: &[u8],
     handshake_timeout: std::time::Duration,
 ) -> Result<SecureStream, LinkError> {
+    // 关掉 Nagle。`send` 是「4 字节长度 + 密文」两次 write_all：第一段是个小包，
+    // 开着 Nagle 会被攒着等 ACK（对端延迟 ACK 时单帧多出几十毫秒）。加密信道上
+    // 我们自己已经按整帧写，没有需要 Nagle 去合的小包。
+    // 注：回环实测（release 引擎、10fps×100KiB）关与不关都是 p95≈6ms —— 这条是
+    // 防御性的正确做法，不是某个具体数字的修复。
+    if let Err(e) = socket.set_nodelay(true) {
+        tracing::debug!("set_nodelay failed: {e}");
+    }
+    let remote = socket.peer_addr().ok();
+    let erased = ErasedStream::new(socket, remote);
     match tokio::time::timeout(
         handshake_timeout,
-        secure_handshake_client(socket, identity_seed, pinned_peer_public_key),
+        handshake_client_inner(erased, identity_seed, pinned_peer_public_key),
     )
     .await
     {
@@ -425,20 +566,50 @@ pub async fn handshake_client_timed(
     }
 }
 
-/// Client side of the handshake over an ALREADY-CONNECTED socket.
-pub async fn secure_handshake_client(
-    mut socket: TcpStream,
+/// Client side of the handshake over an ALREADY-CONNECTED ordered byte stream.
+///
+/// WAN callers pass a reliable UDP adapter or a relay bridge here; the
+/// cryptographic transcript is identical to the TCP path.
+pub async fn secure_handshake_client<S>(
+    socket: S,
+    identity_seed: &[u8],
+    pinned_peer_public_key: &[u8],
+) -> Result<SecureStream, LinkError>
+where
+    S: ByteStream + 'static,
+{
+    handshake_client_inner(
+        ErasedStream::new(socket, None),
+        identity_seed,
+        pinned_peer_public_key,
+    )
+    .await
+}
+
+/// Build a client handshake over a transport whose remote endpoint is already
+/// known (used by `connect_wan` after hole punching).
+pub async fn secure_handshake_client_with_remote<S>(
+    socket: S,
+    remote: SocketAddr,
+    identity_seed: &[u8],
+    pinned_peer_public_key: &[u8],
+) -> Result<SecureStream, LinkError>
+where
+    S: ByteStream + 'static,
+{
+    handshake_client_inner(
+        ErasedStream::new(socket, Some(remote)),
+        identity_seed,
+        pinned_peer_public_key,
+    )
+    .await
+}
+
+async fn handshake_client_inner(
+    mut socket: ErasedStream,
     identity_seed: &[u8],
     pinned_peer_public_key: &[u8],
 ) -> Result<SecureStream, LinkError> {
-    // 关掉 Nagle。`send` 是「4 字节长度 + 密文」两次 write_all：第一段是个小包，
-    // 开着 Nagle 会被攒着等 ACK（对端延迟 ACK 时单帧多出几十毫秒）。加密信道上
-    // 我们自己已经按整帧写，没有需要 Nagle 去合的小包。
-    // 注：回环实测（release 引擎、10fps×100KiB）关与不关都是 p95≈6ms —— 这条是
-    // 防御性的正确做法，不是某个具体数字的修复。
-    if let Err(e) = socket.set_nodelay(true) {
-        tracing::debug!("set_nodelay failed: {e}");
-    }
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
@@ -488,6 +659,7 @@ pub async fn secure_handshake_client(
         recv_counter: 0,
         in_buf: Vec::new(),
         peer_public_key: peer_key.to_vec(),
+        channel_type: crate::proto::ChannelType::LanDirect,
     })
 }
 
@@ -523,10 +695,16 @@ pub async fn accept_secure_with_timeout(
     expected_peer_public_key: Option<&[u8]>,
     handshake_timeout: std::time::Duration,
 ) -> Result<SecureStream, LinkError> {
-    let (socket, _) = listener.accept().await?;
+    let (socket, remote) = listener.accept().await?;
+    // 与客户端同一条：关掉 Nagle（原因见 `handshake_client_timed`）。
+    // 服务端这条同样重要：画面与文件的回程都从这里出去。
+    if let Err(e) = socket.set_nodelay(true) {
+        tracing::debug!("set_nodelay failed: {e}");
+    }
+    let erased = ErasedStream::new(socket, Some(remote));
     match tokio::time::timeout(
         handshake_timeout,
-        secure_handshake_server(socket, identity_seed, expected_peer_public_key),
+        handshake_server_inner(erased, identity_seed, expected_peer_public_key),
     )
     .await
     {
@@ -537,17 +715,49 @@ pub async fn accept_secure_with_timeout(
     }
 }
 
-/// Server side of the handshake over an ALREADY-ACCEPTED socket.
-pub async fn secure_handshake_server(
-    mut socket: TcpStream,
+/// Server side of the handshake over an ALREADY-CONNECTED ordered byte stream.
+///
+/// WAN callers pass a reliable UDP adapter or a relay bridge here.
+pub async fn secure_handshake_server<S>(
+    socket: S,
+    identity_seed: &[u8],
+    expected_peer_public_key: Option<&[u8]>,
+) -> Result<SecureStream, LinkError>
+where
+    S: ByteStream + 'static,
+{
+    handshake_server_inner(
+        ErasedStream::new(socket, None),
+        identity_seed,
+        expected_peer_public_key,
+    )
+    .await
+}
+
+/// Build a server handshake over a transport whose remote endpoint is already
+/// known (used by `accept_wan` after hole punching).
+pub async fn secure_handshake_server_with_remote<S>(
+    socket: S,
+    remote: SocketAddr,
+    identity_seed: &[u8],
+    expected_peer_public_key: Option<&[u8]>,
+) -> Result<SecureStream, LinkError>
+where
+    S: ByteStream + 'static,
+{
+    handshake_server_inner(
+        ErasedStream::new(socket, Some(remote)),
+        identity_seed,
+        expected_peer_public_key,
+    )
+    .await
+}
+
+async fn handshake_server_inner(
+    mut socket: ErasedStream,
     identity_seed: &[u8],
     expected_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError> {
-    // 与客户端同一条：关掉 Nagle（原因见 `secure_handshake_client`）。
-    // 服务端这条同样重要：画面与文件的回程都从这里出去。
-    if let Err(e) = socket.set_nodelay(true) {
-        tracing::debug!("set_nodelay failed: {e}");
-    }
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
@@ -610,6 +820,7 @@ pub async fn secure_handshake_server(
         recv_counter: 0,
         in_buf: Vec::new(),
         peer_public_key: peer_key.to_vec(),
+        channel_type: crate::proto::ChannelType::LanDirect,
     })
 }
 

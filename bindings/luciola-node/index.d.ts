@@ -412,6 +412,8 @@ export interface JsPairingInfo {
   publicKey?: string;
   /** Optional 6-digit on-screen comparison pin. */
   pin?: string;
+  /** Optional pre-shared key for WAN rendezvous room derivation. */
+  psk?: string;
 }
 
 /** Build the canonical pairing URI (URL-encoded). */
@@ -425,8 +427,28 @@ export function buildPairingUri(
   pin?: string | null,
 ): string;
 
-/** Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`). */
+/** Build a v3 pairing URI (with optional PSK for WAN rendezvous). */
+export function buildPairingUriV3(
+  name: string,
+  product?: string | null,
+  port: number,
+  addrs: string[],
+  fingerprint?: string | null,
+  publicKey?: string | null,
+  pin?: string | null,
+  psk?: string | null,
+): string;
+
+/** Parse a pairing URI (`luciola://pair` v1/v2/v3 or plain `http://host:port`). */
 export function parsePairingUri(uri: string): JsPairingInfo | null;
+
+/** Derive deterministic Cloudflare Worker rendezvous room ID from two public keys and optional PSK. */
+export function deriveRendezvousRoomId(
+  myPk: string,
+  peerPk: string,
+  psk?: string | null,
+  epoch?: number | null,
+): string;
 
 /**
  * NOTE: event callbacks are invoked from engine threads and MUST NOT throw —

@@ -1046,7 +1046,11 @@ public data class PairingInfo (
     /**
      * Optional 6-digit on-screen comparison pin.
      */
-    var `pin`: kotlin.String?
+    var `pin`: kotlin.String?, 
+    /**
+     * Optional pre-shared key for WAN rendezvous room derivation.
+     */
+    var `psk`: kotlin.String?
 ) {
     public companion object
 }
@@ -1199,6 +1203,33 @@ public data class TrustedDeviceInfo (
     }
     public companion object
 }
+
+
+
+
+/**
+ * The network transport channel currently backing a session.
+ */
+
+
+public enum class ChannelType {
+    
+    /**
+     * Local network direct link.
+     */
+    LAN_DIRECT,
+    /**
+     * Direct P2P connection established across WAN.
+     */
+    HOLE_PUNCHED_DIRECT,
+    /**
+     * End-to-end encrypted link relayed through an external relay server.
+     */
+    RELAY_FORWARDED;
+    public companion object
+}
+
+
 
 
 
@@ -1452,6 +1483,11 @@ public expect fun `advertisedAddresses`(): List<kotlin.String>
 public expect fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?): kotlin.String
 
 /**
+ * Build a v3 `luciola://pair` URI (carrying optional PSK for WAN rendezvous).
+ */
+public expect fun `buildPairingUriV3`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?, `psk`: kotlin.String?): kotlin.String
+
+/**
  * Normalise either callback shape into one [`ErrorInfoDto`]:
  * - `classify_error(code, Some(message))` for `on_error`;
  * - `classify_error(detail, None)` for `on_state("error", detail)`, where the
@@ -1473,6 +1509,11 @@ public expect fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotli
  * first IPv6 GUA. Feed the result into [race_connect].
  */
 public expect fun `defaultRaceCandidates`(`addresses`: List<kotlin.String>): List<kotlin.String>
+
+/**
+ * Derive a deterministic Cloudflare Worker rendezvous room ID from two public keys and an optional PSK.
+ */
+public expect fun `deriveRendezvousRoomId`(`myPk`: kotlin.String, `peerPk`: kotlin.String, `psk`: kotlin.String?, `epoch`: kotlin.ULong?): kotlin.String
 
 /**
  * Every code in the error contract, in a stable order. Use this to validate
@@ -1532,7 +1573,7 @@ public expect fun `isVirtualNic`(`name`: kotlin.String): kotlin.Boolean
 public expect fun `localCandidateAddresses`(): List<kotlin.String>
 
 /**
- * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ * Parse a pairing URI (`luciola://pair` v1/v2/v3 or plain `http://host:port`).
  */
 public expect fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo?
 

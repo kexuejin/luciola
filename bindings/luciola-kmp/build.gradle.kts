@@ -5,11 +5,21 @@ plugins {
 }
 
 group = "io.github.kexuejin"
-version = "0.10.0"
+version = "0.11.0-local.1"
 
 repositories {
+    // Official registries are always authoritative and always resolved first:
+    // a third-party mirror must never shadow a published artifact. On a
+    // constrained network where the official hosts cannot be reached, add the
+    // mirrors as opt-in *fallbacks* (they are only consulted after the official
+    // repositories have been tried):
+    //   -PluciolaUseAliyunMirrors=true
     mavenCentral()
     google()
+    if (findProperty("luciolaUseAliyunMirrors") == "true") {
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/central")
+    }
 }
 
 // ---------------------------------------------------------------------------

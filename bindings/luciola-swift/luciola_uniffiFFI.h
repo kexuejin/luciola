@@ -569,6 +569,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(RustCallStatus *_N
 RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri(RustBuffer name, RustBuffer product, uint16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer public_key, RustBuffer pin, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_BUILD_PAIRING_URI_V3
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_BUILD_PAIRING_URI_V3
+RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri_v3(RustBuffer name, RustBuffer product, uint16_t port, RustBuffer addrs, RustBuffer fingerprint, RustBuffer public_key, RustBuffer pin, RustBuffer psk, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_CLASSIFY_ERROR
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_CLASSIFY_ERROR
 RustBuffer uniffi_luciola_uniffi_fn_func_classify_error(RustBuffer code_or_detail, RustBuffer message, RustCallStatus *_Nonnull out_status
@@ -582,6 +587,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer local_pk, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
 RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DERIVE_RENDEZVOUS_ROOM_ID
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DERIVE_RENDEZVOUS_ROOM_ID
+RustBuffer uniffi_luciola_uniffi_fn_func_derive_rendezvous_room_id(RustBuffer my_pk, RustBuffer peer_pk, RustBuffer psk, RustBuffer epoch, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_ERROR_CODES
@@ -1018,6 +1028,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_build_pairing_uri(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_BUILD_PAIRING_URI_V3
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_BUILD_PAIRING_URI_V3
+uint16_t uniffi_luciola_uniffi_checksum_func_build_pairing_uri_v3(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_CLASSIFY_ERROR
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_CLASSIFY_ERROR
 uint16_t uniffi_luciola_uniffi_checksum_func_classify_error(void
@@ -1033,6 +1049,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
 uint16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DERIVE_RENDEZVOUS_ROOM_ID
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DERIVE_RENDEZVOUS_ROOM_ID
+uint16_t uniffi_luciola_uniffi_checksum_func_derive_rendezvous_room_id(void
     
 );
 #endif

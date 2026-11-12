@@ -61,6 +61,8 @@ pub enum ErrorCode {
     CapabilityMismatch,
     /// Enumerating the machine's network interfaces failed.
     NetworkQueryFailed,
+    /// A resource, bandwidth or data limit was exceeded (e.g. file size over relay).
+    QuotaExceeded,
     /// No mapping exists (or a newer engine emitted a code this host does not
     /// know). Hosts should fall back to the human-readable message.
     Unknown,
@@ -91,6 +93,7 @@ impl ErrorCode {
         Self::ProtocolViolation,
         Self::CapabilityMismatch,
         Self::NetworkQueryFailed,
+        Self::QuotaExceeded,
         Self::Unknown,
     ];
 
@@ -117,6 +120,7 @@ impl ErrorCode {
             Self::ProtocolViolation => "protocol_violation",
             Self::CapabilityMismatch => "capability_mismatch",
             Self::NetworkQueryFailed => "network_query_failed",
+            Self::QuotaExceeded => "quota_exceeded",
             Self::Unknown => "unknown",
         }
     }

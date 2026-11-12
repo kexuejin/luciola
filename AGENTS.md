@@ -66,6 +66,14 @@ check; never assume the formatter ran.
 Clippy is `-D warnings` for **all targets and all features**: `--all-features`
 is what pulls the transfer and tunnel codepaths into the lint at all.
 
+On a constrained network where `dl.google.com` terminates the TLS handshake
+(`androidx.annotation` then fails to resolve), add
+`-PluciolaUseAliyunMirrors=true` to the two Gradle commands. In
+`bindings/luciola-kmp/build.gradle.kts` the official `mavenCentral()` and
+`google()` repositories stay **first**; the opt-in mirrors are fallbacks only
+and never shadow a published artifact. Do not "fix" that resolution failure by
+moving the mirrors ahead of the official repositories.
+
 ## 3. After changing any Rust API, regenerate the bindings in the same change
 
 Rust types are the source of truth for three FFI surfaces. When a `luciola-uniffi`

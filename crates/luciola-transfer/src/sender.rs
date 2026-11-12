@@ -16,6 +16,9 @@ pub struct SenderConfig {
     pub window: usize,
     /// Re-send in-flight chunks with no ACK covering them for this long.
     pub retransmit_after: Duration,
+    /// Maximum allowed file size in bytes when transferring over a relay channel.
+    /// Defaults to 100 MiB.
+    pub relay_max_bytes: Option<u64>,
 }
 
 impl Default for SenderConfig {
@@ -24,6 +27,7 @@ impl Default for SenderConfig {
             chunk_size: 256 * 1024,
             window: 8,
             retransmit_after: Duration::from_secs(2),
+            relay_max_bytes: Some(100 * 1024 * 1024),
         }
     }
 }
@@ -98,6 +102,28 @@ impl FileSender {
             return 1.0;
         }
         (self.acked_up_to as f64) / (self.total_size as f64)
+    }
+
+    /// Check whether the file transfer is allowed under the current transport channel.
+    ///
+    /// Transfers over [`luciola_proto::ChannelType::RelayForwarded`] are gated
+    /// by [`SenderConfig::relay_max_bytes`] to prevent runaway mobile data / relay usage.
+    pub fn check_channel_policy(
+        &self,
+        channel_type: luciola_proto::ChannelType,
+    ) -> Result<(), TransferError> {
+        if channel_type == luciola_proto::ChannelType::RelayForwarded {
+            if let Some(limit) = self.config.relay_max_bytes {
+                if self.total_size > limit {
+                    return Err(TransferError::ChannelLimitExceeded {
+                        size: self.total_size,
+                        limit,
+                        channel: channel_type.as_str().to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Fill the window: read up to `window - in_flight` chunks from disk.
@@ -191,6 +217,7 @@ mod tests {
             chunk_size: 1024,
             window: 2,
             retransmit_after: Duration::from_millis(200),
+            ..Default::default()
         };
         let mut tx = FileSender::open("t", &src, cfg).await.unwrap();
 
@@ -219,6 +246,7 @@ mod tests {
             chunk_size: 1024,
             window: 4,
             retransmit_after: Duration::from_millis(50),
+            ..Default::default()
         };
         let mut tx = FileSender::open("t", &src, cfg).await.unwrap();
         let first = tx.fill_window().await.unwrap();

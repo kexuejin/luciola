@@ -11,11 +11,15 @@ pub mod link;
 pub mod pairing;
 pub mod ports;
 pub mod relay_crypto;
+pub mod stun;
+pub mod traversal;
 pub mod trust;
+pub mod wan;
 pub use luciola_net as net;
 pub use luciola_proto as proto;
 #[cfg(feature = "transfer")]
 pub use luciola_transfer as transfer;
+pub use proto::{ChannelType, RelayConfig, TraversalCandidates};
 
 mod engine;
 mod registry;

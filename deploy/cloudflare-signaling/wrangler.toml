@@ -1,0 +1,11 @@
+name = "luciola-signaling"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+[[durable_objects.bindings]]
+name = "RENDEZVOUS"
+class_name = "RendezvousRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RendezvousRoom"]

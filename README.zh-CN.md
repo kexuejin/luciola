@@ -87,6 +87,18 @@ luciola-tunnel = "0.10.0" # mux v2 转发(见下文隧道小节)
 
 - **Node.js** —— `@luciola/core` 未发布 npm;请从源码构建 `bindings/luciola-node`(见 [Node.js](#nodejs--electron))。
 
+> **本地验证构建(未公开发布)。** `0.11.0-local.1` 带 WAN/STUN 改动,**只**存在于
+> `~/.m2`,由 `scripts/publish-maven-local.sh` 产出;Maven Central 与 crates.io 上都没有。
+> WAN 数据面现已在 **Rust 核心**实现(`luciola::wan::connect_wan`:加密 WSS 会合、
+> UDP 打洞 + 可靠有序 ARQ、显式开启的加密中继兜底),但**仅 Rust 核心可用**——
+> KMP/Swift/Node 绑定面均未暴露;并且只在回环上验证过(本地 WebSocket 中继 E2E、
+> UDP ARQ 测试)。真实 NAT 现场测试、已部署的公共信令服务、移动端后台常驻、
+> 外部审计**均未完成**。见 [CHANGELOG.md](CHANGELOG.md) 的 Unreleased 小节与
+> [SECURITY.md](SECURITY.md) 的 WAN 小节。
+> 仅在专门的验证工程里把 `mavenLocal()` 放在最前,并锁定
+> `io.github.kexuejin:luciola:0.11.0-local.1`;这个独立版本号不会遮蔽已发布的
+> `0.10.0`。验证结束后移除本地仓库与该覆盖。
+
 > **0.10.0**(2026-11-05 发布),以下状态均对注册表核对过而非假设:crates.io 七个 crate 均回答 `0.10.0`;Maven Central 的 `0.10.0` 部署已 PUBLISHED,repo1 上根 Gradle module 元数据、`luciola-android` AAR、`luciola-jvm` 与两个 iOS klib 全部 200;iOS `LuciolaUniFFI-0.10.0.zip`(28,882,594 B,sha256 `3b95e3f6…cebf75`)挂在本 tag 的 release 资产上。本版带结构化错误码(`ErrorCode`/`ErrorInfo`)与 transfer CLI;破坏性变更(全部公开错误枚举 `#[non_exhaustive]`、Node discovery error 事件字段拆分)**必须重生成绑定**,见 [docs/UPGRADING.md](docs/UPGRADING.md)。
 
 ### CLI(一条命令诊断你的局域网)
@@ -196,14 +208,17 @@ luciola/
 │   ├── luciola-net/      # 网卡打分、WSL2 穿透、子网广播、设备元数据
 │   ├── luciola-proto/    # 线协议:版本化信封、抖动/去重状态机
 │   ├── luciola/          # tokio 引擎:双栈发现、路径竞速、
-│   │                     #   安全信道、信任与配对原语
+│   │                     #   安全信道、信任与配对原语、
+│   │                     #   stun / traversal / wan(仅 Rust 核心的 WAN)
 │   ├── luciola-transfer/ # 分块文件传输:偏移落盘、ACK 前缀、重传
 │   ├── luciola-tunnel/   # mux v2:TCP/UDP 多路复用、端口转发 (ssh -L/-R)、WINDOW 流控
-│   └── luciola-cli/      # ip / scan / beacon / agent / forward
-└── bindings/
-    ├── luciola-kmp/      # Kotlin Multiplatform 库(Android AAR + JVM + iOS klib)
-    ├── luciola-swift/    # Swift 绑定 + xcframework
-    └── luciola-node/     # @luciola/core (N-API)
+│   └── luciola-cli/      # ip / scan / beacon / agent / forward / transfer / stun
+├── bindings/
+│   ├── luciola-kmp/      # Kotlin Multiplatform 库(Android AAR + JVM + iOS klib)
+│   ├── luciola-swift/    # Swift 绑定 + xcframework
+│   └── luciola-node/     # @luciola/core (N-API)
+└── deploy/
+    └── cloudflare-signaling/  # WSS 会合 Worker + Durable Object(源码,未部署)
 ```
 
 ## 项目目标

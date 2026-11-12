@@ -23,6 +23,12 @@ pub async fn run_send(
     mut tx: FileSender,
     file_name: &str,
 ) -> Result<FileSender, String> {
+    // Enforce the relay quota *before* the first byte leaves the device. A
+    // relay is a billed third-party path; without this check SenderConfig's
+    // limit would exist in the type but never be applied by the real driver.
+    tx.check_channel_policy(stream.channel_type())
+        .map_err(|e| e.to_string())?;
+
     let intro = FileIntro {
         transfer_id: tx.transfer_id().to_string(),
         file_name: sanitize_name(file_name),
@@ -234,6 +240,7 @@ mod tests {
                 chunk_size: 64 * 1024,
                 window: 8,
                 retransmit_after: Duration::from_millis(200),
+                ..Default::default()
             },
         )
         .await
@@ -258,6 +265,42 @@ mod tests {
         let got = tokio::fs::read(&dest).await.unwrap();
         assert_eq!(got.len(), payload.len(), "byte count must match");
         assert_eq!(got, *payload, "bytes must match");
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// Relay 配额必须在 intro 之前生效：被拒时链路上不能出现任何数据帧。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn relay_quota_is_enforced_before_the_first_frame() {
+        let dir = std::env::temp_dir().join(format!("luciola-cli-quota-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let src = dir.join("big.bin");
+        tokio::fs::write(&src, vec![0u8; 4096]).await.unwrap();
+
+        let (mut client, mut server) = secure_pair().await;
+        client.set_channel_type(luciola_proto::ChannelType::RelayForwarded);
+        let tx = FileSender::open(
+            "quota-check",
+            &src,
+            SenderConfig {
+                relay_max_bytes: Some(1024),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let err = match run_send(client, tx, "big.bin").await {
+            Ok(_) => panic!("relay quota must deny an oversized file"),
+            Err(e) => e,
+        };
+        assert!(err.contains("exceeds limit"), "{err}");
+
+        let mut buf = Vec::new();
+        let received = tokio::time::timeout(Duration::from_secs(1), server.recv(&mut buf)).await;
+        assert!(
+            !matches!(received, Ok(Ok(()))),
+            "no intro frame may be sent before the channel quota check"
+        );
         tokio::fs::remove_dir_all(&dir).await.ok();
     }
 

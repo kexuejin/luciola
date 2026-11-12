@@ -87,6 +87,22 @@ luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
 
 - **Node.js** — `@luciola/core` is not on npm; build `bindings/luciola-node` from source (see [Node.js](#nodejs--electron)).
 
+> **Local validation build (NOT published).** `0.11.0-local.1` carries the
+> WAN/STUN work and exists **only** in `~/.m2`, produced by
+> `scripts/publish-maven-local.sh`. It is on neither Maven Central nor
+> crates.io. The WAN data plane is now implemented in the **Rust core**
+> (`luciola::wan::connect_wan`: encrypted WSS rendezvous, UDP hole punching
+> with a reliable ordered ARQ, and an opt-in encrypted relay fallback), but
+> is **Rust-core-only** — the KMP/Swift/Node surfaces do not expose it — and
+> has been verified only on loopback (local WebSocket relay E2E and UDP ARQ
+> tests). No real-NAT field test, no deployed public signaling service, no
+> mobile background presence, no external audit. See the Unreleased section of
+> [CHANGELOG.md](CHANGELOG.md) and the WAN section of [SECURITY.md](SECURITY.md).
+> Only in a dedicated validation consumer, put `mavenLocal()` first and pin
+> `io.github.kexuejin:luciola:0.11.0-local.1`; the distinct version means this
+> cannot shadow the published `0.10.0` artifact. Remove the local repo and the
+> override when validation is done.
+
 > **Released 0.10.0** (2026-11-05), checked against the registries rather than
 > assumed: crates.io answers `0.10.0` for all seven crates; the Maven Central
 > `0.10.0` deployment reached PUBLISHED with the root Gradle module metadata,
@@ -214,14 +230,17 @@ luciola/
 │   ├── luciola-net/      # NIC scoring, WSL2 passthrough, subnet broadcasts, device meta
 │   ├── luciola-proto/    # wire protocol: versioned envelopes, jitter/dedup state machine
 │   ├── luciola/          # tokio engine: dual-stack discovery, link racing,
-│   │                     #   secure channels, trust & pairing primitives
+│   │                     #   secure channels, trust & pairing primitives,
+│   │                     #   stun / traversal / wan (Rust-core-only WAN)
 │   ├── luciola-transfer/ # chunked file transfer: offset writes, ACK prefix, retransmit
 │   ├── luciola-tunnel/   # mux v2: TCP/UDP multiplexing, port forwarding (ssh -L/-R), WINDOW flow control
-│   └── luciola-cli/      # ip / scan / beacon / agent / forward
-└── bindings/
-    ├── luciola-kmp/      # Kotlin Multiplatform library (Android AAR + JVM + iOS klib)
-    ├── luciola-swift/    # Swift bindings + xcframework
-    └── luciola-node/     # @luciola/core (N-API)
+│   └── luciola-cli/      # ip / scan / beacon / agent / forward / transfer / stun
+├── bindings/
+│   ├── luciola-kmp/      # Kotlin Multiplatform library (Android AAR + JVM + iOS klib)
+│   ├── luciola-swift/    # Swift bindings + xcframework
+│   └── luciola-node/     # @luciola/core (N-API)
+└── deploy/
+    └── cloudflare-signaling/  # WSS rendezvous Worker + Durable Object (source, not deployed)
 ```
 
 ## Project Goals

@@ -18,6 +18,30 @@ async function main() {
   assert.ok(!luciola.verifyMessage(id.publicKey, Buffer.from('x'), sig), 'verify tamper');
   assert.strictEqual(luciola.identityFromSeed(id.seed).fingerprint, id.fingerprint, 'seed restore');
 
+  // WAN Traversal / Pairing v3 & Room derivation
+  const uriV3 = luciola.buildPairingUriV3(
+    'NodeClient',
+    'luciola-test',
+    18999,
+    ['192.168.1.100'],
+    id.fingerprint,
+    id.publicKey.toString('base64'),
+    '123456',
+    'secret_psk_key_123'
+  );
+  assert.ok(uriV3.includes('psk='), 'uri v3 carries psk');
+  const parsedV3 = luciola.parsePairingUri(uriV3);
+  assert.strictEqual(parsedV3.psk, 'secret_psk_key_123', 'parsed v3 psk match');
+  assert.strictEqual(parsedV3.name, 'NodeClient', 'parsed v3 name match');
+
+  const roomId1 = luciola.deriveRendezvousRoomId('pk_a', 'pk_b', 'secret_psk', 100);
+  const roomId2 = luciola.deriveRendezvousRoomId('pk_b', 'pk_a', 'secret_psk', 100);
+  assert.strictEqual(roomId1, roomId2, 'rendezvous room derivation is commutative');
+  assert.strictEqual(roomId1.length, 32, 'rendezvous room is 32-char hex');
+
+  const errorCodes = luciola.getErrorCodes();
+  assert.ok(errorCodes.includes('quota_exceeded'), 'quota_exceeded in errorCodes');
+
   // Discovery product filter (FFI surface): a host must be able to ignore
   // peers of another luciola product sharing the same discovery port.
   const dgram = require('node:dgram');

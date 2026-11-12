@@ -113,6 +113,25 @@ enum Commands {
         #[command(subcommand)]
         action: TransferCommands,
     },
+    /// Probe the public STUN reflexive address of one UDP binding
+    Stun {
+        /// STUN servers to query
+        #[arg(short, long, default_values_t = default_stun_servers())]
+        servers: Vec<String>,
+        /// Probe over IPv6 instead of IPv4
+        #[arg(short = '6', long)]
+        ipv6: bool,
+        /// Overall probe budget in seconds
+        #[arg(long, default_value_t = 8)]
+        timeout_secs: u64,
+    },
+}
+
+fn default_stun_servers() -> Vec<String> {
+    luciola::stun::DEFAULT_STUN_SERVERS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[derive(Subcommand)]
@@ -676,6 +695,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("short_pin={}", id.short_pin);
             }
         },
+        Commands::Stun {
+            servers,
+            ipv6,
+            timeout_secs,
+        } => {
+            let bind_addr = if ipv6 { "[::]:0" } else { "0.0.0.0:0" };
+            let socket = tokio::net::UdpSocket::bind(bind_addr).await?;
+            let local_port = socket.local_addr()?.port();
+            println!(
+                "🔍 Probing STUN reflexive address via {}...",
+                if ipv6 { "IPv6" } else { "IPv4" }
+            );
+            println!("  Local bound port: {}", local_port);
+            let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
+            // Failure must be a non-zero exit, not a silent success.
+            let public_addr = tokio::time::timeout(
+                Duration::from_secs(timeout_secs),
+                luciola::stun::query_public_address(&socket, &server_refs),
+            )
+            .await
+            .map_err(|_| format!("STUN query timed out after {timeout_secs}s"))?
+            .map_err(|e| format!("STUN query failed: {e}"))?;
+
+            println!("✅ STUN probe successful!");
+            println!("  Public Reflected Address: {}", public_addr);
+            if public_addr.port() == local_port {
+                println!("  Port mapping: external port preserved on this binding");
+            } else {
+                println!(
+                    "  Port mapping: rewritten from {} to {} on this binding",
+                    local_port,
+                    public_addr.port()
+                );
+            }
+            // A single Binding response says nothing about filtering or about
+            // whether the mapping is reused for a different destination.
+            println!(
+                "  Note: one response reveals ONE mapped endpoint only. It cannot classify the \
+                 NAT as endpoint-independent/address-dependent/port-dependent; that needs \
+                 probes against two different servers and/or ports (RFC 5780)."
+            );
+        }
     }
 
     Ok(())

@@ -1545,6 +1545,10 @@ internal val UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByValue.`un
 
 
 
+
+
+
+
 internal object UniffiLib {
     init {
             uniffiCallbackInterfaceLogSink.register(this)
@@ -1984,6 +1988,27 @@ internal object UniffiLib {
         `pin`,
         uniffiCallStatus,
     )
+    fun uniffi_luciola_uniffi_fn_func_build_pairing_uri_v3(
+        `name`: RustBufferByValue,
+        `product`: RustBufferByValue,
+        `port`: Short,
+        `addrs`: RustBufferByValue,
+        `fingerprint`: RustBufferByValue,
+        `publicKey`: RustBufferByValue,
+        `pin`: RustBufferByValue,
+        `psk`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_build_pairing_uri_v3(
+        `name`,
+        `product`,
+        `port`,
+        `addrs`,
+        `fingerprint`,
+        `publicKey`,
+        `pin`,
+        `psk`,
+        uniffiCallStatus,
+    )
     fun uniffi_luciola_uniffi_fn_func_classify_error(
         `codeOrDetail`: RustBufferByValue,
         `message`: RustBufferByValue,
@@ -2007,6 +2032,19 @@ internal object UniffiLib {
         uniffiCallStatus: UniffiRustCallStatus,
     ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_default_race_candidates(
         `addresses`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_derive_rendezvous_room_id(
+        `myPk`: RustBufferByValue,
+        `peerPk`: RustBufferByValue,
+        `psk`: RustBufferByValue,
+        `epoch`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_derive_rendezvous_room_id(
+        `myPk`,
+        `peerPk`,
+        `psk`,
+        `epoch`,
         uniffiCallStatus,
     )
     fun uniffi_luciola_uniffi_fn_func_error_codes(
@@ -2606,6 +2644,9 @@ internal object UniffiLib {
     fun uniffi_luciola_uniffi_checksum_func_build_pairing_uri(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_build_pairing_uri(
     )
+    fun uniffi_luciola_uniffi_checksum_func_build_pairing_uri_v3(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_build_pairing_uri_v3(
+    )
     fun uniffi_luciola_uniffi_checksum_func_classify_error(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_classify_error(
     )
@@ -2614,6 +2655,9 @@ internal object UniffiLib {
     )
     fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_default_race_candidates(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_derive_rendezvous_room_id(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_derive_rendezvous_room_id(
     )
     fun uniffi_luciola_uniffi_checksum_func_error_codes(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_error_codes(
@@ -4393,6 +4437,7 @@ public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -4403,7 +4448,8 @@ public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
             FfiConverterSequenceString.allocationSize(value.`addrs`) +
             FfiConverterOptionalString.allocationSize(value.`fingerprint`) +
             FfiConverterOptionalString.allocationSize(value.`publicKey`) +
-            FfiConverterOptionalString.allocationSize(value.`pin`)
+            FfiConverterOptionalString.allocationSize(value.`pin`) +
+            FfiConverterOptionalString.allocationSize(value.`psk`)
     )
 
     override fun write(value: PairingInfo, buf: ByteBuffer) {
@@ -4414,6 +4460,7 @@ public object FfiConverterTypePairingInfo: FfiConverterRustBuffer<PairingInfo> {
         FfiConverterOptionalString.write(value.`fingerprint`, buf)
         FfiConverterOptionalString.write(value.`publicKey`, buf)
         FfiConverterOptionalString.write(value.`pin`, buf)
+        FfiConverterOptionalString.write(value.`psk`, buf)
     }
 }
 
@@ -4517,6 +4564,24 @@ public object FfiConverterTypeTrustedDeviceInfo: FfiConverterRustBuffer<TrustedD
         FfiConverterString.write(value.`fingerprint`, buf)
         FfiConverterTypeTrustLevel.write(value.`level`, buf)
         FfiConverterULong.write(value.`pinnedAtMs`, buf)
+    }
+}
+
+
+
+
+
+public object FfiConverterTypeChannelType: FfiConverterRustBuffer<ChannelType> {
+    override fun read(buf: ByteBuffer): ChannelType = try {
+        ChannelType.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: ChannelType): ULong = 4UL
+
+    override fun write(value: ChannelType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
     }
 }
 
@@ -5447,6 +5512,25 @@ public actual fun `buildPairingUri`(`name`: kotlin.String, `product`: kotlin.Str
 }
 
 /**
+ * Build a v3 `luciola://pair` URI (carrying optional PSK for WAN rendezvous).
+ */
+public actual fun `buildPairingUriV3`(`name`: kotlin.String, `product`: kotlin.String?, `port`: kotlin.UShort, `addrs`: List<kotlin.String>, `fingerprint`: kotlin.String?, `publicKey`: kotlin.String?, `pin`: kotlin.String?, `psk`: kotlin.String?): kotlin.String {
+    return FfiConverterString.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_build_pairing_uri_v3(
+            FfiConverterString.lower(`name`),
+            FfiConverterOptionalString.lower(`product`),
+            FfiConverterUShort.lower(`port`),
+            FfiConverterSequenceString.lower(`addrs`),
+            FfiConverterOptionalString.lower(`fingerprint`),
+            FfiConverterOptionalString.lower(`publicKey`),
+            FfiConverterOptionalString.lower(`pin`),
+            FfiConverterOptionalString.lower(`psk`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
  * Normalise either callback shape into one [`ErrorInfoDto`]:
  * - `classify_error(code, Some(message))` for `on_error`;
  * - `classify_error(detail, None)` for `on_state("error", detail)`, where the
@@ -5487,6 +5571,21 @@ public actual fun `defaultRaceCandidates`(`addresses`: List<kotlin.String>): Lis
     return FfiConverterSequenceString.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_default_race_candidates(
             FfiConverterSequenceString.lower(`addresses`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Derive a deterministic Cloudflare Worker rendezvous room ID from two public keys and an optional PSK.
+ */
+public actual fun `deriveRendezvousRoomId`(`myPk`: kotlin.String, `peerPk`: kotlin.String, `psk`: kotlin.String?, `epoch`: kotlin.ULong?): kotlin.String {
+    return FfiConverterString.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_derive_rendezvous_room_id(
+            FfiConverterString.lower(`myPk`),
+            FfiConverterString.lower(`peerPk`),
+            FfiConverterOptionalString.lower(`psk`),
+            FfiConverterOptionalULong.lower(`epoch`),
             uniffiRustCallStatus,
         )
     })
@@ -5624,7 +5723,7 @@ public actual fun `localCandidateAddresses`(): List<kotlin.String> {
 }
 
 /**
- * Parse a pairing URI (`luciola://pair` v1/v2 or plain `http://host:port`).
+ * Parse a pairing URI (`luciola://pair` v1/v2/v3 or plain `http://host:port`).
  */
 public actual fun `parsePairingUri`(`uri`: kotlin.String): PairingInfo? {
     return FfiConverterOptionalTypePairingInfo.lift(uniffiRustCall { uniffiRustCallStatus ->

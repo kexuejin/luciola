@@ -436,6 +436,92 @@ impl AliveDedupTracker {
     }
 }
 
+/// The network transport channel currently backing a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ChannelType {
+    /// Local network direct link (LAN multicast/unicast, maximum bandwidth).
+    LanDirect = 0,
+    /// Direct P2P connection established across WAN (IPv6 GUA or UDP hole punch).
+    HolePunchedDirect = 1,
+    /// End-to-end encrypted link relayed through an external relay server.
+    RelayForwarded = 2,
+}
+
+impl ChannelType {
+    /// Text label for diagnostics and UI status.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChannelType::LanDirect => "lan_direct",
+            ChannelType::HolePunchedDirect => "hole_punched_direct",
+            ChannelType::RelayForwarded => "relay_forwarded",
+        }
+    }
+}
+
+/// Configuration for relay fallback and WAN traversal policy.
+///
+/// Consumed by `luciola::wan::connect_wan` (Rust core tier only — the KMP,
+/// Swift and Node surfaces do not expose WAN establishment yet). Both opt-in
+/// flags are `false` by default: no third-party signalling contact and no
+/// relay fallback happen until the embedder enables them after its own trust
+/// decision (see SECURITY.md). `WanConfig::enable_hole_punching = false`
+/// additionally skips the public STUN query for relay-only validation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayConfig {
+    /// Whether relay fallback is permitted when direct P2P connections fail.
+    /// Must be enabled explicitly; `false` enforces Strict Direct-Only mode.
+    pub allow_relay: bool,
+    /// Whether public WAN signaling rendezvous is permitted.
+    /// Must be enabled explicitly — third-party signalling sees public keys,
+    /// public IP addresses and online times.
+    pub allow_wan_signaling: bool,
+    /// Reserved for future dedicated relay endpoints. The current
+    /// `connect_wan` orchestrator reuses the already-authenticated signalling
+    /// WebSocket as the relay transport and does not read this field; the
+    /// endpoint to connect to is `WanConfig::signaling_endpoint`.
+    pub relay_endpoints: Vec<String>,
+    /// Timeout in milliseconds for the signalling WebSocket connect (clamped
+    /// to a 500 ms floor by `connect_wan`).
+    pub connection_timeout_ms: u64,
+}
+
+/// Network candidates gathered by a node for WAN/NAT traversal and candidate exchange.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraversalCandidates {
+    /// Node identity public key (hex-encoded Ed25519 public key).
+    pub public_key: String,
+    /// Local LAN IPv4 addresses (ordered by interface score).
+    pub lan_ipv4: Vec<String>,
+    /// Global Unicast IPv6 addresses (GUA).
+    pub ipv6_gua: Vec<String>,
+    /// STUN server-reflexive address ("ip:port"), if resolved.
+    ///
+    /// The **port is part of the candidate**: it is the NAT-mapped UDP port of
+    /// the socket that will carry the punched data plane. Discarding it and
+    /// dialling `tcp_port` against the reflexive IP cannot work.
+    pub srflx: Option<String>,
+    /// The TCP port on which the node accepts LAN SecureStream connections.
+    pub tcp_port: u16,
+    /// UDP port of the socket used for STUN, hole punching and the WAN data
+    /// plane. All three MUST be the same binding or the NAT mapping is lost.
+    #[serde(default)]
+    pub udp_port: u16,
+}
+
+impl Default for RelayConfig {
+    /// Deny-by-default: no third-party signalling and no relay unless the
+    /// embedder opts in after its own trust decision.
+    fn default() -> Self {
+        Self {
+            allow_relay: false,
+            allow_wan_signaling: false,
+            relay_endpoints: Vec::new(),
+            connection_timeout_ms: 3000,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
