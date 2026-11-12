@@ -21,6 +21,161 @@ pub const BINDING_ERROR_RESPONSE: u16 = 0x0111;
 pub const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 /// Attribute type: MAPPED-ADDRESS (RFC 3489 compatibility).
 pub const ATTR_MAPPED_ADDRESS: u16 = 0x0001;
+/// Attribute type: CHANGE-REQUEST (RFC 5780 / RFC 3489).
+pub const ATTR_CHANGE_REQUEST: u16 = 0x0003;
+/// Attribute type: RESPONSE-ORIGIN (RFC 5780).
+pub const ATTR_RESPONSE_ORIGIN: u16 = 0x802b;
+/// Attribute type: OTHER-ADDRESS (RFC 5780).
+pub const ATTR_OTHER_ADDRESS: u16 = 0x802c;
+
+/// RFC 5780 NAT Mapping Behavior classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum NatMappingBehavior {
+    /// No NAT translation: local address equals reflexive address.
+    DirectOpen,
+    /// Endpoint-Independent Mapping: reflexive endpoint is constant across all destinations.
+    EndpointIndependent,
+    /// Address-Dependent Mapping: reflexive endpoint depends on target IP.
+    AddressDependent,
+    /// Address and Port-Dependent Mapping: reflexive endpoint changes for each target (Symmetric NAT).
+    AddressAndPortDependent,
+    /// Behavior could not be determined conclusively.
+    Unknown,
+}
+
+impl NatMappingBehavior {
+    /// Human-readable label for diagnostics.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NatMappingBehavior::DirectOpen => "Direct (No NAT)",
+            NatMappingBehavior::EndpointIndependent => "Endpoint-Independent (Cone)",
+            NatMappingBehavior::AddressDependent => "Address-Dependent",
+            NatMappingBehavior::AddressAndPortDependent => "Address-and-Port-Dependent (Symmetric)",
+            NatMappingBehavior::Unknown => "Unknown",
+        }
+    }
+}
+
+/// RFC 5780 NAT Filtering Behavior classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum NatFilteringBehavior {
+    /// No filtering applied (Direct / Open Internet).
+    DirectOpen,
+    /// Endpoint-Independent Filtering (Full Cone: any external host can send inbound).
+    EndpointIndependent,
+    /// Address-Dependent Filtering (Restricted Cone: external host must have received an outbound packet).
+    AddressDependent,
+    /// Address and Port-Dependent Filtering (Port-Restricted Cone).
+    AddressAndPortDependent,
+    /// Filtering behavior could not be determined conclusively.
+    Unknown,
+}
+
+impl NatFilteringBehavior {
+    /// Human-readable label for diagnostics.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NatFilteringBehavior::DirectOpen => "Direct (No Filtering)",
+            NatFilteringBehavior::EndpointIndependent => "Endpoint-Independent (Full Cone)",
+            NatFilteringBehavior::AddressDependent => "Address-Dependent (Restricted Cone)",
+            NatFilteringBehavior::AddressAndPortDependent => {
+                "Address-and-Port-Dependent (Port Restricted)"
+            }
+            NatFilteringBehavior::Unknown => "Unknown",
+        }
+    }
+}
+
+/// High-level NAT topology classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum NatClassification {
+    /// Direct public internet or native IPv6.
+    OpenInternet = 1,
+    /// Full cone NAT: inbound packets from any remote IP/port accepted.
+    FullCone = 2,
+    /// Address-restricted cone NAT: inbound accepted only from visited IP.
+    RestrictedCone = 3,
+    /// Port-restricted cone NAT: inbound accepted only from visited IP:Port.
+    PortRestrictedCone = 4,
+    /// Symmetric NAT: separate mapping per destination; P2P punch probability ~0%.
+    Symmetric = 5,
+    /// Unknown or unresolved.
+    Unknown = 0,
+}
+
+impl NatClassification {
+    /// Convert numeric code to enum.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => NatClassification::OpenInternet,
+            2 => NatClassification::FullCone,
+            3 => NatClassification::RestrictedCone,
+            4 => NatClassification::PortRestrictedCone,
+            5 => NatClassification::Symmetric,
+            _ => NatClassification::Unknown,
+        }
+    }
+
+    /// Human-readable diagnosis.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NatClassification::OpenInternet => "Open Internet",
+            NatClassification::FullCone => "Full Cone",
+            NatClassification::RestrictedCone => "Restricted Cone",
+            NatClassification::PortRestrictedCone => "Port-Restricted Cone",
+            NatClassification::Symmetric => "Symmetric NAT",
+            NatClassification::Unknown => "Unknown",
+        }
+    }
+}
+
+/// Diagnostic report detailing local NAT characteristics.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NatReport {
+    /// Local socket binding address.
+    pub local_addr: SocketAddr,
+    /// Server-reflexive public endpoint (if discovered).
+    pub reflexive_addr: Option<SocketAddr>,
+    /// NAT mapping behavior.
+    pub mapping: NatMappingBehavior,
+    /// NAT filtering behavior.
+    pub filtering: NatFilteringBehavior,
+}
+
+impl NatReport {
+    /// Derive overall classification from mapping and filtering behavior.
+    pub fn classification(&self) -> NatClassification {
+        if self.mapping == NatMappingBehavior::DirectOpen {
+            return NatClassification::OpenInternet;
+        }
+        if self.mapping == NatMappingBehavior::AddressAndPortDependent {
+            return NatClassification::Symmetric;
+        }
+        match self.filtering {
+            NatFilteringBehavior::EndpointIndependent => NatClassification::FullCone,
+            NatFilteringBehavior::AddressDependent => NatClassification::RestrictedCone,
+            NatFilteringBehavior::AddressAndPortDependent => NatClassification::PortRestrictedCone,
+            _ => {
+                if self.mapping == NatMappingBehavior::EndpointIndependent {
+                    NatClassification::RestrictedCone
+                } else {
+                    NatClassification::Unknown
+                }
+            }
+        }
+    }
+}
+
+/// Parsed attributes from a STUN Binding response.
+#[derive(Debug, Clone)]
+pub struct StunResponseDetails {
+    /// Reflexive public endpoint.
+    pub mapped_address: SocketAddr,
+    /// Address from which the response was sent (RESPONSE-ORIGIN).
+    pub response_origin: Option<SocketAddr>,
+    /// Alternative address and port available on the STUN server (OTHER-ADDRESS).
+    pub other_address: Option<SocketAddr>,
+}
 
 /// Default verified public STUN server endpoints.
 pub const DEFAULT_STUN_SERVERS: &[&str] = &[
@@ -63,11 +218,55 @@ pub fn build_binding_request(transaction_id: [u8; 12]) -> [u8; 20] {
     req
 }
 
-/// Parses a STUN Binding Success Response buffer and extracts the public mapped address.
-pub fn parse_binding_response(
+/// Builds an RFC 5780 Binding Request message with CHANGE-REQUEST attribute.
+pub fn build_binding_request_with_change(
+    transaction_id: [u8; 12],
+    change_ip: bool,
+    change_port: bool,
+) -> Vec<u8> {
+    let mut req = Vec::with_capacity(28);
+    req.extend_from_slice(&BINDING_REQUEST.to_be_bytes());
+    req.extend_from_slice(&8u16.to_be_bytes()); // Attribute total length: 4 (header) + 4 (val) = 8
+    req.extend_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+    req.extend_from_slice(&transaction_id);
+
+    req.extend_from_slice(&ATTR_CHANGE_REQUEST.to_be_bytes());
+    req.extend_from_slice(&4u16.to_be_bytes());
+    let mut flags = 0u32;
+    if change_ip {
+        flags |= 0x04;
+    }
+    if change_port {
+        flags |= 0x02;
+    }
+    req.extend_from_slice(&flags.to_be_bytes());
+    req
+}
+
+fn parse_sockaddr_raw(attr_val: &[u8]) -> Option<SocketAddr> {
+    if attr_val.len() < 8 {
+        return None;
+    }
+    let family = attr_val[1];
+    let port = u16::from_be_bytes([attr_val[2], attr_val[3]]);
+    if family == 0x01 && attr_val.len() >= 8 {
+        let ip = Ipv4Addr::new(attr_val[4], attr_val[5], attr_val[6], attr_val[7]);
+        Some(SocketAddr::V4(SocketAddrV4::new(ip, port)))
+    } else if family == 0x02 && attr_val.len() >= 20 {
+        let mut ip_bytes = [0u8; 16];
+        ip_bytes.copy_from_slice(&attr_val[4..20]);
+        let ip = Ipv6Addr::from(ip_bytes);
+        Some(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)))
+    } else {
+        None
+    }
+}
+
+/// Parses a STUN Binding Success Response buffer and extracts detailed attributes (RFC 5780).
+pub fn parse_detailed_binding_response(
     buf: &[u8],
     expected_transaction_id: &[u8; 12],
-) -> Result<SocketAddr, StunError> {
+) -> Result<StunResponseDetails, StunError> {
     if buf.len() < 20 {
         return Err(StunError::InvalidHeader);
     }
@@ -86,9 +285,6 @@ pub fn parse_binding_response(
     {
         return Err(StunError::InvalidHeader);
     }
-    // STUN message lengths are always a multiple of 4, and a truncated body
-    // must be rejected rather than silently clamped (which could let a
-    // truncated attribute be mistaken for a valid mapped address).
     if !msg_len.is_multiple_of(4) || 20usize.saturating_add(msg_len) > buf.len() {
         return Err(StunError::InvalidHeader);
     }
@@ -96,7 +292,10 @@ pub fn parse_binding_response(
     let attr_end = 20 + msg_len;
     let mut offset = 20;
 
+    let mut xor_mapped_addr = None;
     let mut fallback_mapped_addr = None;
+    let mut response_origin = None;
+    let mut other_address = None;
 
     while offset + 4 <= attr_end {
         let attr_type = u16::from_be_bytes([buf[offset], buf[offset + 1]]);
@@ -115,13 +314,11 @@ pub fn parse_binding_response(
             let port = xor_port ^ (STUN_MAGIC_COOKIE >> 16) as u16;
 
             if family == 0x01 && attr_len >= 8 {
-                // IPv4: 4 bytes
                 let xor_ip =
                     u32::from_be_bytes([attr_val[4], attr_val[5], attr_val[6], attr_val[7]]);
                 let ip = Ipv4Addr::from(xor_ip ^ STUN_MAGIC_COOKIE);
-                return Ok(SocketAddr::V4(SocketAddrV4::new(ip, port)));
+                xor_mapped_addr = Some(SocketAddr::V4(SocketAddrV4::new(ip, port)));
             } else if family == 0x02 && attr_len >= 20 {
-                // IPv6: 16 bytes. XOR key is (magic || transaction_id)
                 let mut xor_key = [0u8; 16];
                 xor_key[0..4].copy_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
                 xor_key[4..16].copy_from_slice(expected_transaction_id);
@@ -131,27 +328,37 @@ pub fn parse_binding_response(
                     ip_bytes[i] = attr_val[4 + i] ^ xor_key[i];
                 }
                 let ip = Ipv6Addr::from(ip_bytes);
-                return Ok(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)));
+                xor_mapped_addr = Some(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)));
             }
         } else if attr_type == ATTR_MAPPED_ADDRESS && attr_len >= 8 {
-            let family = attr_val[1];
-            let port = u16::from_be_bytes([attr_val[2], attr_val[3]]);
-            if family == 0x01 && attr_len >= 8 {
-                let ip = Ipv4Addr::new(attr_val[4], attr_val[5], attr_val[6], attr_val[7]);
-                fallback_mapped_addr = Some(SocketAddr::V4(SocketAddrV4::new(ip, port)));
-            } else if family == 0x02 && attr_len >= 20 {
-                let mut ip_bytes = [0u8; 16];
-                ip_bytes.copy_from_slice(&attr_val[4..20]);
-                let ip = Ipv6Addr::from(ip_bytes);
-                fallback_mapped_addr = Some(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)));
-            }
+            fallback_mapped_addr = parse_sockaddr_raw(attr_val);
+        } else if attr_type == ATTR_RESPONSE_ORIGIN && attr_len >= 8 {
+            response_origin = parse_sockaddr_raw(attr_val);
+        } else if attr_type == ATTR_OTHER_ADDRESS && attr_len >= 8 {
+            other_address = parse_sockaddr_raw(attr_val);
         }
 
         // Align attribute to 4-byte boundary
         offset += (attr_len + 3) & !3;
     }
 
-    fallback_mapped_addr.ok_or(StunError::AddressNotFound)
+    let mapped_address = xor_mapped_addr
+        .or(fallback_mapped_addr)
+        .ok_or(StunError::AddressNotFound)?;
+
+    Ok(StunResponseDetails {
+        mapped_address,
+        response_origin,
+        other_address,
+    })
+}
+
+/// Parses a STUN Binding Success Response buffer and extracts the public mapped address.
+pub fn parse_binding_response(
+    buf: &[u8],
+    expected_transaction_id: &[u8; 12],
+) -> Result<SocketAddr, StunError> {
+    parse_detailed_binding_response(buf, expected_transaction_id).map(|d| d.mapped_address)
 }
 
 /// Discovers the public reflexive socket address by querying the given STUN servers.
@@ -249,6 +456,224 @@ pub async fn query_public_address(
     } else {
         Err(StunError::Timeout)
     }
+}
+
+async fn query_stun_target(
+    socket: &UdpSocket,
+    target_addr: SocketAddr,
+    req_bytes: &[u8],
+    expected_tid: &[u8; 12],
+    timeout_duration: Duration,
+    verify_source: bool,
+) -> Result<StunResponseDetails, StunError> {
+    socket.send_to(req_bytes, target_addr).await?;
+    let deadline = Instant::now() + timeout_duration;
+    let mut buf = [0u8; 512];
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+            Ok(Ok((len, from))) => {
+                if !verify_source || from == target_addr {
+                    if let Ok(details) = parse_detailed_binding_response(&buf[..len], expected_tid)
+                    {
+                        return Ok(details);
+                    }
+                }
+            }
+            Ok(Err(e)) => return Err(StunError::Io(e)),
+            Err(_) => break,
+        }
+    }
+    Err(StunError::Timeout)
+}
+
+/// Discovers RFC 5780 NAT mapping and filtering behavior using multi-server or multi-attribute probes.
+pub async fn probe_nat_behavior(
+    socket: &UdpSocket,
+    servers: &[&str],
+) -> Result<NatReport, StunError> {
+    let local_addr = socket.local_addr()?;
+    let is_v4 = local_addr.is_ipv4();
+
+    let mut resolved_servers: Vec<SocketAddr> = Vec::new();
+    for &server in servers {
+        if let Ok(addrs) = tokio::net::lookup_host(server).await {
+            if let Some(target) = addrs.into_iter().find(|a| a.is_ipv4() == is_v4) {
+                if !resolved_servers.contains(&target) {
+                    resolved_servers.push(target);
+                }
+            }
+        }
+    }
+    if resolved_servers.is_empty() {
+        return Err(StunError::ResolveFailed(
+            "could not resolve STUN servers".into(),
+        ));
+    }
+
+    let primary_server = resolved_servers[0];
+
+    // --- TEST I: Query primary server ---
+    let mut tid_1 = [0u8; 12];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_1);
+    let req_1 = build_binding_request(tid_1);
+    let resp_1 = query_stun_target(
+        socket,
+        primary_server,
+        &req_1,
+        &tid_1,
+        Duration::from_millis(1500),
+        true,
+    )
+    .await?;
+
+    let reflexive_addr = resp_1.mapped_address;
+
+    // Check if open internet (local IP matches reflexive IP)
+    let is_open_internet = if local_addr.ip() == reflexive_addr.ip() {
+        true
+    } else {
+        let local_ips: Vec<_> = luciola_net::NetworkDetector::local_candidate_addresses();
+        local_ips
+            .iter()
+            .any(|ip| ip == &reflexive_addr.ip().to_string())
+    };
+
+    if is_open_internet {
+        return Ok(NatReport {
+            local_addr,
+            reflexive_addr: Some(reflexive_addr),
+            mapping: NatMappingBehavior::DirectOpen,
+            filtering: NatFilteringBehavior::DirectOpen,
+        });
+    }
+
+    // --- MAPPING BEHAVIOR TEST ---
+    let mapping = if let Some(other_addr) = resp_1.other_address {
+        let mut target_alt = other_addr;
+        target_alt.set_port(primary_server.port());
+
+        let mut tid_map = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_map);
+        let req_map = build_binding_request(tid_map);
+        match query_stun_target(
+            socket,
+            target_alt,
+            &req_map,
+            &tid_map,
+            Duration::from_millis(1200),
+            true,
+        )
+        .await
+        {
+            Ok(resp_map) => {
+                if resp_map.mapped_address.port() == reflexive_addr.port()
+                    && resp_map.mapped_address.ip() == reflexive_addr.ip()
+                {
+                    NatMappingBehavior::EndpointIndependent
+                } else {
+                    let mut tid_map3 = [0u8; 12];
+                    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_map3);
+                    let req_map3 = build_binding_request(tid_map3);
+                    match query_stun_target(
+                        socket,
+                        other_addr,
+                        &req_map3,
+                        &tid_map3,
+                        Duration::from_millis(1200),
+                        true,
+                    )
+                    .await
+                    {
+                        Ok(resp_map3) => {
+                            if resp_map3.mapped_address.port() == resp_map.mapped_address.port() {
+                                NatMappingBehavior::AddressDependent
+                            } else {
+                                NatMappingBehavior::AddressAndPortDependent
+                            }
+                        }
+                        Err(_) => NatMappingBehavior::AddressAndPortDependent,
+                    }
+                }
+            }
+            Err(_) => NatMappingBehavior::EndpointIndependent,
+        }
+    } else if resolved_servers.len() > 1 {
+        let secondary_server = resolved_servers[1];
+        let mut tid_2 = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_2);
+        let req_2 = build_binding_request(tid_2);
+        match query_stun_target(
+            socket,
+            secondary_server,
+            &req_2,
+            &tid_2,
+            Duration::from_millis(1500),
+            true,
+        )
+        .await
+        {
+            Ok(resp_2) => {
+                if resp_2.mapped_address.port() == reflexive_addr.port()
+                    && resp_2.mapped_address.ip() == reflexive_addr.ip()
+                {
+                    NatMappingBehavior::EndpointIndependent
+                } else {
+                    NatMappingBehavior::AddressAndPortDependent
+                }
+            }
+            Err(_) => NatMappingBehavior::EndpointIndependent,
+        }
+    } else {
+        NatMappingBehavior::EndpointIndependent
+    };
+
+    // --- FILTERING BEHAVIOR TEST ---
+    // Test II: Send CHANGE-REQUEST (change IP + change Port)
+    let mut tid_f2 = [0u8; 12];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_f2);
+    let req_f2 = build_binding_request_with_change(tid_f2, true, true);
+    let filtering = match query_stun_target(
+        socket,
+        primary_server,
+        &req_f2,
+        &tid_f2,
+        Duration::from_millis(600),
+        false,
+    )
+    .await
+    {
+        Ok(_) => NatFilteringBehavior::EndpointIndependent,
+        Err(_) => {
+            // Test III: Send CHANGE-REQUEST (change Port only)
+            let mut tid_f3 = [0u8; 12];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_f3);
+            let req_f3 = build_binding_request_with_change(tid_f3, false, true);
+            match query_stun_target(
+                socket,
+                primary_server,
+                &req_f3,
+                &tid_f3,
+                Duration::from_millis(600),
+                false,
+            )
+            .await
+            {
+                Ok(_) => NatFilteringBehavior::AddressDependent,
+                Err(_) => NatFilteringBehavior::AddressAndPortDependent,
+            }
+        }
+    };
+
+    Ok(NatReport {
+        local_addr,
+        reflexive_addr: Some(reflexive_addr),
+        mapping,
+        filtering,
+    })
 }
 
 #[cfg(test)]

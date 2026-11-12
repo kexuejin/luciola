@@ -3355,6 +3355,10 @@ public enum ChannelType {
      * End-to-end encrypted link relayed through an external relay server.
      */
     case relayForwarded
+    /**
+     * Physical direct link via Android Debug Bridge over USB bus.
+     */
+    case usbAdbDirect
 }
 
 
@@ -3378,6 +3382,8 @@ public struct FfiConverterTypeChannelType: FfiConverterRustBuffer {
         
         case 3: return .relayForwarded
         
+        case 4: return .usbAdbDirect
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3396,6 +3402,10 @@ public struct FfiConverterTypeChannelType: FfiConverterRustBuffer {
         
         case .relayForwarded:
             writeInt(&buf, Int32(3))
+        
+        
+        case .usbAdbDirect:
+            writeInt(&buf, Int32(4))
         
         }
     }

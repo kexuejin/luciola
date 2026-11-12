@@ -446,6 +446,8 @@ pub enum ChannelType {
     HolePunchedDirect = 1,
     /// End-to-end encrypted link relayed through an external relay server.
     RelayForwarded = 2,
+    /// Physical link via Android Debug Bridge (ADB reverse/forward) over USB bus.
+    UsbAdbDirect = 3,
 }
 
 impl ChannelType {
@@ -455,6 +457,7 @@ impl ChannelType {
             ChannelType::LanDirect => "lan_direct",
             ChannelType::HolePunchedDirect => "hole_punched_direct",
             ChannelType::RelayForwarded => "relay_forwarded",
+            ChannelType::UsbAdbDirect => "usb_adb_direct",
         }
     }
 }
@@ -507,6 +510,10 @@ pub struct TraversalCandidates {
     /// plane. All three MUST be the same binding or the NAT mapping is lost.
     #[serde(default)]
     pub udp_port: u16,
+    /// NAT mapping behavior classification (RFC 5780):
+    /// 0=Unknown, 1=OpenInternet, 2=FullCone, 3=RestrictedCone, 4=PortRestrictedCone, 5=Symmetric.
+    #[serde(default)]
+    pub nat_type: u8,
 }
 
 impl Default for RelayConfig {

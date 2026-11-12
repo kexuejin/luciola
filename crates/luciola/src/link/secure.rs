@@ -239,6 +239,7 @@ impl SecureStream {
                 0 => crate::proto::ChannelType::LanDirect,
                 1 => crate::proto::ChannelType::HolePunchedDirect,
                 2 => crate::proto::ChannelType::RelayForwarded,
+                3 => crate::proto::ChannelType::UsbAdbDirect,
                 _ => self.channel_type,
             }
         } else {

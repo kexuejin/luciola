@@ -234,6 +234,7 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
             srflx: None,
             tcp_port: config.tcp_port,
             udp_port: 0,
+            nat_type: 0,
         },
     };
     let local_wire = serde_json::to_vec(&local_candidates)

@@ -1225,7 +1225,11 @@ public enum class ChannelType {
     /**
      * End-to-end encrypted link relayed through an external relay server.
      */
-    RELAY_FORWARDED;
+    RELAY_FORWARDED,
+    /**
+     * Physical direct link via Android Debug Bridge over USB bus.
+     */
+    USB_ADB_DIRECT;
     public companion object
 }
 

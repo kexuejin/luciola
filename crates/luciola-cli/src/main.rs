@@ -124,6 +124,9 @@ enum Commands {
         /// Overall probe budget in seconds
         #[arg(long, default_value_t = 8)]
         timeout_secs: u64,
+        /// Perform full RFC 5780 NAT mapping and filtering behavior discovery
+        #[arg(long, alias = "probe-nat-behavior")]
+        probe_nat: bool,
     },
 }
 
@@ -162,6 +165,9 @@ enum TransferCommands {
         /// Enable progressive zero-wait relay with background direct upgrade
         #[arg(long, default_value_t = false)]
         progressive: bool,
+        /// ADB device serial number for physical direct USB transmission
+        #[arg(long)]
+        adb_device: Option<String>,
     },
     /// Receive a file: listen on a secure port, exit after one completed transfer
     Recv {
@@ -189,6 +195,9 @@ enum TransferCommands {
         /// Enable progressive zero-wait relay with background direct upgrade
         #[arg(long, default_value_t = false)]
         progressive: bool,
+        /// ADB device serial number for physical direct USB transmission
+        #[arg(long)]
+        adb_device: Option<String>,
     },
     /// Print this identity's public key hex (for --pin-peer / --accept-pin)
     Pin {
@@ -659,6 +668,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signaling,
                 psk,
                 progressive,
+                adb_device,
             } => {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&pin_peer)?;
@@ -668,7 +678,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .len();
                 let id = transfer::make_transfer_id(&file, total);
 
-                let stream = if let (Some(room_id), Some(sig_url)) = (room, signaling) {
+                let stream = if let Some(ref device_serial) = adb_device {
+                    let target_port: u16 = if !connect.is_empty() {
+                        parse_host_port(&connect).map(|(_, p)| p).unwrap_or(3020)
+                    } else {
+                        3020
+                    };
+                    eprintln!(
+                        "[INFO] Setting up physical USB ADB proxy (device: {device_serial}, port: {target_port})..."
+                    );
+                    let adb_out = std::process::Command::new("adb")
+                        .args([
+                            "-s",
+                            device_serial,
+                            "forward",
+                            &format!("tcp:{target_port}"),
+                            &format!("tcp:{target_port}"),
+                        ])
+                        .output();
+                    match adb_out {
+                        Ok(o) if !o.status.success() => {
+                            eprintln!(
+                                "[WARN] adb forward returned non-zero: {}",
+                                String::from_utf8_lossy(&o.stderr)
+                            );
+                        }
+                        Err(e) => eprintln!("[WARN] adb execution failed: {e}"),
+                        _ => {}
+                    }
+                    println!("📡 Dialing 127.0.0.1:{target_port} over physical USB bus …");
+                    let mut s = luciola::link::secure::connect_secure_raced(
+                        vec!["127.0.0.1".to_string()],
+                        target_port,
+                        &seed,
+                        &pin,
+                    )
+                    .await
+                    .map_err(|e| format!("ADB secure connection failed: {e}"))?;
+                    s.set_channel_type(luciola_proto::ChannelType::UsbAdbDirect);
+                    s
+                } else if let (Some(room_id), Some(sig_url)) = (room, signaling) {
                     let id_self = luciola::trust::identity_from_seed(&seed);
                     let my_pk: [u8; 32] = id_self
                         .public_key
@@ -735,9 +784,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signaling,
                 psk,
                 progressive,
+                adb_device,
             } => {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&accept_pin)?;
+
+                if let Some(ref device_serial) = adb_device {
+                    let listen_port = if port == 0 { 3020 } else { port };
+                    eprintln!(
+                        "[INFO] Setting up ADB reverse socket proxy on device {device_serial} for port {listen_port}..."
+                    );
+                    let _ = std::process::Command::new("adb")
+                        .args([
+                            "-s",
+                            device_serial,
+                            "reverse",
+                            &format!("tcp:{listen_port}"),
+                            &format!("tcp:{listen_port}"),
+                        ])
+                        .status();
+                }
 
                 let stream = if let (Some(room_id), Some(sig_url)) = (room, signaling) {
                     let id_self = luciola::trust::identity_from_seed(&seed);
@@ -805,17 +871,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             servers,
             ipv6,
             timeout_secs,
+            probe_nat,
         } => {
             let bind_addr = if ipv6 { "[::]:0" } else { "0.0.0.0:0" };
             let socket = tokio::net::UdpSocket::bind(bind_addr).await?;
-            let local_port = socket.local_addr()?.port();
+            let local_endpoint = socket.local_addr()?;
+            let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
+
+            if probe_nat {
+                println!("🔍 Probing RFC 5780 NAT mapping and filtering behavior...");
+                let report = tokio::time::timeout(
+                    Duration::from_secs(timeout_secs),
+                    luciola::stun::probe_nat_behavior(&socket, &server_refs),
+                )
+                .await
+                .map_err(|_| format!("NAT probe timed out after {timeout_secs}s"))?
+                .map_err(|e| format!("NAT probe failed: {e}"))?;
+
+                let class = report.classification();
+                let v6_caps: Vec<_> = luciola_net::NetworkDetector::local_candidate_addresses()
+                    .into_iter()
+                    .filter(|a| a.contains(':'))
+                    .collect();
+                let v6_status = if v6_caps.is_empty() {
+                    "None".to_string()
+                } else {
+                    format!("Native Global Unicast ({})", v6_caps[0])
+                };
+
+                println!("=== Luciola NAT Diagnostics (RFC 5780) ===");
+                println!("Local Endpoint   : {}", local_endpoint);
+                println!(
+                    "Reflexive Addr   : {}",
+                    report
+                        .reflexive_addr
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|| "None".into())
+                );
+                println!("Mapping Behavior : {}", report.mapping.as_str());
+                println!("Filtering Behavior: {}", report.filtering.as_str());
+                println!("IPv6 Capability  : {}", v6_status);
+                println!("NAT Classification: {}", class.as_str());
+                return Ok(());
+            }
+
             println!(
                 "🔍 Probing STUN reflexive address via {}...",
                 if ipv6 { "IPv6" } else { "IPv4" }
             );
-            println!("  Local bound port: {}", local_port);
-            let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
-            // Failure must be a non-zero exit, not a silent success.
+            println!("  Local bound port: {}", local_endpoint.port());
             let public_addr = tokio::time::timeout(
                 Duration::from_secs(timeout_secs),
                 luciola::stun::query_public_address(&socket, &server_refs),
@@ -826,21 +930,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("✅ STUN probe successful!");
             println!("  Public Reflected Address: {}", public_addr);
-            if public_addr.port() == local_port {
+            if public_addr.port() == local_endpoint.port() {
                 println!("  Port mapping: external port preserved on this binding");
             } else {
                 println!(
                     "  Port mapping: rewritten from {} to {} on this binding",
-                    local_port,
+                    local_endpoint.port(),
                     public_addr.port()
                 );
             }
-            // A single Binding response says nothing about filtering or about
-            // whether the mapping is reused for a different destination.
             println!(
-                "  Note: one response reveals ONE mapped endpoint only. It cannot classify the \
-                 NAT as endpoint-independent/address-dependent/port-dependent; that needs \
-                 probes against two different servers and/or ports (RFC 5780)."
+                "  Note: one response reveals ONE mapped endpoint only. Use --probe-nat-behavior \
+                 to execute full RFC 5780 NAT mapping and filtering classification."
             );
         }
     }

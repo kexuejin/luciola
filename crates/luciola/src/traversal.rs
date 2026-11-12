@@ -7,12 +7,59 @@
 //! was told to dial.
 
 use crate::link::{race_connect, RaceConfig, RaceOutcome};
+pub use crate::stun::{NatClassification, NatFilteringBehavior, NatMappingBehavior, NatReport};
 use luciola_proto::{ChannelType, TraversalCandidates};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::net::UdpSocket;
+
+/// Strategic decision for WAN NAT traversal based on RFC 5780 classification matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraversalDecision {
+    /// 100% reachable: Open Internet, Native IPv6, or Full Cone.
+    DirectConnect {
+        /// Direct connect attempt timeout in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Bi-directional simultaneous UDP hole punching (Restricted Cone peers).
+    BidirectionalPunch {
+        /// Hole punch attempt timeout in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Asymmetric reverse hole punch (Symmetric peer dials Cone peer's fixed endpoint).
+    ReversePunch {
+        /// Hole punch attempt timeout in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Both Symmetric NATs: 0% punch probability. Zero-delay fast-bypass to relay!
+    DirectRelayImmediate,
+}
+
+/// Evaluates optimal traversal strategy between two peers given their NAT fingerprints.
+pub fn decide_traversal_strategy(
+    local_nat: NatClassification,
+    remote_nat: NatClassification,
+    has_ipv6_gua: bool,
+) -> TraversalDecision {
+    if has_ipv6_gua
+        || local_nat == NatClassification::OpenInternet
+        || remote_nat == NatClassification::OpenInternet
+    {
+        return TraversalDecision::DirectConnect { timeout_ms: 200 };
+    }
+    if local_nat == NatClassification::FullCone || remote_nat == NatClassification::FullCone {
+        return TraversalDecision::DirectConnect { timeout_ms: 300 };
+    }
+    if local_nat == NatClassification::Symmetric && remote_nat == NatClassification::Symmetric {
+        return TraversalDecision::DirectRelayImmediate;
+    }
+    if local_nat == NatClassification::Symmetric || remote_nat == NatClassification::Symmetric {
+        return TraversalDecision::ReversePunch { timeout_ms: 800 };
+    }
+    TraversalDecision::BidirectionalPunch { timeout_ms: 500 }
+}
 
 /// Errors from candidate racing.
 #[derive(Error, Debug)]
@@ -75,14 +122,28 @@ pub async fn gather_traversal_session(
         Some(s) => vec![s],
         None => crate::stun::DEFAULT_STUN_SERVERS.to_vec(),
     };
-    let srflx = match tokio::time::timeout(
+    let (srflx, nat_type) = match tokio::time::timeout(
         Duration::from_millis(1500),
-        crate::stun::query_public_address(&socket, &servers),
+        crate::stun::probe_nat_behavior(&socket, &servers),
     )
     .await
     {
-        Ok(Ok(addr)) => Some(addr.to_string()),
-        _ => None,
+        Ok(Ok(report)) => (
+            report.reflexive_addr.map(|a| a.to_string()),
+            report.classification() as u8,
+        ),
+        _ => {
+            let addr = match tokio::time::timeout(
+                Duration::from_millis(1000),
+                crate::stun::query_public_address(&socket, &servers),
+            )
+            .await
+            {
+                Ok(Ok(a)) => Some(a.to_string()),
+                _ => None,
+            };
+            (addr, 0)
+        }
     };
 
     Ok(TraversalSession {
@@ -93,6 +154,7 @@ pub async fn gather_traversal_session(
             srflx,
             tcp_port,
             udp_port,
+            nat_type,
         },
         socket,
     })
@@ -117,6 +179,7 @@ pub async fn gather_traversal_candidates(
             srflx: None,
             tcp_port,
             udp_port: 0,
+            nat_type: 0,
         },
     }
 }
@@ -212,6 +275,7 @@ mod tests {
             srflx: Some("203.0.113.10:45678".into()),
             tcp_port: 17879,
             udp_port: 43210,
+            nat_type: 0,
         }
     }
 
@@ -249,5 +313,60 @@ mod tests {
         let mut cand = sample();
         cand.srflx = Some("not-an-address".into());
         assert_eq!(peer_udp_targets(&cand).len(), 3);
+    }
+
+    #[test]
+    fn test_nat_decision_matrix() {
+        // 1. Symmetric + Symmetric => DirectRelayImmediate (0 ms bypass)
+        let decision = decide_traversal_strategy(
+            NatClassification::Symmetric,
+            NatClassification::Symmetric,
+            false,
+        );
+        assert_eq!(decision, TraversalDecision::DirectRelayImmediate);
+
+        // 2. Symmetric + Cone => ReversePunch (800 ms)
+        let decision = decide_traversal_strategy(
+            NatClassification::Symmetric,
+            NatClassification::RestrictedCone,
+            false,
+        );
+        assert_eq!(
+            decision,
+            TraversalDecision::ReversePunch { timeout_ms: 800 }
+        );
+
+        // 3. Cone + Cone => BidirectionalPunch (500 ms)
+        let decision = decide_traversal_strategy(
+            NatClassification::RestrictedCone,
+            NatClassification::RestrictedCone,
+            false,
+        );
+        assert_eq!(
+            decision,
+            TraversalDecision::BidirectionalPunch { timeout_ms: 500 }
+        );
+
+        // 4. FullCone on either side => DirectConnect (300 ms)
+        let decision = decide_traversal_strategy(
+            NatClassification::FullCone,
+            NatClassification::PortRestrictedCone,
+            false,
+        );
+        assert_eq!(
+            decision,
+            TraversalDecision::DirectConnect { timeout_ms: 300 }
+        );
+
+        // 5. Native IPv6 GUA present => DirectConnect (200 ms)
+        let decision = decide_traversal_strategy(
+            NatClassification::Symmetric,
+            NatClassification::Symmetric,
+            true,
+        );
+        assert_eq!(
+            decision,
+            TraversalDecision::DirectConnect { timeout_ms: 200 }
+        );
     }
 }

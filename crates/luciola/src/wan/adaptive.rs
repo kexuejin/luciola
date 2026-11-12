@@ -107,6 +107,26 @@ pub(crate) fn start_progressive_relay(
                     return;
                 }
 
+                // Decision Matrix evaluation (RFC 5780)
+                let local_nat =
+                    crate::traversal::NatClassification::from_u8(_local_candidates.nat_type);
+                let remote_nat =
+                    crate::traversal::NatClassification::from_u8(peer_candidates.nat_type);
+                let has_v6 =
+                    !_local_candidates.ipv6_gua.is_empty() && !peer_candidates.ipv6_gua.is_empty();
+                let strategy =
+                    crate::traversal::decide_traversal_strategy(local_nat, remote_nat, has_v6);
+
+                if matches!(
+                    strategy,
+                    crate::traversal::TraversalDecision::DirectRelayImmediate
+                ) {
+                    eprintln!(
+                        "[INFO] RFC 5780 Decision Matrix: both peers are Symmetric NAT. Fast-bypassing UDP hole punch (0ms timeout) to relay."
+                    );
+                    return;
+                }
+
                 // 3. Perform simultaneous-open UDP hole punching
                 let local_is_v4 = socket.local_addr().map(|a| a.is_ipv4()).unwrap_or(true);
                 let targets: Vec<SocketAddr> = peer_udp_targets(&peer_candidates)

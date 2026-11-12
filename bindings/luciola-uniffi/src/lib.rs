@@ -1636,6 +1636,8 @@ pub enum ChannelType {
     HolePunchedDirect,
     /// End-to-end encrypted link relayed through an external relay server.
     RelayForwarded,
+    /// Physical direct link via Android Debug Bridge over USB bus.
+    UsbAdbDirect,
 }
 
 /// Canonical pairing payload. `fingerprint` is the host's identity
