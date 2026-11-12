@@ -1,12 +1,14 @@
 //! Receiving side: absolute-offset writes, contiguous-prefix ACK, SHA-256
 //! receipt, and the 30-second post-completion answer cache.
 
+use crate::checkpoint::{self, TransferMeta};
 use crate::protocol::FileChunk;
 use crate::TransferError;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+
 /// Tunables for [`FileReceiver`].
 #[derive(Debug, Clone)]
 pub struct ReceiverConfig {
@@ -35,16 +37,19 @@ pub struct FileReceiver {
     transfer_id: String,
     total_size: u64,
     dest: std::path::PathBuf,
+    part_path: std::path::PathBuf,
+    meta_path: std::path::PathBuf,
     file: File,
     /// Merged, sorted received intervals. `[0, acked)` is always fully
     /// covered by the first interval when it starts at 0.
     intervals: Vec<Interval>,
     completed_at: Option<Instant>,
     config: ReceiverConfig,
+    meta: TransferMeta,
 }
 
 impl FileReceiver {
-    /// Create (truncate) the destination file and prepare for `total_size`.
+    /// Create destination file (or resume from `.luciola-meta` checkpoint) and prepare for `total_size`.
     pub async fn create(
         transfer_id: &str,
         dest: impl Into<std::path::PathBuf>,
@@ -52,21 +57,67 @@ impl FileReceiver {
         config: ReceiverConfig,
     ) -> Result<Self, TransferError> {
         let dest = dest.into();
+        let part_path = checkpoint::part_path_for(&dest);
+        let meta_path = checkpoint::meta_path_for(&dest);
+
         if let Some(parent) = dest.parent() {
             if !parent.as_os_str().is_empty() {
                 tokio::fs::create_dir_all(parent).await?;
             }
         }
-        let file = File::create(&dest).await?;
-        file.set_len(total_size).await?;
+
+        let mut resumed_meta: Option<TransferMeta> = None;
+        if meta_path.exists() && part_path.exists() {
+            if let Ok(data) = tokio::fs::read(&meta_path).await {
+                if let Some(meta) = TransferMeta::decode(&data, transfer_id) {
+                    if meta.total_bytes == total_size {
+                        resumed_meta = Some(meta);
+                    }
+                }
+            }
+        }
+
+        let (file, meta, intervals) = if let Some(meta) = resumed_meta {
+            let file = tokio::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&part_path)
+                .await?;
+            let contiguous = meta.contiguous_bytes();
+            let intervals = if contiguous > 0 {
+                vec![Interval {
+                    start: 0,
+                    end: contiguous,
+                }]
+            } else {
+                Vec::new()
+            };
+            tracing::info!(
+                transfer = %transfer_id,
+                contiguous,
+                "resumed transfer from persistent checkpoint"
+            );
+            (file, meta, intervals)
+        } else {
+            let file = File::create(&part_path).await?;
+            file.set_len(total_size).await?;
+            let meta = TransferMeta::new(transfer_id, total_size, checkpoint::DEFAULT_CHUNK_SIZE);
+            let meta_bytes = meta.encode();
+            let _ = tokio::fs::write(&meta_path, meta_bytes).await;
+            (file, meta, Vec::new())
+        };
+
         Ok(Self {
             transfer_id: transfer_id.to_string(),
             total_size,
             dest,
+            part_path,
+            meta_path,
             file,
-            intervals: Vec::new(),
+            intervals,
             completed_at: None,
             config,
+            meta,
         })
     }
 
@@ -136,9 +187,17 @@ impl FileReceiver {
         }
 
         self.insert_interval(chunk.offset, end);
+        self.meta.mark_range(chunk.offset, chunk.payload.len());
+        let meta_bytes = self.meta.encode();
+        let _ = tokio::fs::write(&self.meta_path, meta_bytes).await;
+
         if self.is_complete() {
             // Durability point: the final ACK may now be credited honestly.
             self.file.sync_data().await?;
+            // Atomic rename of in-progress .part file to destination
+            tokio::fs::rename(&self.part_path, &self.dest).await?;
+            // Remove meta checkpoint file
+            let _ = tokio::fs::remove_file(&self.meta_path).await;
             self.completed_at = Some(Instant::now());
             tracing::info!(
                 transfer = %self.transfer_id,
@@ -292,6 +351,89 @@ mod tests {
         assert_eq!(rx.acked_up_to(), 40);
         rx.insert_interval(40, 100);
         assert!(rx.is_complete());
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn resuming_transfer_from_interrupted_checkpoint_skips_completed_chunks() {
+        let dir = std::env::temp_dir().join(format!("luciola-tr-resume-{}", std::process::id()));
+        let dest = dir.join("resume_test.bin");
+        let total = 640 * 1024u64; // 640 KiB
+        let full_payload: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+
+        // 1. Initial receiver receives first half (320 KiB)
+        {
+            let mut rx1 =
+                FileReceiver::create("test_resumable", &dest, total, ReceiverConfig::default())
+                    .await
+                    .unwrap();
+            for i in 0..5 {
+                let offset = i * 64 * 1024;
+                let c = FileChunk {
+                    transfer_id: "test_resumable".into(),
+                    offset,
+                    total_size: total,
+                    payload: full_payload[offset as usize..(offset as usize + 64 * 1024)].to_vec(),
+                };
+                rx1.on_chunk(&c).await.unwrap();
+            }
+            assert_eq!(rx1.acked_up_to(), 320 * 1024);
+            assert!(!rx1.is_complete());
+            // rx1 is dropped here without completion, simulating process crash
+        }
+
+        // Verify .part and .meta files exist on disk
+        let part_file = checkpoint::part_path_for(&dest);
+        let meta_file = checkpoint::meta_path_for(&dest);
+        assert!(part_file.exists(), ".part file must exist after crash");
+        assert!(meta_file.exists(), ".meta file must exist after crash");
+        assert!(
+            !dest.exists(),
+            "destination file must not exist prematurely"
+        );
+
+        // 2. Second receiver resumes the same transfer
+        {
+            let mut rx2 =
+                FileReceiver::create("test_resumable", &dest, total, ReceiverConfig::default())
+                    .await
+                    .unwrap();
+            // Restored acked_up_to should immediately be 320 KiB
+            assert_eq!(rx2.acked_up_to(), 320 * 1024);
+            assert!(!rx2.is_complete());
+
+            // Receive remaining half (320 KiB to 640 KiB)
+            for i in 5..10 {
+                let offset = i * 64 * 1024;
+                let c = FileChunk {
+                    transfer_id: "test_resumable".into(),
+                    offset,
+                    total_size: total,
+                    payload: full_payload[offset as usize..(offset as usize + 64 * 1024)].to_vec(),
+                };
+                rx2.on_chunk(&c).await.unwrap();
+            }
+            assert!(rx2.is_complete());
+            assert_eq!(rx2.acked_up_to(), total);
+
+            let receipt = rx2.finalize().await.unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(&full_payload);
+            let expected_receipt: [u8; 32] = hasher.finalize().into();
+            assert_eq!(receipt, expected_receipt);
+        }
+
+        // Verify final destination file exists and temp files are cleaned up
+        assert!(
+            dest.exists(),
+            "final destination file must exist after completion"
+        );
+        assert!(!part_file.exists(), ".part file must be cleaned up");
+        assert!(!meta_file.exists(), ".meta file must be cleaned up");
+
+        let written_bytes = tokio::fs::read(&dest).await.unwrap();
+        assert_eq!(written_bytes, full_payload);
+
         tokio::fs::remove_dir_all(&dir).await.ok();
     }
 }

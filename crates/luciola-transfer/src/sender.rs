@@ -155,6 +155,9 @@ impl FileSender {
             return;
         }
         self.acked_up_to = acked_up_to;
+        if self.next_offset < acked_up_to {
+            self.next_offset = acked_up_to;
+        }
         self.in_flight
             .retain(|f| f.offset + f.len as u64 > acked_up_to);
     }

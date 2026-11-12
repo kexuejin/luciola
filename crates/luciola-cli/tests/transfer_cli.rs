@@ -296,3 +296,122 @@ fn pin_command_prints_the_identity_public_key() {
         "unexpected pin output: {stdout}"
     );
 }
+
+/// Verify process-level checkpoint resume: when receiver starts with existing
+/// `.luciola-part` and `.luciola-meta`, it announces its resume offset, the
+/// sender skips already written bytes, and the final file is verified byte-exact.
+#[test]
+fn transfer_resumes_from_existing_checkpoint() {
+    use luciola_transfer::checkpoint::{meta_path_for, part_path_for, TransferMeta};
+
+    let bin = env!("CARGO_BIN_EXE_luciola-cli");
+    let dir = temp_dir("resume-cli");
+    let src = dir.join("data.bin");
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).expect("create out dir");
+
+    let total = 256 * 1024;
+    let payload: Vec<u8> = (0..total).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&src, &payload).expect("write src payload");
+
+    let dest = out.join("data.bin");
+    let part_file = part_path_for(&dest);
+    let meta_file = meta_path_for(&dest);
+
+    // Pre-create checkpoint: first 128 KiB already on disk
+    let ms = std::fs::metadata(&src)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let transfer_id = format!("data.bin-{total}-{ms}");
+    let mut meta = TransferMeta::new(&transfer_id, total as u64, 64 * 1024);
+    meta.mark_chunk(0);
+    meta.mark_chunk(1);
+    assert_eq!(meta.contiguous_bytes(), 128 * 1024);
+
+    std::fs::write(&meta_file, meta.encode()).expect("write meta file");
+    // Write pre-existing 128 KiB into part file
+    let mut part_bytes = vec![0u8; total];
+    part_bytes[0..128 * 1024].copy_from_slice(&payload[0..128 * 1024]);
+    std::fs::write(&part_file, &part_bytes).expect("write part file");
+
+    let (seed_a, pk_a) = identity_hex(&[0x71; 32]);
+    let (seed_b, pk_b) = identity_hex(&[0x72; 32]);
+
+    let mut recv = Command::new(bin)
+        .args([
+            "transfer",
+            "recv",
+            "--port",
+            "0",
+            "--seed",
+            &seed_b,
+            "--accept-pin",
+            &pk_a,
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn receiver");
+    let drain = drain_stdout(recv.stdout.take().expect("receiver stdout"));
+    let port = listening_port(&listening_line(&drain));
+
+    let send = Command::new(bin)
+        .args([
+            "transfer",
+            "send",
+            "--file",
+            src.to_str().unwrap(),
+            "--connect",
+            &format!("127.0.0.1:{port}"),
+            "--seed",
+            &seed_a,
+            "--pin-peer",
+            &pk_b,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn sender");
+
+    let send_out = wait_with_timeout(send, Duration::from_secs(30));
+    let recv_out = wait_with_timeout(recv, Duration::from_secs(30));
+
+    assert!(
+        send_out.status.success(),
+        "sender failed: {}",
+        String::from_utf8_lossy(&send_out.stderr)
+    );
+    assert!(
+        recv_out.status.success(),
+        "receiver failed: {}",
+        String::from_utf8_lossy(&recv_out.stderr)
+    );
+
+    let recv_stderr = String::from_utf8_lossy(&recv_out.stderr);
+    let send_stderr = String::from_utf8_lossy(&send_out.stderr);
+
+    // Verify resume logs
+    assert!(
+        recv_stderr.contains("Resuming transfer from checkpoint"),
+        "receiver stderr: {recv_stderr}"
+    );
+    assert!(
+        send_stderr.contains("Remote peer requested resume"),
+        "sender stderr: {send_stderr}"
+    );
+
+    // Destination file exists and matches original payload byte-for-byte
+    assert!(dest.exists(), "destination file must exist");
+    assert!(!part_file.exists(), "part file must be removed");
+    assert!(!meta_file.exists(), "meta file must be removed");
+
+    let received = std::fs::read(&dest).expect("read dest");
+    assert_eq!(received, payload);
+
+    std::fs::remove_dir_all(&dir).ok();
+}

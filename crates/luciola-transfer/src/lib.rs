@@ -22,10 +22,12 @@
 
 #![deny(missing_docs)]
 
+pub mod checkpoint;
 pub mod protocol;
 pub mod receiver;
 pub mod sender;
 
+pub use checkpoint::{meta_path_for, part_path_for, TransferMeta};
 pub use protocol::{FileAck, FileChunk, FileIntro};
 pub use receiver::{FileReceiver, ReceiverConfig};
 pub use sender::{FileSender, SenderConfig};

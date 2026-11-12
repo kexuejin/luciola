@@ -68,6 +68,14 @@ pub async fn run_send(
             frame = stream.recv(&mut buf) => match frame {
                 Ok(()) if !is_chunk_frame(&buf) => {
                     let ack = FileAck::decode(&buf).map_err(|e| e.to_string())?;
+                    if tx.acked_up_to() == 0 && ack.acked_up_to > 0 {
+                        eprintln!(
+                            "[INFO] Remote peer requested resume: skipping {}/{} bytes ({:.1}%)",
+                            ack.acked_up_to,
+                            total,
+                            (ack.acked_up_to as f64 / total.max(1) as f64) * 100.0
+                        );
+                    }
                     tx.on_ack(ack.acked_up_to);
                     report_progress(total, tx.acked_up_to(), &mut last_reported);
                 }
@@ -116,6 +124,24 @@ pub async fn run_recv(
     .map_err(|e| e.to_string())?;
     let total = rx.total_size();
     let mut last_reported = 0u64;
+
+    if rx.acked_up_to() > 0 {
+        eprintln!(
+            "[INFO] Resuming transfer from checkpoint: {}/{} bytes ({:.1}%) already on disk",
+            rx.acked_up_to(),
+            total,
+            (rx.acked_up_to() as f64 / total.max(1) as f64) * 100.0
+        );
+        let resume_ack = FileAck {
+            transfer_id: rx.transfer_id().to_string(),
+            acked_up_to: rx.acked_up_to(),
+        };
+        stream
+            .send(&resume_ack.encode())
+            .await
+            .map_err(|e| e.to_string())?;
+        last_reported = rx.acked_up_to();
+    }
 
     loop {
         if rx.is_complete() {
@@ -166,13 +192,22 @@ fn report_progress(total: u64, acked: u64, last_reported: &mut u64) {
     }
 }
 
-/// 传输 ID：文件名 + 大小 + 毫秒时间戳，够用来区分同会话内的多次传输。
+/// 传输 ID：文件名 + 大小 + 文件修改时间（若无则取当前时间）。
+/// 基于真实文件的属性生成稳定的传输 ID，使得传输意外中断后重新发起时
+/// 能够命中已存在的断点（.luciola-meta / .luciola-part），实现跨进程断点续传。
 pub(crate) fn make_transfer_id(file_name: &str, total_size: u64) -> String {
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    format!("{}-{}-{ms}", sanitize_name(file_name), total_size)
+    let mtime = std::fs::metadata(file_name)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis());
+    let stamp = mtime.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    });
+    format!("{}-{}-{stamp}", sanitize_name(file_name), total_size)
 }
 
 fn sanitize_name(name: &str) -> String {
