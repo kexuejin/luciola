@@ -40,7 +40,7 @@ pub(crate) const AUTH_PREFIX: &str = "LUCIOLA_WAN_AUTH";
 pub(crate) const MAX_SIGNAL_FRAME: usize = 16 * 1024;
 /// Relay writes are chunked so that hex-encoded ciphertext plus the JSON
 /// envelope stays under the `MAX_SIGNAL_FRAME * 2` receive cap.
-const RELAY_CHUNK: usize = MAX_SIGNAL_FRAME - 512;
+pub(crate) const RELAY_CHUNK: usize = MAX_SIGNAL_FRAME - 512;
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -105,7 +105,7 @@ fn auth_payload(room: &str, epoch: u64, nonce_hex: &str, peer_hex: &str) -> Stri
     format!("{AUTH_PREFIX}:{room}:{epoch}:{nonce_hex}:{peer_hex}")
 }
 
-fn seal(
+pub(crate) fn seal(
     key: &[u8; AEAD_KEY_LEN],
     room: &str,
     epoch: u64,
@@ -131,7 +131,7 @@ fn seal(
     .map_err(|e| WanError::Signaling(format!("frame encode: {e}")))
 }
 
-fn open(
+pub(crate) fn open(
     key: &[u8; AEAD_KEY_LEN],
     room: &str,
     epoch: u64,
@@ -169,13 +169,13 @@ fn open(
 
 /// Authenticated, encrypted rendezvous connection.
 pub(crate) struct SignalingClient {
-    sink: SplitSink<WsStream, Message>,
-    stream: SplitStream<WsStream>,
-    key: [u8; AEAD_KEY_LEN],
-    room: String,
-    epoch: u64,
-    send_seq: u64,
-    recv_seq: u64,
+    pub(crate) sink: SplitSink<WsStream, Message>,
+    pub(crate) stream: SplitStream<WsStream>,
+    pub(crate) key: [u8; AEAD_KEY_LEN],
+    pub(crate) room: String,
+    pub(crate) epoch: u64,
+    pub(crate) send_seq: u64,
+    pub(crate) recv_seq: u64,
 }
 
 /// Parameters for opening a rendezvous connection.

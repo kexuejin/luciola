@@ -38,7 +38,8 @@ use sha2::Sha256;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
@@ -227,17 +228,33 @@ pub struct SecureStream {
     /// Peer's Ed25519 public key, verified during the handshake.
     pub peer_public_key: Vec<u8>,
     channel_type: crate::proto::ChannelType,
+    channel_tracker: Option<Arc<AtomicU8>>,
 }
 
 impl SecureStream {
     /// Returns the underlying transport channel type.
     pub fn channel_type(&self) -> crate::proto::ChannelType {
-        self.channel_type
+        if let Some(ref tracker) = self.channel_tracker {
+            match tracker.load(Ordering::Acquire) {
+                0 => crate::proto::ChannelType::LanDirect,
+                1 => crate::proto::ChannelType::HolePunchedDirect,
+                2 => crate::proto::ChannelType::RelayForwarded,
+                _ => self.channel_type,
+            }
+        } else {
+            self.channel_type
+        }
     }
 
     /// Sets the underlying transport channel type.
     pub fn set_channel_type(&mut self, channel: crate::proto::ChannelType) {
         self.channel_type = channel;
+    }
+
+    /// Attach an atomic channel tracker so that dynamic transport migrations
+    /// update the reported channel type in real time.
+    pub fn set_channel_tracker(&mut self, tracker: Arc<AtomicU8>) {
+        self.channel_tracker = Some(tracker);
     }
 
     /// Send one encrypted frame.
@@ -311,6 +328,7 @@ impl SecureStream {
             in_buf: Vec::new(),
             peer_public_key,
             channel_type,
+            channel_tracker: None,
         }
     }
 
@@ -660,6 +678,7 @@ async fn handshake_client_inner(
         in_buf: Vec::new(),
         peer_public_key: peer_key.to_vec(),
         channel_type: crate::proto::ChannelType::LanDirect,
+        channel_tracker: None,
     })
 }
 
@@ -821,6 +840,7 @@ async fn handshake_server_inner(
         in_buf: Vec::new(),
         peer_public_key: peer_key.to_vec(),
         channel_type: crate::proto::ChannelType::LanDirect,
+        channel_tracker: None,
     })
 }
 

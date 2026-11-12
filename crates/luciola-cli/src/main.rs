@@ -141,8 +141,8 @@ enum TransferCommands {
         /// Path of the file to send
         #[arg(long)]
         file: String,
-        /// Peer secure endpoint host:port (IPv6 uses [::1]:port)
-        #[arg(long)]
+        /// Peer secure endpoint host:port (IPv6 uses [::1]:port). Optional if --room and --signaling are set.
+        #[arg(long, default_value = "")]
         connect: String,
         /// Local identity seed (hex, 32 bytes)
         #[arg(long)]
@@ -150,6 +150,18 @@ enum TransferCommands {
         /// Peer public-key pin (raw 32 bytes as hex; `transfer pin --seed` derives it)
         #[arg(long)]
         pin_peer: String,
+        /// Optional WAN room id for rendezvous signaling
+        #[arg(long)]
+        room: Option<String>,
+        /// Optional signaling server URL (e.g. wss://...)
+        #[arg(long)]
+        signaling: Option<String>,
+        /// Optional pairing PSK for WAN encryption
+        #[arg(long)]
+        psk: Option<String>,
+        /// Enable progressive zero-wait relay with background direct upgrade
+        #[arg(long, default_value_t = false)]
+        progressive: bool,
     },
     /// Receive a file: listen on a secure port, exit after one completed transfer
     Recv {
@@ -165,6 +177,18 @@ enum TransferCommands {
         /// Destination directory (default: current dir; only the basename is used)
         #[arg(long, default_value = ".")]
         out: String,
+        /// Optional WAN room id for rendezvous signaling
+        #[arg(long)]
+        room: Option<String>,
+        /// Optional signaling server URL (e.g. wss://...)
+        #[arg(long)]
+        signaling: Option<String>,
+        /// Optional pairing PSK for WAN encryption
+        #[arg(long)]
+        psk: Option<String>,
+        /// Enable progressive zero-wait relay with background direct upgrade
+        #[arg(long, default_value_t = false)]
+        progressive: bool,
     },
     /// Print this identity's public key hex (for --pin-peer / --accept-pin)
     Pin {
@@ -631,24 +655,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 connect,
                 seed,
                 pin_peer,
+                room,
+                signaling,
+                psk,
+                progressive,
             } => {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&pin_peer)?;
-                let (host, port) = parse_host_port(&connect)?;
                 let src = std::path::PathBuf::from(&file);
                 let total = std::fs::metadata(&src)
                     .map_err(|e| format!("--file: {e}"))?
                     .len();
                 let id = transfer::make_transfer_id(&file, total);
-                println!("📡 Dialing {host}:{port} …");
-                let stream = luciola::link::secure::connect_secure_raced(
-                    vec![host.clone()],
-                    port,
-                    &seed,
-                    &pin,
-                )
-                .await
-                .map_err(|e| format!("secure dial failed: {e}"))?;
+
+                let stream = if let (Some(room_id), Some(sig_url)) = (room, signaling) {
+                    let id_self = luciola::trust::identity_from_seed(&seed);
+                    let my_pk: [u8; 32] = id_self
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| "invalid local public key")?;
+                    let psk_bytes = psk
+                        .as_deref()
+                        .unwrap_or("luciola-default-psk")
+                        .as_bytes()
+                        .to_vec();
+                    let wan_cfg = luciola::wan::WanConfig {
+                        signaling_endpoint: sig_url.clone(),
+                        room: room_id.clone(),
+                        epoch: 0,
+                        psk: zeroize::Zeroizing::new(psk_bytes),
+                        identity_seed: seed,
+                        my_public_key: my_pk,
+                        peer_public_key: pin,
+                        relay: luciola_proto::RelayConfig {
+                            allow_wan_signaling: true,
+                            allow_relay: true,
+                            connection_timeout_ms: 3000,
+                            ..Default::default()
+                        },
+                        progressive,
+                        ..Default::default()
+                    };
+                    println!("📡 Connecting to WAN rendezvous {sig_url} (room={room_id}) progressive={progressive} …");
+                    luciola::wan::connect_wan(wan_cfg)
+                        .await
+                        .map_err(|e| format!("WAN connection failed: {e}"))?
+                } else {
+                    let (host, port) = parse_host_port(&connect)?;
+                    println!("📡 Dialing {host}:{port} …");
+                    luciola::link::secure::connect_secure_raced(
+                        vec![host.clone()],
+                        port,
+                        &seed,
+                        &pin,
+                    )
+                    .await
+                    .map_err(|e| format!("secure dial failed: {e}"))?
+                };
+
                 println!("🔐 Secure channel established, sending {file} ({total} bytes) …");
                 let tx = luciola_transfer::FileSender::open(id, &src, Default::default())
                     .await
@@ -666,17 +731,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 seed,
                 accept_pin,
                 out,
+                room,
+                signaling,
+                psk,
+                progressive,
             } => {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&accept_pin)?;
-                let listener = luciola::link::bind_dual_stack_listener(port)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let local = listener.local_addr().map_err(|e| e.to_string())?;
-                println!("🎧 Listening on {local} (pin-verified, deny-by-default) …");
-                let stream = luciola::link::secure::accept_secure(&listener, &seed, Some(&pin))
-                    .await
-                    .map_err(|e| format!("secure accept failed: {e}"))?;
+
+                let stream = if let (Some(room_id), Some(sig_url)) = (room, signaling) {
+                    let id_self = luciola::trust::identity_from_seed(&seed);
+                    let my_pk: [u8; 32] = id_self
+                        .public_key
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| "invalid local public key")?;
+                    let psk_bytes = psk
+                        .as_deref()
+                        .unwrap_or("luciola-default-psk")
+                        .as_bytes()
+                        .to_vec();
+                    let wan_cfg = luciola::wan::WanConfig {
+                        signaling_endpoint: sig_url.clone(),
+                        room: room_id.clone(),
+                        epoch: 0,
+                        psk: zeroize::Zeroizing::new(psk_bytes),
+                        identity_seed: seed,
+                        my_public_key: my_pk,
+                        peer_public_key: pin,
+                        relay: luciola_proto::RelayConfig {
+                            allow_wan_signaling: true,
+                            allow_relay: true,
+                            connection_timeout_ms: 3000,
+                            ..Default::default()
+                        },
+                        progressive,
+                        ..Default::default()
+                    };
+                    println!("📡 Waiting on WAN rendezvous {sig_url} (room={room_id}) progressive={progressive} …");
+                    luciola::wan::connect_wan(wan_cfg)
+                        .await
+                        .map_err(|e| format!("WAN connection failed: {e}"))?
+                } else {
+                    let listener = luciola::link::bind_dual_stack_listener(port)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let local = listener.local_addr().map_err(|e| e.to_string())?;
+                    println!("🎧 Listening on {local} (pin-verified, deny-by-default) …");
+                    luciola::link::secure::accept_secure(&listener, &seed, Some(&pin))
+                        .await
+                        .map_err(|e| format!("secure accept failed: {e}"))?
+                };
+
                 println!("🔐 Peer verified, receiving into {} …", out);
                 let rx =
                     transfer::run_recv(stream, std::path::Path::new(&out), Duration::from_secs(30))

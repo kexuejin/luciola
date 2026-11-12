@@ -42,7 +42,18 @@ pub async fn run_send(
 
     let mut buf: Vec<u8> = Vec::new();
     let mut last_reported = 0u64;
+    let mut last_channel_type = stream.channel_type();
     loop {
+        let current_channel = stream.channel_type();
+        if current_channel != last_channel_type {
+            eprintln!(
+                "[INFO] Channel upgraded: {} -> {}!",
+                last_channel_type.as_str(),
+                current_channel.as_str()
+            );
+            last_channel_type = current_channel;
+        }
+
         if tx.is_done() {
             return Ok(tx);
         }

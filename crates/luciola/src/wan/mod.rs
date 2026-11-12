@@ -12,6 +12,7 @@
 //! `RelayConfig::allow_relay` on top of that. Pairing trust, pinned keys and
 //! the handshake are unchanged.
 
+mod adaptive;
 mod bridge;
 mod signaling;
 mod udp;
@@ -62,6 +63,7 @@ pub enum WanError {
 /// identities the LAN `SecureStream` uses. `psk` is the high-entropy secret
 /// from the v3 pairing URI; it never leaves the device and is zeroized on
 /// drop.
+#[derive(Clone)]
 pub struct WanConfig {
     /// `wss://` rendezvous endpoint (plain `ws://` is loopback-only, for tests).
     pub signaling_endpoint: String,
@@ -90,6 +92,10 @@ pub struct WanConfig {
     pub enable_hole_punching: bool,
     /// Local LAN TCP port advertised in candidates (diagnostic metadata).
     pub tcp_port: u16,
+    /// Set to `true` to enable zero-wait progressive connection: start streaming
+    /// immediately over the relay channel while hole punching races in the
+    /// background, seamlessly migrating to direct once punched.
+    pub progressive: bool,
 }
 
 impl Default for WanConfig {
@@ -109,6 +115,7 @@ impl Default for WanConfig {
             punch_timeout: Duration::from_secs(5),
             enable_hole_punching: true,
             tcp_port: 0,
+            progressive: false,
         }
     }
 }
@@ -179,6 +186,29 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
         timeout: Duration::from_millis(config.relay.connection_timeout_ms.max(500)),
     })
     .await?;
+
+    if config.progressive && config.relay.allow_relay {
+        let role = role_for(&config.my_public_key, &config.peer_public_key);
+        let prog = adaptive::start_progressive_relay(signal, Arc::new(config.clone()));
+        let mut stream = match role {
+            WanRole::Initiator => {
+                secure_handshake_client(prog.bridge, &config.identity_seed, &config.peer_public_key)
+                    .await
+            }
+            WanRole::Responder => {
+                secure_handshake_server(
+                    prog.bridge,
+                    &config.identity_seed,
+                    Some(&config.peer_public_key),
+                )
+                .await
+            }
+        }
+        .map_err(|e| WanError::Handshake(e.to_string()))?;
+        stream.set_channel_type(ChannelType::RelayForwarded);
+        stream.set_channel_tracker(prog.tracker);
+        return Ok(stream);
+    }
 
     let my_hex = signaling::to_hex(&config.my_public_key);
     // One socket for STUN, punching and the data plane — do not rebind. When
@@ -469,6 +499,100 @@ mod tests {
         got.clear();
         a.recv(&mut got).await.unwrap();
         assert_eq!(got, b"ack");
+
+        forwarder.abort();
+    }
+
+    /// Progressive WAN connection starts streaming immediately over the relay
+    /// channel with zero wait, without blocking on candidate gathering.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn progressive_relay_starts_immediately_and_transfers() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let forwarder = tokio::spawn(async move {
+            let (s1, _) = listener.accept().await.unwrap();
+            let ws1 = accept_async(s1).await.unwrap();
+            let (s2, _) = listener.accept().await.unwrap();
+            let ws2 = accept_async(s2).await.unwrap();
+            let (mut w1, mut r1) = ws1.split();
+            let (mut w2, mut r2) = ws2.split();
+            let a = tokio::spawn(async move {
+                while let Some(Ok(msg)) = r1.next().await {
+                    if w2.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            let b = tokio::spawn(async move {
+                while let Some(Ok(msg)) = r2.next().await {
+                    if w1.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            let _ = tokio::join!(a, b);
+        });
+
+        let id_a = crate::trust::generate_identity();
+        let id_b = crate::trust::generate_identity();
+        let seed_a: [u8; 32] = id_a.seed.clone().try_into().unwrap();
+        let seed_b: [u8; 32] = id_b.seed.clone().try_into().unwrap();
+        let pk_a: [u8; 32] = id_a.public_key.clone().try_into().unwrap();
+        let pk_b: [u8; 32] = id_b.public_key.clone().try_into().unwrap();
+
+        let base = |endpoint: String| WanConfig {
+            signaling_endpoint: endpoint,
+            room: "112233445566778899aabbccddeeff00".into(),
+            epoch: 42,
+            psk: Zeroizing::new(b"progressive-psk".to_vec()),
+            relay: RelayConfig {
+                allow_wan_signaling: true,
+                allow_relay: true,
+                connection_timeout_ms: 3000,
+                ..RelayConfig::default()
+            },
+            punch_timeout: Duration::from_millis(500),
+            enable_hole_punching: false,
+            progressive: true,
+            ..WanConfig::default()
+        };
+        let endpoint = format!("ws://127.0.0.1:{port}/ws");
+        let mut cfg_a = base(endpoint.clone());
+        cfg_a.identity_seed = seed_a;
+        cfg_a.my_public_key = pk_a;
+        cfg_a.peer_public_key = pk_b;
+        let mut cfg_b = base(endpoint);
+        cfg_b.identity_seed = seed_b;
+        cfg_b.my_public_key = pk_b;
+        cfg_b.peer_public_key = pk_a;
+
+        let start = std::time::Instant::now();
+        let (a, b) = tokio::try_join!(
+            tokio::time::timeout(Duration::from_secs(5), connect_wan(cfg_a)),
+            tokio::time::timeout(Duration::from_secs(5), connect_wan(cfg_b)),
+        )
+        .unwrap();
+        let elapsed = start.elapsed();
+        // Zero-wait bootstrap: connected in under 200 ms on loopback
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "connection took {:?}",
+            elapsed
+        );
+
+        let (mut a, mut b) = (a.unwrap(), b.unwrap());
+        assert_eq!(a.channel_type(), ChannelType::RelayForwarded);
+        assert_eq!(b.channel_type(), ChannelType::RelayForwarded);
+
+        let payload = vec![0x42u8; 32 * 1024];
+        a.send(&payload).await.unwrap();
+        let mut got = Vec::new();
+        b.recv(&mut got).await.unwrap();
+        assert_eq!(got, payload);
 
         forwarder.abort();
     }
