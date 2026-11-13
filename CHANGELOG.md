@@ -182,6 +182,13 @@ is a simulator runtime result for launch and engine bind, not a device run. See
   one. The harness used to discard the sender's output entirely, which forced
   the operator to retype `channel_type` from a terminal — a relay-only row and
   a punched row were otherwise identical.
+- **`bindings/luciola-node/test/wan.test.mjs`** — the first test that calls
+  `connectWan` at all. Its two-peer case is opt-in (`LUCIOLA_WAN_E2E=1` plus
+  `LUCIOLA_WAN_ENDPOINT`) because it needs a deployed Worker; the room is
+  derived with `wanDeriveRoomId` so both peers agree without an out-of-band
+  value. `WanChannel` exposes `channelType()` / `remoteAddr()` / `shutdown()`
+  and **no read/write**, so this proves establishment and route agreement, not
+  that bytes moved.
 
 ### Fixed
 
@@ -189,6 +196,14 @@ is a simulator runtime result for launch and engine bind, not a device run. See
   exposed to UDP reordering: the ARQ layer delivers ordered bytes. UDP
   half-close now retransmits `CLOSE`, waits for the peer's final sequence and
   has a bounded idle timeout instead of hanging or truncating the tail.
+- **The Node gate could silently test a stale binary.** `index.js` tried
+  `bindings/luciola-node/luciola.node` before the cargo target directory, so the
+  gitignored `.node` left over from a previous `npm run build` shadowed the
+  dylib `cargo build -p luciola-node` had just produced. It resolved 28 exports
+  and no `connectWan` at all, which is exactly the "phone silently runs the old
+  engine" failure this repository already documents — the difference is that
+  here it hit the gate. The loader now picks the newest existing candidate; a
+  packaged install ships one file, so its behaviour is unchanged.
 - Relay writes are chunked under the receive cap and use an explicit ordered
   EOF marker; route decisions can no longer diverge between the two peers.
 - `FileSender::check_channel_policy` is now called by the real CLI send path
@@ -441,6 +456,14 @@ progressive run logged the winning candidate as `192.168.2.82` — a **LAN**
 address. That is why one host cannot produce a matrix row: the "direct" path
 resolved inside the local subnet and never crossed a NAT, so the row would
 report a punch that says nothing about NAT traversal.
+
+The **Node WAN surface** was exercised for the first time on 2026-11-13, against
+the same deployed staging Worker: `bindings/luciola-node/test/wan.test.mjs` with
+`LUCIOLA_WAN_E2E=1` ran two Node peers (driver + child process) through
+`connectWan`, both reporting the same channel type, then `shutdown()` on both
+clearing it to `unknown` — 2/2 passing in 4.3 s. It also covers the offline
+rejection path (`room must not be empty`) without touching the network. Again a
+single-host run, so the channel type reflects a LAN candidate, not a punch.
 
 The production deploy work was checked **offline only**, on macOS bash 3.2:
 `bash -n scripts/deploy-signaling.sh`, `--self-test` (4 assertions),

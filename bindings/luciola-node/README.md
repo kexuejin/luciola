@@ -49,6 +49,35 @@ channel.connect(['192.168.1.20'], 17879, peer.publicKey, true, (ev) => {
 });
 ```
 
+WAN rendezvous (opt-in — a third party sees public keys, public IPs and online
+times):
+
+```js
+const room = luciola.wanDeriveRoomId(
+  me.publicKey, peer.publicKey, psk, luciola.wanCurrentEpoch(),
+);
+const wan = await luciola.connectWan({
+  signalingEndpoint: 'wss://signaling.example/ws',
+  room, epoch: 0, psk,
+  identitySeed: me.seed,
+  myPublicKey: me.publicKey,
+  peerPublicKey: peer.publicKey,
+  relay: {
+    allowRelay: true, allowWanSignaling: true,
+    relayEndpoints: [], connectionTimeoutMs: 3000,
+  },
+  punchTimeoutMs: 60_000,
+});
+console.log(wan.channelType()); // hole_punched_direct | relay_forwarded | …
+await wan.shutdown();
+```
+
+`connectWan` blocks until the peer's candidates arrive, so both peers must dial
+inside `punchTimeoutMs` (default 5 s) — raise it for anything started by hand.
+`WanChannel` exposes `channelType()`, `remoteAddr()` and `shutdown()` only:
+**there is no read/write**, so a Node host can establish and inspect a WAN
+channel but cannot yet move bytes through it.
+
 ## Notes
 
 - **Port planning**: a luciola port is a product-level constant; when several

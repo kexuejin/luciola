@@ -56,7 +56,15 @@ cd examples/android-demo
 cargo build -p luciola-node
 node bindings/luciola-node/test.js
 node bindings/luciola-node/test/forward.test.mjs
+node bindings/luciola-node/test/contract.test.mjs
+node --test bindings/luciola-node/test/wan.test.mjs
 ```
+
+The `wan.test.mjs` two-peer case self-skips without `LUCIOLA_WAN_E2E=1` and
+`LUCIOLA_WAN_ENDPOINT`; its offline case (room validation) runs always. Note
+that `index.js` picks the **newest** existing native candidate, so a stale
+`luciola.node` left in the package directory can no longer shadow the dylib
+`cargo build` just produced.
 
 **Why:** the rustfmt check is the *first* CI step, and it was red across 11 files on
 a batch whose individual commits each "passed locally", because formatting got run
