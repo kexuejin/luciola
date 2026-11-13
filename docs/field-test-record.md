@@ -224,3 +224,8 @@ back the claim, per `AGENTS.md` §12.
   `[INFO]` lines, so a receiver-side migration is not recorded here.
 - Nothing here measures throughput or stability over time. A row that only
   proves "1 MiB arrived once" is exactly that and no more.
+- **Two peers on one host always look punched.** The winning candidate is a
+  LAN address (observed: `192.168.2.82`), so the direct path never crosses a
+  NAT and `transfer.channel` reports `hole_punched_direct` on a run that proves
+  only that the harness and the Worker work. Useful as a smoke test before a
+  field session; worthless as a row.

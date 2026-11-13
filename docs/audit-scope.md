@@ -127,6 +127,15 @@ the claim rather than take it on faith.
   checks the request target, Basic auth and that the `x-luciola-epoch` header
   survives the tunnel; a 407 response is asserted to fail the handshake.
 - `deploy/cloudflare-signaling` — `node --test` for the pure auth helpers.
+- **Operator CLI path against deployed staging** (2026-11-13): the commands in
+  `docs/field-test-record.md`, i.e. `luciola-cli transfer recv/send` plus
+  `scripts/field-nat-matrix.sh`, run over `HTTPS_PROXY` against the deployed
+  `wss://` Worker. Three 1 MiB runs with both peers on one host: direct
+  (`hole_punched_direct`, 5 s), progressive (`relay_forwarded` →
+  `hole_punched_direct`, 6 s), and one harness row recording
+  `channel=relay_forwarded, upgraded_to=hole_punched_direct`. Received files
+  matched the sender's sha256. The winning candidate was a LAN address, so this
+  exercises the signalling plane and the CLI, **not** NAT traversal.
 
 ## Evidence that does **not** exist
 

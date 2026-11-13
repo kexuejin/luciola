@@ -417,6 +417,20 @@ The field harness was exercised against the deployed staging Worker with a
 `--self-test` plus the `--peer-seed` mismatch path both behaved as specified.
 That is a harness check, **not** a field row.
 
+The **operator CLI path** — the commands in `docs/field-test-record.md`, not
+the Rust test harness — was then run against the deployed staging Worker over
+this host's `HTTPS_PROXY` (its `*.workers.dev` resolver is hijacked, so `wss://`
+needs the native CONNECT path). Three runs of 1 MiB with both peers on one
+host: `transfer.channel=hole_punched_direct` in 5 s; `relay_forwarded` upgraded
+to `hole_punched_direct` in 6 s under `--progressive`; and one harness-recorded
+row carrying `channel=relay_forwarded, upgraded_to=hole_punched_direct`. Every
+received file matched the sender's sha256
+(`4e0bbbc8c755d51b8eb23ec9b322f528da0c1dea38433391b605016557c7f32d`). The
+progressive run logged the winning candidate as `192.168.2.82` — a **LAN**
+address. That is why one host cannot produce a matrix row: the "direct" path
+resolved inside the local subnet and never crossed a NAT, so the row would
+report a punch that says nothing about NAT traversal.
+
 The production deploy work was checked **offline only**, on macOS bash 3.2:
 `bash -n scripts/deploy-signaling.sh`, `--self-test` (4 assertions),
 `--dry-run --production` and `--dry-run --staging` printing the exact wrangler
