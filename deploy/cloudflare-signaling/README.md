@@ -63,20 +63,71 @@ This directory ships **source and config, not a deployed public endpoint**.
 | `src/index.js` | Worker fetch handler and `RendezvousRoom` Durable Object |
 | `src/auth.js` | Pure, dependency-free validation/verification helpers |
 | `test/auth.test.js` | `node --test` suite for the helpers |
-| `wrangler.toml` | `RENDEZVOUS` binding and the SQLite-backed DO migration |
+| `wrangler.toml` | `RENDEZVOUS` binding, the SQLite-backed DO migration, staging env |
+| `../../scripts/deploy-signaling.sh` | deploy + `/health` verification, staging by default |
+
+## Endpoints
+
+| Path | Response |
+| :-- | :-- |
+| `/ws` | the rendezvous WebSocket (Ed25519-signed upgrade) |
+| `/health` | `{"ok":true,"service":"luciola-signaling","epoch":<n>,"epoch_seconds":600,"version":"<var>"}` |
+| anything else | `Luciola WAN Rendezvous Hub Active` (plain text) |
+
+`/health` deliberately exposes nothing but liveness and the epoch this
+deployment is serving. The epoch is public metadata — it is derivable from the
+wall clock and the client already puts its own in the request URL — and it is
+what a deploy script and the field-test tooling need in order to prove they are
+talking to the build they just shipped, with a clock that agrees.
 
 ## Quick start
 
 ```bash
 npm install          # install wrangler (devDependency)
 npm test             # node --test test/*.test.js — no Cloudflare account needed
-npm run dev          # wrangler dev (local)
-npm run deploy       # wrangler deploy (requires your own Cloudflare account)
+npm run dev          # wrangler dev (local, real Durable Object via workerd)
 ```
 
 `npm test` runs plain Node tests against `src/auth.js`; it deliberately imports
 nothing from `cloudflare:workers`, so the authentication rules can be checked
 without a Worker runtime.
+
+### Running the real Worker end to end
+
+`wrangler dev` runs the Worker **and** the Durable Object locally under workerd,
+so the Rust client can be pointed at it and the whole path — signed upgrade,
+edge verification, pre-join buffering, relay forwarding — is exercised for real
+rather than against a hand-rolled forwarder:
+
+```bash
+# terminal 1
+cd deploy/cloudflare-signaling && npx wrangler dev --port 8787 --local
+
+# terminal 2
+LUCIOLA_WAN_WORKER=ws://127.0.0.1:8787/ws \
+  cargo test -p luciola --test wan_local_worker -- --nocapture
+```
+
+`crates/luciola/tests/wan_local_worker.rs` skips itself when
+`LUCIOLA_WAN_WORKER` is unset, so CI does not need a Worker. It covers two
+peers meeting through the Worker, a 96 KiB relay transfer, and `/health`
+reporting an epoch within one window of the client's. `ws://` is accepted by the
+client for loopback only; a deployed Worker must be `wss://`.
+
+## Deploying
+
+```bash
+scripts/deploy-signaling.sh                  # staging
+scripts/deploy-signaling.sh --production     # production, explicit
+scripts/deploy-signaling.sh --check https://…/ # verify an existing deployment
+```
+
+The script runs the Worker tests, checks `wrangler` is authenticated, deploys,
+and then asks the deployment's own `/health` which epoch it serves — a deploy
+that succeeds while the Worker does not answer is reported as a failure. It
+never reads or prints a token. Staging is a separate Worker name with its own
+Durable Object namespace (`[env.staging]` in `wrangler.toml`), so a staging
+deploy cannot serve production rooms.
 
 ## Client alignment
 
@@ -88,5 +139,6 @@ other turns every legitimate join into a 401. The 600-second epoch definition
 must also stay in sync with `luciola::wan::current_epoch()`.
 
 Deployment status: **not deployed as part of the 0.11.0-local.1 local Maven
-validation build**. See `SECURITY.md` for the threat model and the list of
-WAN validations that are still outstanding.
+validation build**. Verified in this repository against `wrangler dev` only —
+never against a deployed Cloudflare account. See `SECURITY.md` for the threat
+model and the list of WAN validations that are still outstanding.

@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   authPayload,
   currentEpoch,
+  EPOCH_SECONDS,
   frameSize,
   MAX_MESSAGE_BYTES,
   nextJoinBudget,
@@ -43,6 +44,26 @@ const PENDING_MAX = 32;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // Liveness, plus which epoch this deployment is serving. Deliberately
+    // tiny: the epoch is public metadata (it is derivable from the wall clock)
+    // and nothing else about the deployment is exposed. The field-test and
+    // deploy scripts use this to confirm they are talking to the Worker they
+    // just deployed, and to check that its clock agrees with the client's.
+    if (url.pathname === "/health") {
+      const now = Date.now();
+      return Response.json(
+        {
+          ok: true,
+          service: "luciola-signaling",
+          epoch: currentEpoch(now),
+          epoch_seconds: EPOCH_SECONDS,
+          version: env.LUCIOLA_SIGNALING_VERSION ?? "dev",
+        },
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
+
     if (url.pathname !== "/ws") {
       return new Response("Luciola WAN Rendezvous Hub Active\n", {
         status: 200,

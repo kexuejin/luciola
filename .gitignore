@@ -8,6 +8,10 @@
 *.node
 node_modules/
 
+# `wrangler dev` local state: miniflare Durable Object / KV / R2 sqlite files and
+# bundled entry points. Runtime state, never source.
+.wrangler/
+
 # Native artifacts are built by scripts/publish-maven-local.sh, never committed
 bindings/luciola-kmp/src/androidMain/jniLibs/
 # release credentials never live in the repo (they live in ~/.luciola/)

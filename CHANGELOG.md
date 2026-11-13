@@ -211,6 +211,23 @@ concluding a fix is absent from the AAR.
   `uniffi_luciola_uniffi_checksum_*_connect_wan` symbols. The xcframework is a
   gitignored build artifact; `bindings/luciola-swift/build-xcframework.sh`
   reproduces it and the demo now builds against it.
+- **Worker: `/health`, a staging environment and a deploy script.** `/health`
+  reports liveness plus the epoch the deployment is serving (public metadata —
+  it is derivable from the wall clock and the client already sends its own), so
+  a deploy script and the field tooling can prove which build is live and that
+  its clock agrees. `wrangler.toml` gains `[env.staging]` with a separate
+  Worker name and its own Durable Object namespace, so a staging deploy cannot
+  serve production rooms. `scripts/deploy-signaling.sh` runs the Worker tests,
+  checks wrangler is authenticated, deploys (staging by default, production only
+  with `--production`) and then verifies `/health` — a deploy that succeeds
+  while the Worker does not answer is reported as a failure.
+- **The real Worker is now exercised, not just a stand-in.** `wrangler dev` runs
+  the Worker and Durable Object under workerd, and
+  `crates/luciola/tests/wan_local_worker.rs` points the Rust client at it:
+  signed upgrade, edge Ed25519 verification, pre-join buffering, encrypted
+  handshake and a 96 KiB relay transfer all run against the actual
+  implementation. It skips itself unless `LUCIOLA_WAN_WORKER` is set, so CI
+  needs no Worker.
 
 ### Changed
 
@@ -228,7 +245,7 @@ concluding a fix is absent from the AAR.
 
 Verified locally on **2026-11-13**, after the fixes above: `cargo fmt --all
 -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
-`cargo test --all-targets --all-features` (25 test binaries, 0 failures), KMP
+`cargo test --all-targets --all-features` (26 test binaries, 0 failures), KMP
 compiles for Android / JVM / iosArm64 / iosSimulatorArm64, `cargo build -p
 luciola-node` plus `bindings/luciola-node/test.js`,
 `bindings/luciola-node/test/forward.test.mjs` and
@@ -241,6 +258,13 @@ regenerated sources are byte-identical to the checked-in copies. The mavenLocal
 AAR in this coordinate is rebuilt with a fresh arm64 `.so`; compare its sha256
 against the freshly built jniLibs copy before treating the package as current.
 
+Mobile demos: `:app:compileDebugKotlin`, `:app:assembleDebug` and
+`:app:lintDebug` pass for `examples/android-demo`, the merged manifest carries
+the three background permissions plus
+`foregroundServiceType="connectedDevice"`, and `xcodebuild` builds
+`examples/ios-demo` for the iPhone 17 Pro simulator with zero errors against a
+freshly rebuilt `LuciolaUniFFI.xcframework`.
+
 Earlier loopback integration tests still cover a 64 KiB encrypted relay
 transfer over a local blind-forwarding WebSocket, a real secure handshake
 over the UDP ARQ stream, ARQ loss/reorder recovery, and STUN CLI process
@@ -250,6 +274,13 @@ is covered at the **unit / process-test / loopback layer only**, not on a real
 NAT or a physical device in this gate. The epoch tests use a room-keyed local
 forwarder that advertises a server epoch one window behind the clients, so the
 redial path is exercised without a deployed Worker.
+
+The Worker itself is exercised for real against `wrangler dev` (workerd + a
+local Durable Object): `crates/luciola/tests/wan_local_worker.rs` drives two
+Rust clients through the signed upgrade, edge Ed25519 verification, pre-join
+buffering, the encrypted handshake and a 96 KiB relay transfer, and asserts
+`/health` reports an epoch within one window. That is still not a *deployed*
+Cloudflare account.
 
 **Not** verified: no real-NAT / carrier-grade-NAT field test, no deployed
 public Worker (so the `x-luciola-epoch` header on a `101` upgrade has only been

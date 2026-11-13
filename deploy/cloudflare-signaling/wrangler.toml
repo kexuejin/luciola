@@ -2,10 +2,35 @@ name = "luciola-signaling"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
 
+[vars]
+# Reported by /health so a deploy script can prove which build is live.
+LUCIOLA_SIGNALING_VERSION = "0.11.0-local.1"
+
 [[durable_objects.bindings]]
 name = "RENDEZVOUS"
 class_name = "RendezvousRoom"
 
 [[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RendezvousRoom"]
+
+# Staging is a separate Worker name *and* its own Durable Object namespace, so a
+# staging deploy can never serve production rooms. Migrations are per
+# environment, so the class has to be declared again here — omitting this makes
+# the first staging deploy fail with "Cannot apply new-class migration".
+#
+#   npx wrangler deploy --env staging
+#   npx wrangler deploy                      # production
+[env.staging]
+name = "luciola-signaling-staging"
+
+[env.staging.vars]
+LUCIOLA_SIGNALING_VERSION = "0.11.0-local.1-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "RENDEZVOUS"
+class_name = "RendezvousRoom"
+
+[[env.staging.migrations]]
 tag = "v1"
 new_sqlite_classes = ["RendezvousRoom"]
