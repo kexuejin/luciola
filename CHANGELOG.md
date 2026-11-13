@@ -163,6 +163,14 @@ limits*.
   proxy instead of the NAT under test), and what to capture that the JSON
   record cannot (`channel_type`, relay usage, `NoRoute`). It contains no
   results — the matrix is still empty.
+- **Production deployment plan.** `deploy/cloudflare-signaling/README.md` now
+  carries a *not-executed* checklist: decisions due before the first production
+  deploy (the `/health` version tag, a fresh Durable Object namespace, billing,
+  no public release), offline preflight, scoped credentials, three separate
+  post-deploy verification layers and rollback. `scripts/deploy-signaling.sh`
+  gains `--dry-run` (print the exact wrangler command without contacting
+  Cloudflare) and `--self-test` (offline argument regression checks).
+  **Production is still not deployed.**
 
 ### Fixed
 
@@ -323,6 +331,21 @@ limits*.
   before the transfer even started; the expansion is now guarded, and both the
   plain and `--progressive` send paths were exercised end to end against an
   unreachable loopback endpoint.
+- **`scripts/deploy-signaling.sh --production` can now run at all.** Production
+  is the top-level wrangler environment, so its `DEPLOY_ARGS` array is empty;
+  on macOS bash 3.2 the unguarded `"${DEPLOY_ARGS[@]}"` aborted with
+  `unbound variable` under `set -u` before `wrangler` even started. Staging
+  always passed `--env staging`, so the defect was invisible in every prior
+  deploy. The expansion is now guarded and `--self-test` asserts both
+  environments' exact commands. `-h` no longer uses a fixed line range.
+- **The deploy tool version is now honest.** `deploy/cloudflare-signaling/package.json`
+  declared `wrangler ^3.100.0` while `4.161.0` was installed (`npm ls` reported
+  `invalid`), and there is no `package-lock.json`. It is now pinned to the exact
+  installed version, the only reproducibility anchor in the absence of a lockfile.
+- The deploy script header and Worker README no longer claim the script never
+  *reads* `CLOUDFLARE_API_TOKEN`: it reads the environment variable and sends
+  it in an `Authorization` header. The corrected claim is that the token is
+  never written to disk, logged or printed.
 
 ### Changed
 
@@ -384,6 +407,13 @@ The field harness was exercised against the deployed staging Worker with a
 `--self-test` plus the `--peer-seed` mismatch path both behaved as specified.
 That is a harness check, **not** a field row.
 
+The production deploy work was checked **offline only**, on macOS bash 3.2:
+`bash -n scripts/deploy-signaling.sh`, `--self-test` (4 assertions),
+`--dry-run --production` and `--dry-run --staging` printing the exact wrangler
+commands, `-h`, and `--check` against an unreachable loopback endpoint.
+No Cloudflare call, no deploy, no configuration change on any live service and
+no push/tag/public publish was made. Production remains undeployed.
+
 Earlier loopback integration tests still cover a 64 KiB encrypted relay
 transfer over a local blind-forwarding WebSocket, a real secure handshake
 over the UDP ARQ stream, ARQ loss/reorder recovery, and STUN CLI process
@@ -415,8 +445,9 @@ is not deployed.
 has only a `local-smoke` record from this host, no paired two-network rows;
 `docs/field-test-record.md` now has an operator runbook and the harness has an
 offline `--self-test`, but neither is a run), no
-production deployment or test, no
-real-device background verification on either mobile platform (Android: Doze,
+production deployment or test (the Worker README has a deployment plan and the
+deploy script has offline `--self-test` / `--dry-run`, but neither is a
+deploy), no real-device background verification on either mobile platform (Android: Doze,
 OEM battery managers, the notification permission prompt; iOS:
 `BGAppRefreshTask` scheduling and silent-push delivery, which need a signed
 build with an `aps-environment` entitlement and a server holding the APNs key),

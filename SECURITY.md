@@ -215,8 +215,10 @@ the LAN-only one.
   and `examples/ios-demo` links against them for the arm64 simulator; this is a
   compile/link result only, with no simulator or device runtime run. The field
   harness now has an offline `--self-test` and a two-machine operator runbook in
-  `docs/field-test-record.md`; neither is a field run. What is **not** proven:
-  no real-NAT / carrier-grade-NAT field test, no production
+  `docs/field-test-record.md`; neither is a field run. A production deployment
+  plan in `deploy/cloudflare-signaling/README.md` and offline `--self-test` /
+  `--dry-run` in the deploy script are likewise not a deploy. What is **not**
+  proven: no real-NAT / carrier-grade-NAT field test, no production
   deployment or test, no cross-platform WAN smoke, no physical-device ADB
   transfer, no real-device background run on either mobile platform (Android's
   foreground service has only been compiled and linted; iOS `BGAppRefreshTask`

@@ -180,9 +180,11 @@ LUCIOLA_WAN_WORKER=ws://127.0.0.1:<port>/ws \
 ## Deploying
 
 ```bash
-scripts/deploy-signaling.sh                  # staging
-scripts/deploy-signaling.sh --production     # production, explicit
-scripts/deploy-signaling.sh --check https://…/ # verify an existing deployment
+scripts/deploy-signaling.sh                       # staging
+scripts/deploy-signaling.sh --production          # production, explicit
+scripts/deploy-signaling.sh --check https://…/    # verify an existing deployment
+scripts/deploy-signaling.sh --dry-run --production  # print command, deploy nothing
+scripts/deploy-signaling.sh --self-test           # offline argument regression checks
 ```
 
 The script runs the Worker tests, verifies authentication, deploys, and then
@@ -191,10 +193,109 @@ succeeds while the Worker does not answer is reported as a failure. With
 `CLOUDFLARE_API_TOKEN` set it verifies the token against Cloudflare's token
 endpoint instead of running `wrangler whoami`, because a minimally scoped deploy
 token deliberately lacks the account/user read scopes `whoami` requires;
-otherwise it falls back to the stored `wrangler login`. It never reads, writes or
-prints a token. Staging is a separate Worker name with its own Durable Object
-namespace (`[env.staging]` in `wrangler.toml`), so a staging deploy cannot serve
+otherwise it falls back to the stored `wrangler login`. The token is read from
+`CLOUDFLARE_API_TOKEN`, sent only in an `Authorization` header to Cloudflare's
+token-verify endpoint, and never written to disk, logged or printed. Staging is a
+separate Worker name with its own Durable Object namespace
+(`[env.staging]` in `wrangler.toml`), so a staging deploy cannot serve
 production rooms.
+
+## Production deployment plan (not executed)
+
+**Production is not deployed.** This section is a checklist for a future,
+explicitly approved deploy — not a record of one. `--self-test` and `--dry-run`
+are offline and touch nothing; the deploy itself requires a deliberate
+`--production`.
+
+### Decide before deploying
+
+1. The top-level `[vars].LUCIOLA_SIGNALING_VERSION` in `wrangler.toml` is
+   `0.11.0-local.1`, a **local validation** label. `/health` reports it verbatim
+   (`src/index.js`), so choose a production identifier before the first deploy.
+   This is a deployment tag, not one of the four release version homes in
+   `AGENTS.md` §4, and changing it does not release anything.
+2. Production is the top-level Worker `luciola-signaling`, with its own
+   `[[durable_objects.bindings]]` and `[[migrations]]`. It gets a **fresh
+   Durable Object namespace**: no staging room carries over, and every client
+   must be pointed at the new `wss://…/ws` endpoint. Rooms are epoch-scoped
+   (`EPOCH_SECONDS = 600`) and the DO clears them with a `ROOM_TTL_MS` alarm.
+3. Worker/Durable Object messages and duration, and sustained relay traffic,
+   are billed third-party paths — see `SECURITY.md`. There is no public TURN
+   relay. Idle hibernated WebSockets are not the cost driver.
+4. Deploying the Worker does **not** push, tag or publish a library. The public
+   registries stay at `0.10.0` until sibling products validate the local
+   package.
+
+### Offline preflight
+
+```bash
+bash -n scripts/deploy-signaling.sh
+scripts/deploy-signaling.sh --self-test
+scripts/deploy-signaling.sh --dry-run --production
+(cd deploy/cloudflare-signaling && node --test test/*.test.js)
+```
+
+`--self-test` asserts production resolves to the top-level environment (no
+`--env` flag) and staging to `--env staging`. It is a regression guard for the
+empty-array case: on macOS bash 3.2, `"${DEPLOY_ARGS[@]}"` for an empty array
+aborts under `set -u` before `wrangler` starts, which used to make
+`--production` unusable. `--dry-run` prints the exact command without any
+Cloudflare call. `devDependencies.wrangler` is pinned to the installed
+`4.161.0`; there is no `package-lock.json`, so this pin is the only
+reproducibility anchor.
+
+### Credentials
+
+Either a scoped `CLOUDFLARE_API_TOKEN` (plus `CLOUDFLARE_ACCOUNT_ID` when the
+token can see more than one account) with the permissions listed in
+`scripts/deploy-signaling.sh`, or the stored `wrangler login`. A fresh account
+also needs a `workers.dev` subdomain registered once in the dashboard. The
+script reads the token from the environment, sends it only in an
+`Authorization` header to Cloudflare's token-verify endpoint, and never writes
+it to disk, logs it or prints it.
+
+### Deploy (requires explicit approval)
+
+```bash
+export LUCIOLA_WAN_URL=https://luciola-signaling.<account>.workers.dev
+scripts/deploy-signaling.sh --production
+```
+
+`LUCIOLA_WAN_URL` is what makes step 4 of the script verify `/health` rather
+than print `SKIP`. Without it, a successful deploy is not verified.
+
+### Verify at three separate layers
+
+```bash
+scripts/deploy-signaling.sh --check "$LUCIOLA_WAN_URL"
+scripts/probe-signaling.py "$LUCIOLA_WAN_URL"
+LUCIOLA_WAN_WORKER=wss://luciola-signaling.<account>.workers.dev/ws \
+  LUCIOLA_WAN_CONNECT_TIMEOUT_MS=30000 \
+  cargo test -p luciola --test wan_local_worker -- --nocapture
+```
+
+These prove, in order: `/health` answers with an epoch, a signed upgrade returns
+`101` with a matching `x-luciola-epoch`, and two real peers complete a
+rendezvous against the production Durable Object. The last is a **relay-only,
+single-host** run — a successful result is not a real-NAT/CGNAT field test and
+does not lift that caveat.
+
+### Rollback
+
+```bash
+(cd deploy/cloudflare-signaling && npx --no-install wrangler deployments list)
+VERSION_ID=...   # paste the Worker Version ID from the list above
+(cd deploy/cloudflare-signaling && npx --no-install wrangler rollback "$VERSION_ID")
+```
+
+`rollback` restores a Worker *script* version; it does not undo the `v1`
+Durable Object migration or restore rendezvous state. Rooms are short-lived and
+epoch-scoped, so there is no state to carry back. Use the **Version ID**, not a
+Deployment ID, and re-run the three verification layers after rolling back.
+
+A production deploy would still leave outstanding: real-NAT/CGNAT matrix rows
+(`docs/field-test-record.md`), real-device background runs, external audit, and
+sibling-product validation of the local package.
 
 ## Client alignment
 

@@ -137,7 +137,9 @@ the claim rather than take it on faith.
   relay-only on one host and says nothing about hole punching.
 - No production deployment or test. Staging is deployed and verified; the
   `101` epoch header has been exercised against the Cloudflare runtime there,
-  but never under production configuration or traffic.
+  but never under production configuration or traffic. The Worker README now
+  carries a production deployment plan and the deploy script has offline
+  `--self-test` / `--dry-run`, but neither deploys anything.
 - No real-device background run on either mobile platform.
 - No fuzzing of the STUN parser or the ARQ codec.
 - No external review of the paths in the table above.
