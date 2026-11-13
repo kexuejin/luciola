@@ -1,9 +1,9 @@
 package com.kapp.luciola.demo
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -54,9 +55,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import io.github.kexuejin.luciola.AndroidDiscoveryController
 import io.github.kexuejin.luciola.PeerUiModel
 import io.github.kexuejin.luciola.luciolaDeviceMeta
 import io.github.kexuejin.luciola.luciolaLocalCandidates
@@ -68,7 +69,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val TAG = "LuciolaRadar"
-private val DISCOVERY_PORT: UShort = 17878u
 private val TAG_AMBER = Color(0xFFF59E0B)
 private val TAG_EMERALD = Color(0xFF10B981)
 private const val WATCHDOG_INTERVAL_MS = 15_000L
@@ -102,12 +102,16 @@ fun parsePairUri(uri: String): PairPayload? {
 
 class MainActivity : ComponentActivity() {
 
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var controller: AndroidDiscoveryController? = null
-    private var engineOn = mutableStateOf(false)
+    /**
+     * The engine is owned by [LuciolaPresenceService] so it survives the
+     * Activity; the UI renders [PresenceBus] instead of holding a controller.
+     */
+    private val peers: SnapshotStateList<PeerUiModel> get() = PresenceBus.peers
 
-    // Live peer table, maintained by the KMP supervision core.
-    private val peers = mutableStateListOf<PeerUiModel>()
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            Log.i(TAG, "POST_NOTIFICATIONS granted=$granted")
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,7 +119,8 @@ class MainActivity : ComponentActivity() {
         val ownMeta = luciolaDeviceMeta()
         val ownCandidates = luciolaLocalCandidates()
         val ownBroadcasts = luciolaSubnetBroadcasts()
-        startEngine()
+        askNotificationPermission()
+        LuciolaPresenceService.start(this)
 
         setContent {
             LuciolaTheme {
@@ -133,7 +138,7 @@ class MainActivity : ComponentActivity() {
                         ownCandidates = ownCandidates,
                         ownBroadcasts = ownBroadcasts,
                         peers = peers,
-                        engineOn = engineOn.value,
+                        engineOn = PresenceBus.engineOn.value,
                     )
                 }
             }
@@ -141,38 +146,19 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * All supervision (MulticastLock, network watcher, watchdog, debounced
-     * engine rebuilds) lives in the KMP library — the app just starts it and
-     * renders peer updates.
+     * API 33+ needs an explicit grant before the foreground service's ongoing
+     * notification is shown. Denying it does not stop the service — it only
+     * hides the notification — so this is best-effort and never blocks startup.
      */
-    private fun startEngine() {
-        try {
-            val name = Build.MODEL ?: "Android Peer"
-            val c = AndroidDiscoveryController(
-                context = this,
-                sessionName = name,
-                discoveryPort = DISCOVERY_PORT,
-                product = "luciola-radar-demo",
-                onPeersChanged = { list ->
-                    peers.clear()
-                    peers.addAll(list)
-                },
-            )
-            c.start()
-            controller?.close()
-            controller = c
-            engineOn.value = true
-            Log.i(TAG, "engine started as $name on :$DISCOVERY_PORT (nodeId=${c.nodeId})")
-        } catch (e: Exception) {
-            Log.e(TAG, "engine start failed", e)
-            engineOn.value = false
+    private fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-    }
-
-    override fun onDestroy() {
-        controller?.close()
-        controller = null
-        super.onDestroy()
     }
 }
 

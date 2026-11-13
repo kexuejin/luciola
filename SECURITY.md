@@ -134,6 +134,15 @@ threat model, which is materially different from the LAN-only one.
   authorization for the attached device — an unauthorized host cannot open
   the forward. A failed `adb forward` is a hard error, so a same-machine run
   cannot silently masquerade as a USB transfer.
+- **Background presence widens the exposure window, not the trust boundary.**
+  The Android demo's `connectedDevice` foreground service keeps the discovery
+  socket open while the app is not in the foreground, so the device answers
+  `alive` probes — and is therefore discoverable on the LAN — for longer than a
+  foreground-only app. It adds no frame type, key or peer-admission rule:
+  pairing, key pinning and the `SecureStream` handshake are unchanged, and the
+  engine still speaks only the same public discovery envelopes. iOS has no
+  equivalent and stays foreground-only plus opportunistic refresh, which is the
+  honest ceiling without a push server.
 - **Resumable-transfer sidecars are local files, not secrets.**
   `<file>.luciola-part` and `<file>.luciola-meta` live beside the destination
   and carry the transfer hash, file length and a chunk bitmap — no identity
@@ -164,10 +173,11 @@ threat model, which is materially different from the LAN-only one.
   **not** proven: no real-NAT / carrier-grade-NAT field test, no deployed
   Worker (so the `x-luciola-epoch` header on a `101` upgrade is exercised
   against a local tungstenite server, not the Cloudflare runtime), no
-  cross-platform WAN smoke, no physical-device ADB transfer, no
-  mobile background presence (iOS cannot hold an always-on signalling socket
-  without a push wake), and no external audit. Treat WAN as unvalidated on
-  real networks until those runs happen.
+  cross-platform WAN smoke, no physical-device ADB transfer, no real-device
+  background run on either mobile platform (Android's foreground service has
+  only been compiled and linted; iOS `BGAppRefreshTask` and silent push need a
+  signed build and a server), and no external audit. Treat WAN as unvalidated
+  on real networks until those runs happen.
 
 The handshake, cipher suites, pinning defaults and secure-channel frame size
 limit are **unchanged**. The ARQ protocol, signalling frame composition,

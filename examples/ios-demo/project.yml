@@ -13,6 +13,21 @@ targets:
     dependencies:
       - framework: ../../bindings/luciola-swift/LuciolaUniFFI.xcframework
         embed: false
+    # Partial Info.plist: the keys below are arrays and so cannot be expressed as
+    # INFOPLIST_KEY_* build settings. GENERATE_INFOPLIST_FILE stays YES, which
+    # merges the generated keys (CFBundle*, UILaunchScreen, ...) on top of this
+    # file rather than replacing it.
+    #
+    # BGTaskSchedulerPermittedIdentifiers MUST stay in sync with
+    # BackgroundPresence.refreshTaskId.
+    info:
+      path: LuciolaRadar/Info.plist
+      properties:
+        UIBackgroundModes:
+          - fetch
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.kapp.luciola.demo.LuciolaRadar.refresh
     settings:
       base:
         SWIFT_VERSION: "5.9"

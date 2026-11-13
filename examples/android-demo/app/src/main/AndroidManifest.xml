@@ -7,6 +7,19 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- Background presence: the discovery engine must outlive the Activity, so
+         it runs inside a foreground service. `connectedDevice` rather than
+         `dataSync` because Android 15+ caps dataSync at 6h/24h; its prerequisite
+         is any one of BLUETOOTH_* / CHANGE_NETWORK_STATE / CHANGE_WIFI_STATE /
+         CHANGE_WIFI_MULTICAST_STATE / NFC / TRANSMIT_IR / UWB_RANGING, and
+         CHANGE_WIFI_MULTICAST_STATE above already satisfies it. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Runtime permission on API 33+: without it the ongoing notification is
+         suppressed, which is legal but hides the fact that the app is holding a
+         socket. The service still runs. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
@@ -25,6 +38,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".LuciolaPresenceService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
     </application>
 
 </manifest>

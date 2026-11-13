@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import UIKit
 import luciola_uniffiFFI
 
 /// Swift-side glue over the uniffi engine. The heavy supervision (stable
@@ -8,6 +9,10 @@ import luciola_uniffiFFI
 /// mirroring the KMP/Android core (debounce + bounded consecutive restarts).
 @MainActor
 final class DiscoveryModel: ObservableObject {
+    /// Shared instance so a background wake drives the same engine the UI
+    /// shows. Two instances would fight over the discovery port.
+    static let shared = DiscoveryModel()
+
     @Published var peers: [DiscoveredPeer] = []
     @Published var engineOn = false
     @Published var ownCandidates: [String] = []
@@ -25,7 +30,17 @@ final class DiscoveryModel: ObservableObject {
     private let watchdogIdle: TimeInterval = 45
     private let watchdogMaxConsecutive = 3
 
+    /// Port the engine is bound to; remembered so a background refresh rebinds
+    /// the same one the foreground UI chose.
+    private(set) var port: UInt16 = 17880
+
+    /// Surface a lifecycle message in the UI's event line.
+    func note(_ message: String) {
+        lastEvent = message
+    }
+
     func start(sessionName: String, port: UInt16 = 17878, manualPeers: [ManualPeer] = []) {
+        self.port = port
         do {
             let s = try DiscoverySession(
                 name: sessionName,
@@ -127,6 +142,42 @@ final class DiscoveryModel: ObservableObject {
                 self.lastEvent = "watchdog rebuild #\(self.watchdogConsecutive) (idle \(Int(idle))s)"
             }
             self.scheduleWatchdog()
+        }
+    }
+
+    // MARK: background presence
+
+    /// Opportunistic presence refresh, driven by a `BGAppRefreshTask` or a
+    /// silent APNs push (see `BackgroundPresence`).
+    ///
+    /// iOS grants roughly 30 s. The caller passes the budget it was given and
+    /// the engine is stopped when it elapses: holding the socket past the
+    /// window gets the app suspended mid-write, and there is no foreground
+    /// service to keep it alive the way Android has.
+    ///
+    /// If the engine is already bound (the app was in memory), a `restart()`
+    /// re-announces on the current network path without tearing down the
+    /// identity. Otherwise a short-lived session is started and then stopped.
+    func backgroundRefresh(budget: TimeInterval, completion: @escaping (Bool) -> Void) {
+        if let s = session, s.isBound() {
+            s.restart()
+            lastEvent = "后台唤醒: 重新宣告在线"
+            completion(true)
+            return
+        }
+        let name = UIDevice.current.name.isEmpty ? "iOS Peer" : UIDevice.current.name
+        start(sessionName: name, port: port)
+        DispatchQueue.main.asyncAfter(deadline: .now() + budget) { [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+            let bound = self.session?.isBound() ?? false
+            self.session?.stop()
+            self.session = nil
+            self.engineOn = false
+            self.lastEvent = bound ? "后台刷新完成" : "后台刷新未能绑定端口"
+            completion(bound)
         }
     }
 }

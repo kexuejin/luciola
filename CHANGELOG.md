@@ -188,6 +188,29 @@ concluding a fix is absent from the AAR.
   the one the local epoch would derive. A pinned epoch or a hand-written room
   is left alone. Regression tests cover both the realignment and the
   pinned-epoch guard.
+- **Android demo keeps presence in the background.** The engine moved out of
+  `MainActivity` into `LuciolaPresenceService`, a `connectedDevice` foreground
+  service (`START_STICKY`), with the UI rendering a process-wide `PresenceBus`.
+  `connectedDevice` rather than `dataSync` because Android 15+ caps `dataSync`
+  at 6 h per 24 h; its prerequisite is satisfied by the
+  `CHANGE_WIFI_MULTICAST_STATE` the app already declares. Adds
+  `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE` and
+  `POST_NOTIFICATIONS` (runtime on API 33+). A failed engine bind stops the
+  service instead of leaving a notification that claims it is running.
+- **iOS demo declares what iOS will actually give it.** `BackgroundPresence`
+  registers a `BGAppRefreshTask` before launch completes and re-submits it
+  before doing any work, `AppDelegate` handles APNs registration and silent
+  pushes, and the engine is stopped when the granted budget expires. Presence
+  on iOS remains **foreground plus opportunistic refresh** — there is no
+  foreground-service equivalent, and the `voip`/`audio` background modes that
+  would fake one are rejected on review. `project.yml` gains a partial
+  `Info.plist` with `UIBackgroundModes` and `BGTaskSchedulerPermittedIdentifiers`.
+- **`LuciolaUniFFI.xcframework` rebuilt.** The checked-in Swift bindings had
+  gained the WAN surface while the prebuilt static library was still the
+  0.10.0 binary, so the iOS demo failed to compile on the missing
+  `uniffi_luciola_uniffi_checksum_*_connect_wan` symbols. The xcframework is a
+  gitignored build artifact; `bindings/luciola-swift/build-xcframework.sh`
+  reproduces it and the demo now builds against it.
 
 ### Changed
 
@@ -231,9 +254,12 @@ redial path is exercised without a deployed Worker.
 **Not** verified: no real-NAT / carrier-grade-NAT field test, no deployed
 public Worker (so the `x-luciola-epoch` header on a `101` upgrade has only been
 exercised against a local tungstenite server, not the Cloudflare runtime), no
-mobile background presence (iOS needs a push wake for an always-on signalling
-socket), and no external audit of the ARQ, signalling frame composition,
-migration protocol, checkpoint format or Worker auth path. WAN remains
+real-device background verification on either mobile platform (Android: Doze,
+OEM battery managers, the notification permission prompt; iOS:
+`BGAppRefreshTask` scheduling and silent-push delivery, which need a signed
+build with an `aps-environment` entitlement and a server holding the APNs key),
+and no external audit of the ARQ, signalling frame composition, migration
+protocol, checkpoint format or Worker auth path. WAN remains
 unvalidated on real networks — this is why the build is mavenLocal-only.
 
 ## [0.10.0] — 2026-11-05
