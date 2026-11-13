@@ -4,7 +4,9 @@ compatibility_date = "2024-09-23"
 
 [vars]
 # Reported by /health so a deploy script can prove which build is live.
-LUCIOLA_SIGNALING_VERSION = "0.11.0-local.1"
+# Production deployment tag (chosen 2026-11-14, first production deploy) — a
+# deployment label, not one of the four release version homes in AGENTS.md §4.
+LUCIOLA_SIGNALING_VERSION = "0.11.0-wan.1"
 
 [[durable_objects.bindings]]
 name = "RENDEZVOUS"

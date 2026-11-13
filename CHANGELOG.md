@@ -201,6 +201,14 @@ is a simulator runtime result for launch and engine bind, not a device run. See
   `DiscoveryControllerTest` (hand-driven scheduler, no real clock) covers the
   backoff, the budget separation, debouncing and the stopped case; iOS targets
   are compile-verified only, the controller logic is runtime-verified on JVM.
+- **Production signaling deploy.** `luciola-signaling.<account>.workers.dev`
+  went live on 2026-11-14 with the deployment tag `0.11.0-wan.1` (fresh
+  Durable Object namespace, isolated from staging). Verified at three layers —
+  `/health`, a signed `101` upgrade whose `x-luciola-epoch` matches `/health`,
+  and two-peer rendezvous against the production DO from both the Rust core
+  (96 KiB relay loop) and the Node `wan.test.mjs` case. Still a single-host,
+  relay-only run: the real-NAT matrix remains empty and the public registries
+  stay at `0.10.0`.
 
 ### Fixed
 

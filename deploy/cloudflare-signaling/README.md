@@ -200,19 +200,20 @@ separate Worker name with its own Durable Object namespace
 (`[env.staging]` in `wrangler.toml`), so a staging deploy cannot serve
 production rooms.
 
-## Production deployment plan (not executed)
+## Production deployment plan (executed 2026-11-14)
 
-**Production is not deployed.** This section is a checklist for a future,
-explicitly approved deploy — not a record of one. `--self-test` and `--dry-run`
-are offline and touch nothing; the deploy itself requires a deliberate
-`--production`.
+Production was deployed and verified on 2026-11-14 with the deployment tag
+`0.11.0-wan.1` (Worker Version `e6b64994-16c0-4b55-a41a-1ee086014e21`). The
+checklist below is kept as the runbook for future deploys and rollbacks.
+`--self-test` and `--dry-run` are offline and touch nothing; a deploy itself
+requires a deliberate `--production`.
 
 ### Decide before deploying
 
-1. The top-level `[vars].LUCIOLA_SIGNALING_VERSION` in `wrangler.toml` is
-   `0.11.0-local.1`, a **local validation** label. `/health` reports it verbatim
-   (`src/index.js`), so choose a production identifier before the first deploy.
-   This is a deployment tag, not one of the four release version homes in
+1. The top-level `[vars].LUCIOLA_SIGNALING_VERSION` in `wrangler.toml` must be
+   a deliberate deployment label — `/health` reports it verbatim
+   (`src/index.js`). The first production deploy chose `0.11.0-wan.1`. This is
+   a deployment tag, not one of the four release version homes in
    `AGENTS.md` §4, and changing it does not release anything.
 2. Production is the top-level Worker `luciola-signaling`, with its own
    `[[durable_objects.bindings]]` and `[[migrations]]`. It gets a **fresh
@@ -293,7 +294,7 @@ Durable Object migration or restore rendezvous state. Rooms are short-lived and
 epoch-scoped, so there is no state to carry back. Use the **Version ID**, not a
 Deployment ID, and re-run the three verification layers after rolling back.
 
-A production deploy would still leave outstanding: real-NAT/CGNAT matrix rows
+The production deploy still leaves outstanding: real-NAT/CGNAT matrix rows
 (`docs/field-test-record.md`), real-device background runs, external audit, and
 sibling-product validation of the local package.
 
@@ -306,10 +307,15 @@ to the Rust client's `auth_payload()` in
 other turns every legitimate join into a 401. The 600-second epoch definition
 must also stay in sync with `luciola::wan::current_epoch()`.
 
-Deployment status: the **staging** environment was deployed and verified on
-2026-11-13 (`/health`, a real signed `101` upgrade with `x-luciola-epoch`, and
-the two-peer 96 KiB relay test against the deployed Durable Object).
-**Production is not deployed.** No deployed service ships with the
-`0.11.0-local.1` local Maven validation build, and a staging run is not a
-real-NAT/CGNAT field test. See `SECURITY.md` for the threat model and the list
-of WAN validations that are still outstanding.
+Deployment status: **production** (`luciola-signaling.<account>.workers.dev`,
+deployment tag `0.11.0-wan.1`) was deployed and verified on 2026-11-14 —
+`/health`, a signed `101` upgrade whose `x-luciola-epoch` matches `/health`,
+the two-peer rendezvous test against the production Durable Object (Rust core,
+including the 96 KiB relay loop), and the Node `wan.test.mjs` two-peer case
+(2/2). Staging was deployed and verified the same way on 2026-11-13. On the
+network these were verified from, `*.workers.dev` DNS is hijacked, so the Rust
+client needs `HTTPS_PROXY`; the Python probe picks the system proxy up
+automatically. No deployed service ships with the `0.11.0-local.1` local Maven
+validation build, and neither run is a real-NAT/CGNAT field test. See
+`SECURITY.md` for the threat model and the list of WAN validations that are
+still outstanding.
