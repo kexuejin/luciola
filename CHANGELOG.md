@@ -65,7 +65,8 @@ concluding a fix is absent from the AAR.
   now splits the erased stream. Existing LAN TCP callers are source-compatible.
 - `luciola::stun`: RFC 5389 Binding client (IPv4/IPv6 XOR-MAPPED-ADDRESS,
   Binding Error Response, strict length/padding checks, 5 s query deadline)
-  and a `luciola stun` CLI probe with `--timeout-secs`, shared default servers
+  and a `luciola-cli stun` probe with `--timeout-secs`, `--probe-nat` and
+  `--json`, shared default servers
   and a non-zero exit code on failure. The probe no longer claims a NAT
   mapping-behaviour classification that one Binding response cannot support.
 - `luciola::traversal`: `TraversalSession` keeps **one** UDP socket for STUN,
@@ -211,6 +212,18 @@ concluding a fix is absent from the AAR.
   `uniffi_luciola_uniffi_checksum_*_connect_wan` symbols. The xcframework is a
   gitignored build artifact; `bindings/luciola-swift/build-xcframework.sh`
   reproduces it and the demo now builds against it.
+- **Field-test tooling for the real-NAT matrix.** `luciola-cli stun
+  --probe-nat --json` emits one JSON object (stdout is then nothing but JSON),
+  with the readable mapping/filtering labels, the IPv6 candidates, the current
+  epoch and a one-sided `prediction` — explicitly not a verdict about the peer,
+  which a single-sided RFC 5780 probe cannot know.
+  `scripts/field-nat-matrix.sh` records one JSON line per network profile:
+  environment, the probe, the signalling Worker's `/health` (so clock skew is
+  visible) and, when given WAN arguments, one real transfer. Secrets are passed
+  to the CLI and never written to the record. `docs/field-test-record.md`
+  documents the 2×2 matrix that a real run needs, and says plainly that the
+  script records one side per run and cannot distinguish "migrated to direct"
+  from "stayed on the relay".
 - **Worker: `/health`, a staging environment and a deploy script.** `/health`
   reports liveness plus the epoch the deployment is serving (public metadata —
   it is derivable from the wall clock and the client already sends its own), so

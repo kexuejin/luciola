@@ -12,6 +12,9 @@ node_modules/
 # bundled entry points. Runtime state, never source.
 .wrangler/
 
+# Field-test records contain hostnames, carrier NAT addresses and timings.
+field-records.jsonl
+
 # Native artifacts are built by scripts/publish-maven-local.sh, never committed
 bindings/luciola-kmp/src/androidMain/jniLibs/
 # release credentials never live in the repo (they live in ~/.luciola/)

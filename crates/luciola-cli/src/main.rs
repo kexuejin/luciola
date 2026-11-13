@@ -127,6 +127,13 @@ enum Commands {
         /// Perform full RFC 5780 NAT mapping and filtering behavior discovery
         #[arg(long, alias = "probe-nat-behavior")]
         probe_nat: bool,
+        /// Emit machine-readable JSON instead of the human report
+        ///
+        /// Intended for `scripts/field-nat-matrix.sh`: stdout is then a single
+        /// JSON object and nothing else, so a caller can pipe it straight into
+        /// a record file.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -862,6 +869,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ipv6,
             timeout_secs,
             probe_nat,
+            json,
         } => {
             let bind_addr = if ipv6 { "[::]:0" } else { "0.0.0.0:0" };
             let socket = tokio::net::UdpSocket::bind(bind_addr).await?;
@@ -869,7 +877,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
 
             if probe_nat {
-                println!("🔍 Probing RFC 5780 NAT mapping and filtering behavior...");
+                if !json {
+                    println!("🔍 Probing RFC 5780 NAT mapping and filtering behavior...");
+                }
                 let report = tokio::time::timeout(
                     Duration::from_secs(timeout_secs),
                     luciola::stun::probe_nat_behavior(&socket, &server_refs),
@@ -888,6 +898,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     format!("Native Global Unicast ({})", v6_caps[0])
                 };
+
+                if json {
+                    // One object, nothing else on stdout: the field matrix
+                    // script appends this verbatim to a record file.
+                    let payload = serde_json::json!({
+                        "schema": "luciola.nat-probe/1",
+                        "local_addr": local_endpoint.to_string(),
+                        "reflexive_addr": report.reflexive_addr.map(|a| a.to_string()),
+                        "mapping": report.mapping.as_str(),
+                        "filtering": report.filtering.as_str(),
+                        "classification": class.as_str(),
+                        "classification_code": class as u8,
+                        "ipv6_candidates": v6_caps,
+                        "ipv6_status": v6_status,
+                        // A single-sided probe cannot know the peer's NAT, so
+                        // this is a prediction for *this* side only.
+                        "prediction": match class {
+                            luciola::stun::NatClassification::OpenInternet
+                            | luciola::stun::NatClassification::FullCone
+                            | luciola::stun::NatClassification::RestrictedCone
+                            | luciola::stun::NatClassification::PortRestrictedCone => {
+                                "punch-likely"
+                            }
+                            luciola::stun::NatClassification::Symmetric => "relay-likely",
+                            luciola::stun::NatClassification::Unknown => "unknown",
+                        },
+                        "epoch": luciola::wan::current_epoch(),
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+                    );
+                    return Ok(());
+                }
 
                 println!("=== Luciola NAT Diagnostics (RFC 5780) ===");
                 println!("Local Endpoint   : {}", local_endpoint);
