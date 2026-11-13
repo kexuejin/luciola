@@ -451,6 +451,80 @@ export function deriveRendezvousRoomId(
 ): string;
 
 /**
+ * Relay and signalling policy for one WAN channel. Both flags default to
+ * `false`, so a host must opt in to third-party signalling explicitly.
+ */
+export interface JsWanRelayConfig {
+  allowRelay: boolean;
+  allowWanSignaling: boolean;
+  relayEndpoints: string[];
+  connectionTimeoutMs: number;
+}
+
+/**
+ * Everything a host supplies to establish one WAN channel.
+ *
+ * The identity fields are the same pinned Ed25519 material the LAN secure
+ * channel uses; `psk` is the high-entropy secret from the v3 pairing URI.
+ * Byte buffers are length-checked at the FFI boundary.
+ */
+export interface JsWanConfig {
+  signalingEndpoint: string;
+  room: string;
+  epoch: number;
+  psk: Buffer;
+  identitySeed: Buffer;
+  myPublicKey: Buffer;
+  peerPublicKey: Buffer;
+  relay: JsWanRelayConfig;
+  stunServer?: string | null;
+  punchTimeoutMs?: number | null;
+  enableHolePunching?: boolean | null;
+  tcpPort?: number | null;
+  progressive?: boolean | null;
+}
+
+/**
+ * An established WAN channel. `connectWan` returns a Promise; shut the
+ * channel down when the host is done with it.
+ */
+export class WanChannel {
+  /**
+   * The data plane this channel actually uses: `lan_direct`,
+   * `hole_punched_direct`, `relay_forwarded`, `usb_adb_direct`, or `unknown`
+   * after shutdown.
+   */
+  channelType(): string;
+  /** The peer's socket endpoint, when the transport exposes one. */
+  remoteAddr(): string | null;
+  /** Close the channel. Idempotent; a second call is a no-op. */
+  shutdown(): Promise<void>;
+}
+
+/**
+ * Establish a WAN secure channel. Order of attempts: encrypted candidate
+ * exchange over WSS, simultaneous UDP hole punching on the same socket, then
+ * an end-to-end encrypted relay over the signalling WebSocket only when both
+ * peers allow it and agree on the route.
+ */
+export function connectWan(config: JsWanConfig): Promise<WanChannel>;
+
+/** The current 10-minute rendezvous epoch (`unix_seconds / 600`). */
+export function wanCurrentEpoch(): number;
+
+/**
+ * Derive the room id both peers must use for `epoch`. The PSK is required:
+ * without one the engine returns an empty room id rather than deriving a
+ * room any third party could predict from the public keys.
+ */
+export function wanDeriveRoomId(
+  myPublicKey: Buffer,
+  peerPublicKey: Buffer,
+  psk: Buffer,
+  epoch: number,
+): string;
+
+/**
  * NOTE: event callbacks are invoked from engine threads and MUST NOT throw —
  * wrap their bodies in try/catch (an uncaught throw can abort the process).
  */

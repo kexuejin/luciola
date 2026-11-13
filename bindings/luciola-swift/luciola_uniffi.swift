@@ -1608,6 +1608,185 @@ public func FfiConverterTypeTrustStore_lower(_ value: TrustStore) -> UnsafeMutab
 
 
 
+
+
+/**
+ * An established WAN channel.
+ *
+ * `connect_wan` blocks the calling thread while it exchanges candidates,
+ * punches and runs the authenticated handshake, bounded by
+ * `punch_timeout_ms` and the signalling timeout. On mobile platforms call it
+ * from a worker thread, never from the UI thread.
+ */
+public protocol WanChannelProtocol: AnyObject, Sendable {
+    
+    /**
+     * The data plane this channel actually uses.
+     *
+     * Returns `Unknown` after [`WanChannel::shutdown`] or when the engine
+     * reports a code this build does not know.
+     */
+    func channelType()  -> WanChannelKind
+    
+    /**
+     * The peer's socket endpoint, when the transport exposes one.
+     */
+    func remoteAddr()  -> String?
+    
+    /**
+     * Close the channel. Idempotent; a second call is a no-op.
+     */
+    func shutdown() throws 
+    
+}
+/**
+ * An established WAN channel.
+ *
+ * `connect_wan` blocks the calling thread while it exchanges candidates,
+ * punches and runs the authenticated handshake, bounded by
+ * `punch_timeout_ms` and the signalling timeout. On mobile platforms call it
+ * from a worker thread, never from the UI thread.
+ */
+open class WanChannel: WanChannelProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_wanchannel(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_wanchannel(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * The data plane this channel actually uses.
+     *
+     * Returns `Unknown` after [`WanChannel::shutdown`] or when the engine
+     * reports a code this build does not know.
+     */
+open func channelType() -> WanChannelKind  {
+    return try!  FfiConverterTypeWanChannelKind_lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wanchannel_channel_type(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The peer's socket endpoint, when the transport exposes one.
+     */
+open func remoteAddr() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Close the channel. Idempotent; a second call is a no-op.
+     */
+open func shutdown()throws   {try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWanChannel: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = WanChannel
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> WanChannel {
+        return WanChannel(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: WanChannel) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WanChannel {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: WanChannel, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanChannel_lift(_ pointer: UnsafeMutableRawPointer) throws -> WanChannel {
+    return try FfiConverterTypeWanChannel.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanChannel_lower(_ value: WanChannel) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeWanChannel.lower(value)
+}
+
+
+
+
 /**
  * A generated or restored device identity. Keep `seed` secret.
  */
@@ -3335,6 +3514,372 @@ public func FfiConverterTypeTrustedDeviceInfo_lower(_ value: TrustedDeviceInfo) 
     return FfiConverterTypeTrustedDeviceInfo.lower(value)
 }
 
+
+/**
+ * Everything a host supplies to establish one WAN channel.
+ *
+ * The identity fields are the same pinned Ed25519 material the LAN
+ * `SecureStream` uses; `psk` is the high-entropy secret from the v3 pairing
+ * URI. Byte arrays are length-checked at this boundary, so a malformed
+ * identity is reported as `InvalidConfig` instead of reaching the engine.
+ */
+public struct WanConfig {
+    /**
+     * `wss://` rendezvous endpoint (`ws://` is accepted for loopback tests).
+     */
+    public var signalingEndpoint: String
+    /**
+     * 32-character hex room id from [`wan_derive_room_id`].
+     */
+    public var room: String
+    /**
+     * Rendezvous epoch; `0` means "use the current epoch".
+     */
+    public var epoch: UInt64
+    /**
+     * Pairing PSK (secret; zeroized inside the engine).
+     */
+    public var psk: Data
+    /**
+     * Local 32-byte Ed25519 identity seed.
+     */
+    public var identitySeed: Data
+    /**
+     * Local 32-byte Ed25519 public key.
+     */
+    public var myPublicKey: Data
+    /**
+     * Pinned peer 32-byte Ed25519 public key (never TOFU).
+     */
+    public var peerPublicKey: Data
+    /**
+     * Relay and signalling policy.
+     */
+    public var relay: WanRelayConfig
+    /**
+     * Optional single STUN server override.
+     */
+    public var stunServer: String?
+    /**
+     * Candidate-gathering and punching budget in milliseconds; `0` uses the
+     * engine default of 5000 ms.
+     */
+    public var punchTimeoutMs: UInt64
+    /**
+     * Skip UDP punching (and the public STUN query) entirely.
+     */
+    public var enableHolePunching: Bool
+    /**
+     * Local LAN TCP port advertised in candidates (diagnostic metadata).
+     */
+    public var tcpPort: UInt16
+    /**
+     * Start streaming over the relay immediately and migrate to direct later.
+     */
+    public var progressive: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `wss://` rendezvous endpoint (`ws://` is accepted for loopback tests).
+         */signalingEndpoint: String, 
+        /**
+         * 32-character hex room id from [`wan_derive_room_id`].
+         */room: String, 
+        /**
+         * Rendezvous epoch; `0` means "use the current epoch".
+         */epoch: UInt64, 
+        /**
+         * Pairing PSK (secret; zeroized inside the engine).
+         */psk: Data, 
+        /**
+         * Local 32-byte Ed25519 identity seed.
+         */identitySeed: Data, 
+        /**
+         * Local 32-byte Ed25519 public key.
+         */myPublicKey: Data, 
+        /**
+         * Pinned peer 32-byte Ed25519 public key (never TOFU).
+         */peerPublicKey: Data, 
+        /**
+         * Relay and signalling policy.
+         */relay: WanRelayConfig, 
+        /**
+         * Optional single STUN server override.
+         */stunServer: String?, 
+        /**
+         * Candidate-gathering and punching budget in milliseconds; `0` uses the
+         * engine default of 5000 ms.
+         */punchTimeoutMs: UInt64, 
+        /**
+         * Skip UDP punching (and the public STUN query) entirely.
+         */enableHolePunching: Bool, 
+        /**
+         * Local LAN TCP port advertised in candidates (diagnostic metadata).
+         */tcpPort: UInt16, 
+        /**
+         * Start streaming over the relay immediately and migrate to direct later.
+         */progressive: Bool) {
+        self.signalingEndpoint = signalingEndpoint
+        self.room = room
+        self.epoch = epoch
+        self.psk = psk
+        self.identitySeed = identitySeed
+        self.myPublicKey = myPublicKey
+        self.peerPublicKey = peerPublicKey
+        self.relay = relay
+        self.stunServer = stunServer
+        self.punchTimeoutMs = punchTimeoutMs
+        self.enableHolePunching = enableHolePunching
+        self.tcpPort = tcpPort
+        self.progressive = progressive
+    }
+}
+
+#if compiler(>=6)
+extension WanConfig: Sendable {}
+#endif
+
+
+extension WanConfig: Equatable, Hashable {
+    public static func ==(lhs: WanConfig, rhs: WanConfig) -> Bool {
+        if lhs.signalingEndpoint != rhs.signalingEndpoint {
+            return false
+        }
+        if lhs.room != rhs.room {
+            return false
+        }
+        if lhs.epoch != rhs.epoch {
+            return false
+        }
+        if lhs.psk != rhs.psk {
+            return false
+        }
+        if lhs.identitySeed != rhs.identitySeed {
+            return false
+        }
+        if lhs.myPublicKey != rhs.myPublicKey {
+            return false
+        }
+        if lhs.peerPublicKey != rhs.peerPublicKey {
+            return false
+        }
+        if lhs.relay != rhs.relay {
+            return false
+        }
+        if lhs.stunServer != rhs.stunServer {
+            return false
+        }
+        if lhs.punchTimeoutMs != rhs.punchTimeoutMs {
+            return false
+        }
+        if lhs.enableHolePunching != rhs.enableHolePunching {
+            return false
+        }
+        if lhs.tcpPort != rhs.tcpPort {
+            return false
+        }
+        if lhs.progressive != rhs.progressive {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(signalingEndpoint)
+        hasher.combine(room)
+        hasher.combine(epoch)
+        hasher.combine(psk)
+        hasher.combine(identitySeed)
+        hasher.combine(myPublicKey)
+        hasher.combine(peerPublicKey)
+        hasher.combine(relay)
+        hasher.combine(stunServer)
+        hasher.combine(punchTimeoutMs)
+        hasher.combine(enableHolePunching)
+        hasher.combine(tcpPort)
+        hasher.combine(progressive)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWanConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WanConfig {
+        return
+            try WanConfig(
+                signalingEndpoint: FfiConverterString.read(from: &buf), 
+                room: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                psk: FfiConverterData.read(from: &buf), 
+                identitySeed: FfiConverterData.read(from: &buf), 
+                myPublicKey: FfiConverterData.read(from: &buf), 
+                peerPublicKey: FfiConverterData.read(from: &buf), 
+                relay: FfiConverterTypeWanRelayConfig.read(from: &buf), 
+                stunServer: FfiConverterOptionString.read(from: &buf), 
+                punchTimeoutMs: FfiConverterUInt64.read(from: &buf), 
+                enableHolePunching: FfiConverterBool.read(from: &buf), 
+                tcpPort: FfiConverterUInt16.read(from: &buf), 
+                progressive: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WanConfig, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.signalingEndpoint, into: &buf)
+        FfiConverterString.write(value.room, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterData.write(value.psk, into: &buf)
+        FfiConverterData.write(value.identitySeed, into: &buf)
+        FfiConverterData.write(value.myPublicKey, into: &buf)
+        FfiConverterData.write(value.peerPublicKey, into: &buf)
+        FfiConverterTypeWanRelayConfig.write(value.relay, into: &buf)
+        FfiConverterOptionString.write(value.stunServer, into: &buf)
+        FfiConverterUInt64.write(value.punchTimeoutMs, into: &buf)
+        FfiConverterBool.write(value.enableHolePunching, into: &buf)
+        FfiConverterUInt16.write(value.tcpPort, into: &buf)
+        FfiConverterBool.write(value.progressive, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanConfig_lift(_ buf: RustBuffer) throws -> WanConfig {
+    return try FfiConverterTypeWanConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanConfig_lower(_ value: WanConfig) -> RustBuffer {
+    return FfiConverterTypeWanConfig.lower(value)
+}
+
+
+/**
+ * Relay and signalling policy for one WAN channel. Both flags are `false` by
+ * default, so a host must opt in to third-party signalling explicitly.
+ */
+public struct WanRelayConfig {
+    /**
+     * Permit an end-to-end encrypted relay when a direct path fails.
+     */
+    public var allowRelay: Bool
+    /**
+     * Permit third-party signalling (public keys, public IPs and online times
+     * leave the LAN).
+     */
+    public var allowWanSignaling: Bool
+    /**
+     * Reserved for dedicated relay endpoints. The current engine reuses the
+     * already-authenticated signalling WebSocket and does not read this list.
+     */
+    public var relayEndpoints: [String]
+    /**
+     * WebSocket connect timeout in milliseconds (the engine clamps it to a
+     * 500 ms floor).
+     */
+    public var connectionTimeoutMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Permit an end-to-end encrypted relay when a direct path fails.
+         */allowRelay: Bool, 
+        /**
+         * Permit third-party signalling (public keys, public IPs and online times
+         * leave the LAN).
+         */allowWanSignaling: Bool, 
+        /**
+         * Reserved for dedicated relay endpoints. The current engine reuses the
+         * already-authenticated signalling WebSocket and does not read this list.
+         */relayEndpoints: [String], 
+        /**
+         * WebSocket connect timeout in milliseconds (the engine clamps it to a
+         * 500 ms floor).
+         */connectionTimeoutMs: UInt64) {
+        self.allowRelay = allowRelay
+        self.allowWanSignaling = allowWanSignaling
+        self.relayEndpoints = relayEndpoints
+        self.connectionTimeoutMs = connectionTimeoutMs
+    }
+}
+
+#if compiler(>=6)
+extension WanRelayConfig: Sendable {}
+#endif
+
+
+extension WanRelayConfig: Equatable, Hashable {
+    public static func ==(lhs: WanRelayConfig, rhs: WanRelayConfig) -> Bool {
+        if lhs.allowRelay != rhs.allowRelay {
+            return false
+        }
+        if lhs.allowWanSignaling != rhs.allowWanSignaling {
+            return false
+        }
+        if lhs.relayEndpoints != rhs.relayEndpoints {
+            return false
+        }
+        if lhs.connectionTimeoutMs != rhs.connectionTimeoutMs {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(allowRelay)
+        hasher.combine(allowWanSignaling)
+        hasher.combine(relayEndpoints)
+        hasher.combine(connectionTimeoutMs)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWanRelayConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WanRelayConfig {
+        return
+            try WanRelayConfig(
+                allowRelay: FfiConverterBool.read(from: &buf), 
+                allowWanSignaling: FfiConverterBool.read(from: &buf), 
+                relayEndpoints: FfiConverterSequenceString.read(from: &buf), 
+                connectionTimeoutMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WanRelayConfig, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.allowRelay, into: &buf)
+        FfiConverterBool.write(value.allowWanSignaling, into: &buf)
+        FfiConverterSequenceString.write(value.relayEndpoints, into: &buf)
+        FfiConverterUInt64.write(value.connectionTimeoutMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanRelayConfig_lift(_ buf: RustBuffer) throws -> WanRelayConfig {
+    return try FfiConverterTypeWanRelayConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanRelayConfig_lower(_ value: WanRelayConfig) -> RustBuffer {
+    return FfiConverterTypeWanRelayConfig.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -3814,6 +4359,284 @@ public func FfiConverterTypeTrustLevel_lower(_ value: TrustLevel) -> RustBuffer 
 extension TrustLevel: Equatable, Hashable {}
 
 
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * The data plane a [`WanChannel`] actually uses.
+ */
+
+public enum WanChannelKind {
+    
+    /**
+     * Local network direct link.
+     */
+    case lanDirect
+    /**
+     * Direct WAN path (IPv6 GUA or a UDP hole punch).
+     */
+    case holePunchedDirect
+    /**
+     * End-to-end encrypted relay.
+     */
+    case relayForwarded
+    /**
+     * Physical USB link through ADB.
+     */
+    case usbAdbDirect
+    /**
+     * The channel is closed, or reported a code this build does not know.
+     */
+    case unknown
+}
+
+
+#if compiler(>=6)
+extension WanChannelKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWanChannelKind: FfiConverterRustBuffer {
+    typealias SwiftType = WanChannelKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WanChannelKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lanDirect
+        
+        case 2: return .holePunchedDirect
+        
+        case 3: return .relayForwarded
+        
+        case 4: return .usbAdbDirect
+        
+        case 5: return .unknown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: WanChannelKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lanDirect:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .holePunchedDirect:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .relayForwarded:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .usbAdbDirect:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanChannelKind_lift(_ buf: RustBuffer) throws -> WanChannelKind {
+    return try FfiConverterTypeWanChannelKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanChannelKind_lower(_ value: WanChannelKind) -> RustBuffer {
+    return FfiConverterTypeWanChannelKind.lower(value)
+}
+
+
+extension WanChannelKind: Equatable, Hashable {}
+
+
+
+
+
+
+
+/**
+ * Errors surfaced by the WAN exports.
+ *
+ * The variants mirror [`luciola::wan::WanError`], so a host can distinguish a
+ * policy refusal from a signalling failure, a missing route and a failed
+ * handshake without parsing strings.
+ */
+public enum WanFfiError: Swift.Error {
+
+    
+    
+    /**
+     * Third-party signalling or relay was not enabled by policy.
+     */
+    case PolicyDenied(
+        /**
+         * Engine detail.
+         */detail: String
+    )
+    /**
+     * Operating-system I/O failure.
+     */
+    case Io(
+        /**
+         * Engine detail.
+         */detail: String
+    )
+    /**
+     * Signalling transport, authentication or framing failure.
+     */
+    case Signaling(
+        /**
+         * Engine detail.
+         */detail: String
+    )
+    /**
+     * No direct path and no permitted relay.
+     */
+    case NoRoute(
+        /**
+         * Engine detail.
+         */detail: String
+    )
+    /**
+     * The authenticated handshake failed on the chosen transport.
+     */
+    case Handshake(
+        /**
+         * Engine detail.
+         */detail: String
+    )
+    /**
+     * The supplied configuration was missing or inconsistent.
+     */
+    case InvalidConfig(
+        /**
+         * Which field was rejected and why.
+         */detail: String
+    )
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWanFfiError: FfiConverterRustBuffer {
+    typealias SwiftType = WanFfiError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WanFfiError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .PolicyDenied(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .Io(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .Signaling(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .NoRoute(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 5: return .Handshake(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 6: return .InvalidConfig(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: WanFfiError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .PolicyDenied(detail):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Io(detail):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Signaling(detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .NoRoute(detail):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Handshake(detail):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .InvalidConfig(detail):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(detail, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanFfiError_lift(_ buf: RustBuffer) throws -> WanFfiError {
+    return try FfiConverterTypeWanFfiError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanFfiError_lower(_ value: WanFfiError) -> RustBuffer {
+    return FfiConverterTypeWanFfiError.lower(value)
+}
+
+
+extension WanFfiError: Equatable, Hashable {}
+
+
+
+
+extension WanFfiError: Foundation.LocalizedError {
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+}
 
 
 
@@ -4809,6 +5632,21 @@ public func comparisonPin(localPk: Data, remotePk: Data) -> String  {
 })
 }
 /**
+ * Establish a WAN secure channel.
+ *
+ * Order of attempts: encrypted candidate exchange over WSS, simultaneous UDP
+ * hole punching on the same socket, then an end-to-end encrypted relay over
+ * the signalling WebSocket only when both peers allow it and agree on the
+ * route. The returned channel reports the plane it actually uses.
+ */
+public func connectWan(config: WanConfig)throws  -> WanChannel  {
+    return try  FfiConverterTypeWanChannel_lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_connect_wan(
+        FfiConverterTypeWanConfig_lower(config),$0
+    )
+})
+}
+/**
  * Selection policy shared with the demos: first 3 IPv4 candidates plus the
  * first IPv6 GUA. Feed the result into [race_connect].
  */
@@ -5130,6 +5968,31 @@ public func verifyMessage(publicKey: Data, message: Data, signature: Data) -> Bo
     )
 })
 }
+/**
+ * The current 10-minute rendezvous epoch (`unix_seconds / 600`).
+ */
+public func wanCurrentEpoch() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_func_wan_current_epoch($0
+    )
+})
+}
+/**
+ * Derive the room id both peers must use for `epoch`.
+ *
+ * The PSK is required: without one the engine returns an empty room id rather
+ * than deriving a room any third party could predict from the two public keys.
+ */
+public func wanDeriveRoomId(myPublicKey: Data, peerPublicKey: Data, psk: Data, epoch: UInt64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_wan_derive_room_id(
+        FfiConverterData.lower(myPublicKey),
+        FfiConverterData.lower(peerPublicKey),
+        FfiConverterData.lower(psk),
+        FfiConverterUInt64.lower(epoch),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -5159,6 +6022,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_comparison_pin() != 2657) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_connect_wan() != 30765) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
@@ -5246,6 +6112,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_verify_message() != 57140) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_wan_current_epoch() != 42078) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_wan_derive_room_id() != 57681) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound() != 50984) {
@@ -5348,6 +6220,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_truststore_trust_device() != 27542) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wanchannel_channel_type() != 18386) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wanchannel_remote_addr() != 46558) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown() != 26295) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533) {

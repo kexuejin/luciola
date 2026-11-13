@@ -1485,3 +1485,216 @@ where
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// WAN traversal
+// ---------------------------------------------------------------------------
+
+use zeroize::Zeroizing;
+
+/// Relay and signalling policy for one WAN channel. Both flags default to
+/// `false`, so a host must opt in to third-party signalling explicitly.
+#[napi(object)]
+pub struct JsWanRelayConfig {
+    /// Permit an end-to-end encrypted relay when a direct path fails.
+    pub allow_relay: bool,
+    /// Permit third-party signalling (public keys, public IPs and online times
+    /// leave the LAN).
+    pub allow_wan_signaling: bool,
+    /// Reserved for dedicated relay endpoints; the current engine reuses the
+    /// already-authenticated signalling WebSocket.
+    pub relay_endpoints: Vec<String>,
+    /// WebSocket connect timeout in milliseconds (clamped to a 500 ms floor).
+    pub connection_timeout_ms: u32,
+}
+
+/// Everything a host supplies to establish one WAN channel.
+#[napi(object)]
+pub struct JsWanConfig {
+    /// `wss://` rendezvous endpoint (`ws://` is accepted for loopback tests).
+    pub signaling_endpoint: String,
+    /// 32-character hex room id from `wanDeriveRoomId`.
+    pub room: String,
+    /// Rendezvous epoch; `0` means the current epoch.
+    pub epoch: u32,
+    /// Pairing PSK (secret; zeroized inside the engine).
+    pub psk: Buffer,
+    /// Local 32-byte Ed25519 identity seed.
+    pub identity_seed: Buffer,
+    /// Local 32-byte Ed25519 public key.
+    pub my_public_key: Buffer,
+    /// Pinned peer 32-byte Ed25519 public key (never TOFU).
+    pub peer_public_key: Buffer,
+    /// Relay and signalling policy.
+    pub relay: JsWanRelayConfig,
+    /// Optional single STUN server override.
+    pub stun_server: Option<String>,
+    /// Candidate/punch budget in milliseconds; omitted or `0` uses 5000 ms.
+    pub punch_timeout_ms: Option<u32>,
+    /// Skip UDP punching (and the public STUN query). Defaults to `true`.
+    pub enable_hole_punching: Option<bool>,
+    /// Local LAN TCP port advertised in candidates. Defaults to `0`.
+    pub tcp_port: Option<u32>,
+    /// Start streaming over the relay immediately and migrate later.
+    /// Defaults to `false`.
+    pub progressive: Option<bool>,
+}
+
+impl JsWanConfig {
+    fn into_core(self) -> Result<luciola::wan::WanConfig> {
+        if self.signaling_endpoint.is_empty() {
+            return Err(Error::from_reason("signalingEndpoint must not be empty"));
+        }
+        if self.room.is_empty() {
+            return Err(Error::from_reason(
+                "room must not be empty; derive it with wanDeriveRoomId",
+            ));
+        }
+        if self.psk.is_empty() {
+            return Err(Error::from_reason("psk must not be empty"));
+        }
+        let identity_seed = require_key(&self.identity_seed, "identitySeed")?;
+        let my_public_key = require_key(&self.my_public_key, "myPublicKey")?;
+        let peer_public_key = require_key(&self.peer_public_key, "peerPublicKey")?;
+        let tcp_port = u16::try_from(self.tcp_port.unwrap_or(0))
+            .map_err(|_| Error::from_reason("tcpPort must fit in u16"))?;
+        let punch_timeout_ms = u64::from(self.punch_timeout_ms.unwrap_or(0));
+        Ok(luciola::wan::WanConfig {
+            signaling_endpoint: self.signaling_endpoint,
+            room: self.room,
+            epoch: u64::from(self.epoch),
+            psk: Zeroizing::new(self.psk.to_vec()),
+            identity_seed,
+            my_public_key,
+            peer_public_key,
+            relay: luciola_proto::RelayConfig {
+                allow_relay: self.relay.allow_relay,
+                allow_wan_signaling: self.relay.allow_wan_signaling,
+                relay_endpoints: self.relay.relay_endpoints,
+                connection_timeout_ms: u64::from(self.relay.connection_timeout_ms),
+            },
+            stun_server: self.stun_server,
+            punch_timeout: std::time::Duration::from_millis(if punch_timeout_ms == 0 {
+                5_000
+            } else {
+                punch_timeout_ms
+            }),
+            enable_hole_punching: self.enable_hole_punching.unwrap_or(true),
+            tcp_port,
+            progressive: self.progressive.unwrap_or(false),
+        })
+    }
+}
+
+fn require_key(bytes: &[u8], field: &str) -> Result<[u8; 32]> {
+    bytes
+        .try_into()
+        .map_err(|_| Error::from_reason(format!("{field} must be exactly 32 bytes")))
+}
+
+/// An established WAN channel.
+///
+/// `connectWan` returns a Promise; the channel reports the data plane it
+/// actually uses and must be shut down when the host is done with it.
+#[napi]
+pub struct WanChannel {
+    inner: std::sync::Mutex<Option<luciola::link::secure::SecureStream>>,
+}
+
+#[napi]
+impl WanChannel {
+    /// The data plane this channel actually uses: `lan_direct`,
+    /// `hole_punched_direct`, `relay_forwarded`, `usb_adb_direct`, or
+    /// `unknown` after shutdown.
+    #[napi]
+    pub fn channel_type(&self) -> String {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|stream| stream.channel_type().as_str().to_string())
+            })
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    /// The peer's socket endpoint, when the transport exposes one.
+    #[napi]
+    pub fn remote_addr(&self) -> Option<String> {
+        self.inner.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|stream| stream.remote_addr())
+                .map(|addr| addr.to_string())
+        })
+    }
+
+    /// Close the channel. Idempotent; a second call is a no-op.
+    #[napi]
+    pub async fn shutdown(&self) -> Result<()> {
+        let stream = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN channel lock poisoned"))?
+            .take();
+        if let Some(mut stream) = stream {
+            stream
+                .shutdown()
+                .await
+                .map_err(|err| Error::from_reason(err.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+/// Establish a WAN secure channel. Returns a Promise.
+///
+/// Order of attempts: encrypted candidate exchange over WSS, simultaneous UDP
+/// hole punching on the same socket, then an end-to-end encrypted relay over
+/// the signalling WebSocket only when both peers allow it and agree on the
+/// route.
+#[napi]
+pub async fn connect_wan(config: JsWanConfig) -> Result<WanChannel> {
+    let core = config.into_core()?;
+    let stream = luciola::wan::connect_wan(core)
+        .await
+        .map_err(|err| Error::from_reason(err.to_string()))?;
+    Ok(WanChannel {
+        inner: std::sync::Mutex::new(Some(stream)),
+    })
+}
+
+/// The current 10-minute rendezvous epoch (`unix_seconds / 600`).
+#[napi]
+pub fn wan_current_epoch() -> u32 {
+    luciola::wan::current_epoch() as u32
+}
+
+/// Derive the room id both peers must use for `epoch`.
+///
+/// The PSK is required: without one the engine returns an empty room id rather
+/// than deriving a room any third party could predict from the public keys.
+#[napi]
+pub fn wan_derive_room_id(
+    my_public_key: Buffer,
+    peer_public_key: Buffer,
+    psk: Buffer,
+    epoch: u32,
+) -> Result<String> {
+    let my = require_key(&my_public_key, "myPublicKey")?;
+    let peer = require_key(&peer_public_key, "peerPublicKey")?;
+    if psk.is_empty() {
+        return Err(Error::from_reason("psk must not be empty"));
+    }
+    let room = luciola::pairing::derive_rendezvous_room_id_flexible(
+        &my,
+        &peer,
+        Some(&psk[..]),
+        Some(u64::from(epoch)),
+    );
+    if room.is_empty() {
+        return Err(Error::from_reason("room derivation failed; check the PSK"));
+    }
+    Ok(room)
+}

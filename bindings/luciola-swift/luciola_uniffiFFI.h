@@ -543,6 +543,31 @@ RustBuffer uniffi_luciola_uniffi_fn_method_truststore_to_json(void*_Nonnull ptr,
 void uniffi_luciola_uniffi_fn_method_truststore_trust_device(void*_Nonnull ptr, RustBuffer device, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CLONE_WANCHANNEL
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_CLONE_WANCHANNEL
+void*_Nonnull uniffi_luciola_uniffi_fn_clone_wanchannel(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FREE_WANCHANNEL
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FREE_WANCHANNEL
+void uniffi_luciola_uniffi_fn_free_wanchannel(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_WANCHANNEL_CHANNEL_TYPE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_WANCHANNEL_CHANNEL_TYPE
+RustBuffer uniffi_luciola_uniffi_fn_method_wanchannel_channel_type(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_WANCHANNEL_REMOTE_ADDR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_WANCHANNEL_REMOTE_ADDR
+RustBuffer uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_WANCHANNEL_SHUTDOWN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_WANCHANNEL_SHUTDOWN
+void uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_LOGSINK
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_INIT_CALLBACK_VTABLE_LOGSINK
 void uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(const UniffiVTableCallbackInterfaceLogSink* _Nonnull vtable
@@ -582,6 +607,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_classify_error(RustBuffer code_or_detai
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_COMPARISON_PIN
 RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer local_pk, RustBuffer remote_pk, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_CONNECT_WAN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_CONNECT_WAN
+void*_Nonnull uniffi_luciola_uniffi_fn_func_connect_wan(RustBuffer config, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_DEFAULT_RACE_CANDIDATES
@@ -734,6 +764,17 @@ RustBuffer uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(RustCallStat
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_VERIFY_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_VERIFY_MESSAGE
 int8_t uniffi_luciola_uniffi_fn_func_verify_message(RustBuffer public_key, RustBuffer message, RustBuffer signature, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_WAN_CURRENT_EPOCH
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_WAN_CURRENT_EPOCH
+uint64_t uniffi_luciola_uniffi_fn_func_wan_current_epoch(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_WAN_DERIVE_ROOM_ID
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_FUNC_WAN_DERIVE_ROOM_ID
+RustBuffer uniffi_luciola_uniffi_fn_func_wan_derive_room_id(RustBuffer my_public_key, RustBuffer peer_public_key, RustBuffer psk, uint64_t epoch, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_LUCIOLA_UNIFFI_RUSTBUFFER_ALLOC
@@ -1046,6 +1087,12 @@ uint16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_CONNECT_WAN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_CONNECT_WAN
+uint16_t uniffi_luciola_uniffi_checksum_func_connect_wan(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_DEFAULT_RACE_CANDIDATES
 uint16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
@@ -1217,6 +1264,18 @@ uint16_t uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_VERIFY_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_VERIFY_MESSAGE
 uint16_t uniffi_luciola_uniffi_checksum_func_verify_message(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_WAN_CURRENT_EPOCH
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_WAN_CURRENT_EPOCH
+uint16_t uniffi_luciola_uniffi_checksum_func_wan_current_epoch(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_WAN_DERIVE_ROOM_ID
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_FUNC_WAN_DERIVE_ROOM_ID
+uint16_t uniffi_luciola_uniffi_checksum_func_wan_derive_room_id(void
     
 );
 #endif
@@ -1421,6 +1480,24 @@ uint16_t uniffi_luciola_uniffi_checksum_method_truststore_to_json(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_TRUST_DEVICE
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_TRUSTSTORE_TRUST_DEVICE
 uint16_t uniffi_luciola_uniffi_checksum_method_truststore_trust_device(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_WANCHANNEL_CHANNEL_TYPE
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_WANCHANNEL_CHANNEL_TYPE
+uint16_t uniffi_luciola_uniffi_checksum_method_wanchannel_channel_type(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_WANCHANNEL_REMOTE_ADDR
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_WANCHANNEL_REMOTE_ADDR
+uint16_t uniffi_luciola_uniffi_checksum_method_wanchannel_remote_addr(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_WANCHANNEL_SHUTDOWN
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_WANCHANNEL_SHUTDOWN
+uint16_t uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown(void
     
 );
 #endif

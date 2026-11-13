@@ -707,6 +707,89 @@ public expect open class TrustStore: Disposable, TrustStoreInterface {
 
 
 /**
+ * An established WAN channel.
+ *
+ * `connect_wan` blocks the calling thread while it exchanges candidates,
+ * punches and runs the authenticated handshake, bounded by
+ * `punch_timeout_ms` and the signalling timeout. On mobile platforms call it
+ * from a worker thread, never from the UI thread.
+ */
+public interface WanChannelInterface {
+    
+    /**
+     * The data plane this channel actually uses.
+     *
+     * Returns `Unknown` after [`WanChannel::shutdown`] or when the engine
+     * reports a code this build does not know.
+     */
+    public fun `channelType`(): WanChannelKind
+    
+    /**
+     * The peer's socket endpoint, when the transport exposes one.
+     */
+    public fun `remoteAddr`(): kotlin.String?
+    
+    /**
+     * Close the channel. Idempotent; a second call is a no-op.
+     */
+    @Throws(WanFfiException::class)
+    public fun `shutdown`()
+    
+    public companion object
+}
+
+
+/**
+ * An established WAN channel.
+ *
+ * `connect_wan` blocks the calling thread while it exchanges candidates,
+ * punches and runs the authenticated handshake, bounded by
+ * `punch_timeout_ms` and the signalling timeout. On mobile platforms call it
+ * from a worker thread, never from the UI thread.
+ */
+public expect open class WanChannel: Disposable, WanChannelInterface {
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("ConvertSecondaryConstructorToPrimary")
+    public constructor(noPointer: NoPointer)
+
+    
+
+    override fun destroy()
+    override fun close()
+
+    
+    /**
+     * The data plane this channel actually uses.
+     *
+     * Returns `Unknown` after [`WanChannel::shutdown`] or when the engine
+     * reports a code this build does not know.
+     */
+    public override fun `channelType`(): WanChannelKind
+    
+    /**
+     * The peer's socket endpoint, when the transport exposes one.
+     */
+    public override fun `remoteAddr`(): kotlin.String?
+    
+    /**
+     * Close the channel. Idempotent; a second call is a no-op.
+     */
+    @Throws(WanFfiException::class)
+    public override fun `shutdown`()
+    
+
+    
+    public companion object
+}
+
+
+
+
+/**
  * A generated or restored device identity. Keep `seed` secret.
  */
 
@@ -1206,6 +1289,143 @@ public data class TrustedDeviceInfo (
 
 
 
+/**
+ * Everything a host supplies to establish one WAN channel.
+ *
+ * The identity fields are the same pinned Ed25519 material the LAN
+ * `SecureStream` uses; `psk` is the high-entropy secret from the v3 pairing
+ * URI. Byte arrays are length-checked at this boundary, so a malformed
+ * identity is reported as `InvalidConfig` instead of reaching the engine.
+ */
+
+public data class WanConfig (
+    /**
+     * `wss://` rendezvous endpoint (`ws://` is accepted for loopback tests).
+     */
+    var `signalingEndpoint`: kotlin.String, 
+    /**
+     * 32-character hex room id from [`wan_derive_room_id`].
+     */
+    var `room`: kotlin.String, 
+    /**
+     * Rendezvous epoch; `0` means "use the current epoch".
+     */
+    var `epoch`: kotlin.ULong, 
+    /**
+     * Pairing PSK (secret; zeroized inside the engine).
+     */
+    var `psk`: kotlin.ByteArray, 
+    /**
+     * Local 32-byte Ed25519 identity seed.
+     */
+    var `identitySeed`: kotlin.ByteArray, 
+    /**
+     * Local 32-byte Ed25519 public key.
+     */
+    var `myPublicKey`: kotlin.ByteArray, 
+    /**
+     * Pinned peer 32-byte Ed25519 public key (never TOFU).
+     */
+    var `peerPublicKey`: kotlin.ByteArray, 
+    /**
+     * Relay and signalling policy.
+     */
+    var `relay`: WanRelayConfig, 
+    /**
+     * Optional single STUN server override.
+     */
+    var `stunServer`: kotlin.String?, 
+    /**
+     * Candidate-gathering and punching budget in milliseconds; `0` uses the
+     * engine default of 5000 ms.
+     */
+    var `punchTimeoutMs`: kotlin.ULong, 
+    /**
+     * Skip UDP punching (and the public STUN query) entirely.
+     */
+    var `enableHolePunching`: kotlin.Boolean, 
+    /**
+     * Local LAN TCP port advertised in candidates (diagnostic metadata).
+     */
+    var `tcpPort`: kotlin.UShort, 
+    /**
+     * Start streaming over the relay immediately and migrate to direct later.
+     */
+    var `progressive`: kotlin.Boolean
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+
+        other as WanConfig
+        if (`signalingEndpoint` != other.`signalingEndpoint`) return false
+        if (`room` != other.`room`) return false
+        if (`epoch` != other.`epoch`) return false
+        if (!`psk`.contentEquals(other.`psk`)) return false
+        if (!`identitySeed`.contentEquals(other.`identitySeed`)) return false
+        if (!`myPublicKey`.contentEquals(other.`myPublicKey`)) return false
+        if (!`peerPublicKey`.contentEquals(other.`peerPublicKey`)) return false
+        if (`relay` != other.`relay`) return false
+        if (`stunServer` != other.`stunServer`) return false
+        if (`punchTimeoutMs` != other.`punchTimeoutMs`) return false
+        if (`enableHolePunching` != other.`enableHolePunching`) return false
+        if (`tcpPort` != other.`tcpPort`) return false
+        if (`progressive` != other.`progressive`) return false
+
+        return true
+    }
+    override fun hashCode(): Int {
+        var result = `signalingEndpoint`.hashCode()
+        result = 31 * result + `room`.hashCode()
+        result = 31 * result + `epoch`.hashCode()
+        result = 31 * result + `psk`.contentHashCode()
+        result = 31 * result + `identitySeed`.contentHashCode()
+        result = 31 * result + `myPublicKey`.contentHashCode()
+        result = 31 * result + `peerPublicKey`.contentHashCode()
+        result = 31 * result + `relay`.hashCode()
+        result = 31 * result + (`stunServer`?.hashCode() ?: 0)
+        result = 31 * result + `punchTimeoutMs`.hashCode()
+        result = 31 * result + `enableHolePunching`.hashCode()
+        result = 31 * result + `tcpPort`.hashCode()
+        result = 31 * result + `progressive`.hashCode()
+        return result
+    }
+    public companion object
+}
+
+
+
+/**
+ * Relay and signalling policy for one WAN channel. Both flags are `false` by
+ * default, so a host must opt in to third-party signalling explicitly.
+ */
+
+public data class WanRelayConfig (
+    /**
+     * Permit an end-to-end encrypted relay when a direct path fails.
+     */
+    var `allowRelay`: kotlin.Boolean, 
+    /**
+     * Permit third-party signalling (public keys, public IPs and online times
+     * leave the LAN).
+     */
+    var `allowWanSignaling`: kotlin.Boolean, 
+    /**
+     * Reserved for dedicated relay endpoints. The current engine reuses the
+     * already-authenticated signalling WebSocket and does not read this list.
+     */
+    var `relayEndpoints`: List<kotlin.String>, 
+    /**
+     * WebSocket connect timeout in milliseconds (the engine clamps it to a
+     * 500 ms floor).
+     */
+    var `connectionTimeoutMs`: kotlin.ULong
+) {
+    public companion object
+}
+
+
+
 
 /**
  * The network transport channel currently backing a session.
@@ -1360,6 +1580,134 @@ public enum class TrustLevel {
 
 
 
+/**
+ * The data plane a [`WanChannel`] actually uses.
+ */
+
+
+public enum class WanChannelKind {
+    
+    /**
+     * Local network direct link.
+     */
+    LAN_DIRECT,
+    /**
+     * Direct WAN path (IPv6 GUA or a UDP hole punch).
+     */
+    HOLE_PUNCHED_DIRECT,
+    /**
+     * End-to-end encrypted relay.
+     */
+    RELAY_FORWARDED,
+    /**
+     * Physical USB link through ADB.
+     */
+    USB_ADB_DIRECT,
+    /**
+     * The channel is closed, or reported a code this build does not know.
+     */
+    UNKNOWN;
+    public companion object
+}
+
+
+
+
+
+
+
+/**
+ * Errors surfaced by the WAN exports.
+ *
+ * The variants mirror [`luciola::wan::WanError`], so a host can distinguish a
+ * policy refusal from a signalling failure, a missing route and a failed
+ * handshake without parsing strings.
+ */
+public sealed class WanFfiException: kotlin.Exception() {
+    
+    /**
+     * Third-party signalling or relay was not enabled by policy.
+     */
+    public class PolicyDenied(
+        /**
+         * Engine detail.
+         */
+        public val `detail`: kotlin.String,
+    ) : WanFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * Operating-system I/O failure.
+     */
+    public class Io(
+        /**
+         * Engine detail.
+         */
+        public val `detail`: kotlin.String,
+    ) : WanFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * Signalling transport, authentication or framing failure.
+     */
+    public class Signaling(
+        /**
+         * Engine detail.
+         */
+        public val `detail`: kotlin.String,
+    ) : WanFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * No direct path and no permitted relay.
+     */
+    public class NoRoute(
+        /**
+         * Engine detail.
+         */
+        public val `detail`: kotlin.String,
+    ) : WanFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * The authenticated handshake failed on the chosen transport.
+     */
+    public class Handshake(
+        /**
+         * Engine detail.
+         */
+        public val `detail`: kotlin.String,
+    ) : WanFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * The supplied configuration was missing or inconsistent.
+     */
+    public class InvalidConfig(
+        /**
+         * Which field was rejected and why.
+         */
+        public val `detail`: kotlin.String,
+    ) : WanFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+}
+
+
+
+
 
 /**
  * 平台日志出口（可选）：宿主实现 [`LogSink`] 后调 [`set_log_sink`]，引擎内
@@ -1507,6 +1855,17 @@ public expect fun `classifyError`(`codeOrDetail`: kotlin.String, `message`: kotl
  * Symmetrical 6-digit on-screen comparison pin between two devices during pairing.
  */
 public expect fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotlin.ByteArray): kotlin.String
+
+/**
+ * Establish a WAN secure channel.
+ *
+ * Order of attempts: encrypted candidate exchange over WSS, simultaneous UDP
+ * hole punching on the same socket, then an end-to-end encrypted relay over
+ * the signalling WebSocket only when both peers allow it and agree on the
+ * route. The returned channel reports the plane it actually uses.
+ */
+@Throws(WanFfiException::class)
+public expect fun `connectWan`(`config`: WanConfig): WanChannel
 
 /**
  * Selection policy shared with the demos: first 3 IPv4 candidates plus the
@@ -1666,4 +2025,18 @@ public expect fun `subnetBroadcastAddresses`(): List<kotlin.String>
  * Verify a signature against an Ed25519 public key.
  */
 public expect fun `verifyMessage`(`publicKey`: kotlin.ByteArray, `message`: kotlin.ByteArray, `signature`: kotlin.ByteArray): kotlin.Boolean
+
+/**
+ * The current 10-minute rendezvous epoch (`unix_seconds / 600`).
+ */
+public expect fun `wanCurrentEpoch`(): kotlin.ULong
+
+/**
+ * Derive the room id both peers must use for `epoch`.
+ *
+ * The PSK is required: without one the engine returns an empty room id rather
+ * than deriving a room any third party could predict from the two public keys.
+ */
+@Throws(WanFfiException::class)
+public expect fun `wanDeriveRoomId`(`myPublicKey`: kotlin.ByteArray, `peerPublicKey`: kotlin.ByteArray, `psk`: kotlin.ByteArray, `epoch`: kotlin.ULong): kotlin.String
 

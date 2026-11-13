@@ -1549,6 +1549,20 @@ internal val UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByValue.`un
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 internal object UniffiLib {
     init {
             uniffiCallbackInterfaceLogSink.register(this)
@@ -1949,6 +1963,41 @@ internal object UniffiLib {
         `device`,
         uniffiCallStatus,
     )
+    fun uniffi_luciola_uniffi_fn_clone_wanchannel(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer? = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_clone_wanchannel(
+        `ptr`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_free_wanchannel(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_free_wanchannel(
+        `ptr`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_method_wanchannel_channel_type(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_method_wanchannel_channel_type(
+        `ptr`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(
+        `ptr`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(
+        `ptr`,
+        uniffiCallStatus,
+    )
     fun uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(
         `vtable`: UniffiVTableCallbackInterfaceLogSink,
     ): Unit = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(
@@ -2025,6 +2074,13 @@ internal object UniffiLib {
     ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_comparison_pin(
         `localPk`,
         `remotePk`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_connect_wan(
+        `config`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer? = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_connect_wan(
+        `config`,
         uniffiCallStatus,
     )
     fun uniffi_luciola_uniffi_fn_func_default_race_candidates(
@@ -2268,6 +2324,24 @@ internal object UniffiLib {
         `publicKey`,
         `message`,
         `signature`,
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_wan_current_epoch(
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Long = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_wan_current_epoch(
+        uniffiCallStatus,
+    )
+    fun uniffi_luciola_uniffi_fn_func_wan_derive_room_id(
+        `myPublicKey`: RustBufferByValue,
+        `peerPublicKey`: RustBufferByValue,
+        `psk`: RustBufferByValue,
+        `epoch`: Long,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue = luciola_uniffi.cinterop.uniffi_luciola_uniffi_fn_func_wan_derive_room_id(
+        `myPublicKey`,
+        `peerPublicKey`,
+        `psk`,
+        `epoch`,
         uniffiCallStatus,
     )
     fun ffi_luciola_uniffi_rustbuffer_alloc(
@@ -2653,6 +2727,9 @@ internal object UniffiLib {
     fun uniffi_luciola_uniffi_checksum_func_comparison_pin(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_comparison_pin(
     )
+    fun uniffi_luciola_uniffi_checksum_func_connect_wan(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_connect_wan(
+    )
     fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_default_race_candidates(
     )
@@ -2739,6 +2816,12 @@ internal object UniffiLib {
     )
     fun uniffi_luciola_uniffi_checksum_func_verify_message(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_verify_message(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_wan_current_epoch(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_wan_current_epoch(
+    )
+    fun uniffi_luciola_uniffi_checksum_func_wan_derive_room_id(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_func_wan_derive_room_id(
     )
     fun uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound(
@@ -2841,6 +2924,15 @@ internal object UniffiLib {
     )
     fun uniffi_luciola_uniffi_checksum_method_truststore_trust_device(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_truststore_trust_device(
+    )
+    fun uniffi_luciola_uniffi_checksum_method_wanchannel_channel_type(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_wanchannel_channel_type(
+    )
+    fun uniffi_luciola_uniffi_checksum_method_wanchannel_remote_addr(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_wanchannel_remote_addr(
+    )
+    fun uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown(
+    ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown(
     )
     fun uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(
     ): Short = luciola_uniffi.cinterop.uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(
@@ -4150,6 +4242,189 @@ public object FfiConverterTypeTrustStore: FfiConverter<TrustStore, Pointer> {
 
 
 
+/**
+ * An established WAN channel.
+ *
+ * `connect_wan` blocks the calling thread while it exchanges candidates,
+ * punches and runs the authenticated handshake, bounded by
+ * `punch_timeout_ms` and the signalling timeout. On mobile platforms call it
+ * from a worker thread, never from the UI thread.
+ */
+public actual open class WanChannel: Disposable, WanChannelInterface {
+
+    public constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    public actual constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed: kotlinx.atomicfu.AtomicBoolean = kotlinx.atomicfu.atomic(false)
+    private val callCounter: kotlinx.atomicfu.AtomicLong = kotlinx.atomicfu.atomic(1L)
+
+    private val lock = kotlinx.atomicfu.locks.ReentrantLock()
+
+    private fun <T> synchronized(block: () -> T): T {
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    actual override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    actual override fun close() {
+        synchronized { this.destroy() }
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.value
+            if (c == 0L) {
+                throw IllegalStateException("${this::class::simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this::class::simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiPointerDestroyer(private val pointer: Pointer?) : Disposable {
+        override fun destroy() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.uniffi_luciola_uniffi_fn_free_wanchannel(ptr, status)
+                }
+            }
+        }
+    }
+
+    public fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall { status ->
+            UniffiLib.uniffi_luciola_uniffi_fn_clone_wanchannel(pointer!!, status)
+        }!!
+    }
+
+    
+    /**
+     * The data plane this channel actually uses.
+     *
+     * Returns `Unknown` after [`WanChannel::shutdown`] or when the engine
+     * reports a code this build does not know.
+     */
+    public actual override fun `channelType`(): WanChannelKind {
+        return FfiConverterTypeWanChannelKind.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wanchannel_channel_type(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * The peer's socket endpoint, when the transport exposes one.
+     */
+    public actual override fun `remoteAddr`(): kotlin.String? {
+        return FfiConverterOptionalString.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Close the channel. Idempotent; a second call is a no-op.
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `shutdown`() {
+        callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+
+    
+    
+    public actual companion object
+    
+}
+
+
+
+
+
+public object FfiConverterTypeWanChannel: FfiConverter<WanChannel, Pointer> {
+
+    override fun lower(value: WanChannel): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): WanChannel {
+        return WanChannel(value)
+    }
+
+    override fun read(buf: ByteBuffer): WanChannel {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(buf.getLong().toPointer())
+    }
+
+    override fun allocationSize(value: WanChannel): ULong = 8UL
+
+    override fun write(value: WanChannel, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(lower(value).toLong())
+    }
+}
+
+
+
 
 public object FfiConverterTypeDeviceIdentityInfo: FfiConverterRustBuffer<DeviceIdentityInfo> {
     override fun read(buf: ByteBuffer): DeviceIdentityInfo {
@@ -4570,6 +4845,89 @@ public object FfiConverterTypeTrustedDeviceInfo: FfiConverterRustBuffer<TrustedD
 
 
 
+public object FfiConverterTypeWanConfig: FfiConverterRustBuffer<WanConfig> {
+    override fun read(buf: ByteBuffer): WanConfig {
+        return WanConfig(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeWanRelayConfig.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterUShort.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: WanConfig): ULong = (
+            FfiConverterString.allocationSize(value.`signalingEndpoint`) +
+            FfiConverterString.allocationSize(value.`room`) +
+            FfiConverterULong.allocationSize(value.`epoch`) +
+            FfiConverterByteArray.allocationSize(value.`psk`) +
+            FfiConverterByteArray.allocationSize(value.`identitySeed`) +
+            FfiConverterByteArray.allocationSize(value.`myPublicKey`) +
+            FfiConverterByteArray.allocationSize(value.`peerPublicKey`) +
+            FfiConverterTypeWanRelayConfig.allocationSize(value.`relay`) +
+            FfiConverterOptionalString.allocationSize(value.`stunServer`) +
+            FfiConverterULong.allocationSize(value.`punchTimeoutMs`) +
+            FfiConverterBoolean.allocationSize(value.`enableHolePunching`) +
+            FfiConverterUShort.allocationSize(value.`tcpPort`) +
+            FfiConverterBoolean.allocationSize(value.`progressive`)
+    )
+
+    override fun write(value: WanConfig, buf: ByteBuffer) {
+        FfiConverterString.write(value.`signalingEndpoint`, buf)
+        FfiConverterString.write(value.`room`, buf)
+        FfiConverterULong.write(value.`epoch`, buf)
+        FfiConverterByteArray.write(value.`psk`, buf)
+        FfiConverterByteArray.write(value.`identitySeed`, buf)
+        FfiConverterByteArray.write(value.`myPublicKey`, buf)
+        FfiConverterByteArray.write(value.`peerPublicKey`, buf)
+        FfiConverterTypeWanRelayConfig.write(value.`relay`, buf)
+        FfiConverterOptionalString.write(value.`stunServer`, buf)
+        FfiConverterULong.write(value.`punchTimeoutMs`, buf)
+        FfiConverterBoolean.write(value.`enableHolePunching`, buf)
+        FfiConverterUShort.write(value.`tcpPort`, buf)
+        FfiConverterBoolean.write(value.`progressive`, buf)
+    }
+}
+
+
+
+
+public object FfiConverterTypeWanRelayConfig: FfiConverterRustBuffer<WanRelayConfig> {
+    override fun read(buf: ByteBuffer): WanRelayConfig {
+        return WanRelayConfig(
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: WanRelayConfig): ULong = (
+            FfiConverterBoolean.allocationSize(value.`allowRelay`) +
+            FfiConverterBoolean.allocationSize(value.`allowWanSignaling`) +
+            FfiConverterSequenceString.allocationSize(value.`relayEndpoints`) +
+            FfiConverterULong.allocationSize(value.`connectionTimeoutMs`)
+    )
+
+    override fun write(value: WanRelayConfig, buf: ByteBuffer) {
+        FfiConverterBoolean.write(value.`allowRelay`, buf)
+        FfiConverterBoolean.write(value.`allowWanSignaling`, buf)
+        FfiConverterSequenceString.write(value.`relayEndpoints`, buf)
+        FfiConverterULong.write(value.`connectionTimeoutMs`, buf)
+    }
+}
+
+
+
+
 
 public object FfiConverterTypeChannelType: FfiConverterRustBuffer<ChannelType> {
     override fun read(buf: ByteBuffer): ChannelType = try {
@@ -4679,6 +5037,127 @@ public object FfiConverterTypeTrustLevel: FfiConverterRustBuffer<TrustLevel> {
 
     override fun write(value: TrustLevel, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+public object FfiConverterTypeWanChannelKind: FfiConverterRustBuffer<WanChannelKind> {
+    override fun read(buf: ByteBuffer): WanChannelKind = try {
+        WanChannelKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: WanChannelKind): ULong = 4UL
+
+    override fun write(value: WanChannelKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+public object WanFfiExceptionErrorHandler : UniffiRustCallStatusErrorHandler<WanFfiException> {
+    override fun lift(errorBuf: RustBufferByValue): WanFfiException = FfiConverterTypeWanFfiError.lift(errorBuf)
+}
+
+public object FfiConverterTypeWanFfiError : FfiConverterRustBuffer<WanFfiException> {
+    override fun read(buf: ByteBuffer): WanFfiException {
+        return when (buf.getInt()) {
+            1 -> WanFfiException.PolicyDenied(
+                FfiConverterString.read(buf),
+                )
+            2 -> WanFfiException.Io(
+                FfiConverterString.read(buf),
+                )
+            3 -> WanFfiException.Signaling(
+                FfiConverterString.read(buf),
+                )
+            4 -> WanFfiException.NoRoute(
+                FfiConverterString.read(buf),
+                )
+            5 -> WanFfiException.Handshake(
+                FfiConverterString.read(buf),
+                )
+            6 -> WanFfiException.InvalidConfig(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: WanFfiException): ULong {
+        return when (value) {
+            is WanFfiException.PolicyDenied -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is WanFfiException.Io -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is WanFfiException.Signaling -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is WanFfiException.NoRoute -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is WanFfiException.Handshake -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is WanFfiException.InvalidConfig -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: WanFfiException, buf: ByteBuffer) {
+        when (value) {
+            is WanFfiException.PolicyDenied -> {
+                buf.putInt(1)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is WanFfiException.Io -> {
+                buf.putInt(2)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is WanFfiException.Signaling -> {
+                buf.putInt(3)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is WanFfiException.NoRoute -> {
+                buf.putInt(4)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is WanFfiException.Handshake -> {
+                buf.putInt(5)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is WanFfiException.InvalidConfig -> {
+                buf.putInt(6)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 }
 
@@ -5564,6 +6043,24 @@ public actual fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotli
 }
 
 /**
+ * Establish a WAN secure channel.
+ *
+ * Order of attempts: encrypted candidate exchange over WSS, simultaneous UDP
+ * hole punching on the same socket, then an end-to-end encrypted relay over
+ * the signalling WebSocket only when both peers allow it and agree on the
+ * route. The returned channel reports the plane it actually uses.
+ */
+@Throws(WanFfiException::class)
+public actual fun `connectWan`(`config`: WanConfig): WanChannel {
+    return FfiConverterTypeWanChannel.lift(uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_connect_wan(
+            FfiConverterTypeWanConfig.lower(`config`),
+            uniffiRustCallStatus,
+        )
+    }!!)
+}
+
+/**
  * Selection policy shared with the demos: first 3 IPv4 candidates plus the
  * first IPv6 GUA. Feed the result into [race_connect].
  */
@@ -5940,6 +6437,36 @@ public actual fun `verifyMessage`(`publicKey`: kotlin.ByteArray, `message`: kotl
             FfiConverterByteArray.lower(`publicKey`),
             FfiConverterByteArray.lower(`message`),
             FfiConverterByteArray.lower(`signature`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * The current 10-minute rendezvous epoch (`unix_seconds / 600`).
+ */
+public actual fun `wanCurrentEpoch`(): kotlin.ULong {
+    return FfiConverterULong.lift(uniffiRustCall { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_wan_current_epoch(
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Derive the room id both peers must use for `epoch`.
+ *
+ * The PSK is required: without one the engine returns an empty room id rather
+ * than deriving a room any third party could predict from the two public keys.
+ */
+@Throws(WanFfiException::class)
+public actual fun `wanDeriveRoomId`(`myPublicKey`: kotlin.ByteArray, `peerPublicKey`: kotlin.ByteArray, `psk`: kotlin.ByteArray, `epoch`: kotlin.ULong): kotlin.String {
+    return FfiConverterString.lift(uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_wan_derive_room_id(
+            FfiConverterByteArray.lower(`myPublicKey`),
+            FfiConverterByteArray.lower(`peerPublicKey`),
+            FfiConverterByteArray.lower(`psk`),
+            FfiConverterULong.lower(`epoch`),
             uniffiRustCallStatus,
         )
     })

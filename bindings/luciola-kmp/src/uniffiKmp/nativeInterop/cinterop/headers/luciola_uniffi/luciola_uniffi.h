@@ -279,6 +279,16 @@ RustBuffer uniffi_luciola_uniffi_fn_method_truststore_to_json(void * ptr, Uniffi
 );
 void uniffi_luciola_uniffi_fn_method_truststore_trust_device(void * ptr, RustBuffer device, UniffiRustCallStatus *_Nonnull out_status
 );
+void * uniffi_luciola_uniffi_fn_clone_wanchannel(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_free_wanchannel(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_wanchannel_channel_type(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
 void uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(UniffiVTableCallbackInterfaceLogSink const * vtable
 );
 void uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(UniffiVTableCallbackInterfaceOnPeerDiscovered const * vtable
@@ -295,6 +305,8 @@ RustBuffer uniffi_luciola_uniffi_fn_func_build_pairing_uri_v3(RustBuffer name, R
 RustBuffer uniffi_luciola_uniffi_fn_func_classify_error(RustBuffer codeOrDetail, RustBuffer message, UniffiRustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer localPk, RustBuffer remotePk, UniffiRustCallStatus *_Nonnull out_status
+);
+void * uniffi_luciola_uniffi_fn_func_connect_wan(RustBuffer config, UniffiRustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -360,6 +372,11 @@ RustBuffer uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(UniffiRustCa
     
 );
 int8_t uniffi_luciola_uniffi_fn_func_verify_message(RustBuffer publicKey, RustBuffer message, RustBuffer signature, UniffiRustCallStatus *_Nonnull out_status
+);
+int64_t uniffi_luciola_uniffi_fn_func_wan_current_epoch(UniffiRustCallStatus *_Nonnull out_status
+    
+);
+RustBuffer uniffi_luciola_uniffi_fn_func_wan_derive_room_id(RustBuffer myPublicKey, RustBuffer peerPublicKey, RustBuffer psk, int64_t epoch, UniffiRustCallStatus *_Nonnull out_status
 );
 RustBuffer ffi_luciola_uniffi_rustbuffer_alloc(int64_t size, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -488,6 +505,9 @@ int16_t uniffi_luciola_uniffi_checksum_func_classify_error(void
 int16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_func_connect_wan(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
     
 );
@@ -573,6 +593,12 @@ int16_t uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_func_verify_message(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_func_wan_current_epoch(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_func_wan_derive_room_id(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_is_bound(void
@@ -675,6 +701,15 @@ int16_t uniffi_luciola_uniffi_checksum_method_truststore_to_json(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_truststore_trust_device(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wanchannel_channel_type(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wanchannel_remote_addr(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(void

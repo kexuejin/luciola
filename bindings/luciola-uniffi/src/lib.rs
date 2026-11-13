@@ -1801,6 +1801,409 @@ pub fn set_log_sink(sink: Option<Box<dyn LogSink>>) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// WAN traversal exports
+// ---------------------------------------------------------------------------
+
+use luciola::wan::{WanConfig as CoreWanConfig, WanError as CoreWanError};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+use zeroize::Zeroizing;
+
+/// Relay and signalling policy for one WAN channel. Both flags are `false` by
+/// default, so a host must opt in to third-party signalling explicitly.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct WanRelayConfig {
+    /// Permit an end-to-end encrypted relay when a direct path fails.
+    pub allow_relay: bool,
+    /// Permit third-party signalling (public keys, public IPs and online times
+    /// leave the LAN).
+    pub allow_wan_signaling: bool,
+    /// Reserved for dedicated relay endpoints. The current engine reuses the
+    /// already-authenticated signalling WebSocket and does not read this list.
+    pub relay_endpoints: Vec<String>,
+    /// WebSocket connect timeout in milliseconds (the engine clamps it to a
+    /// 500 ms floor).
+    pub connection_timeout_ms: u64,
+}
+
+/// Everything a host supplies to establish one WAN channel.
+///
+/// The identity fields are the same pinned Ed25519 material the LAN
+/// `SecureStream` uses; `psk` is the high-entropy secret from the v3 pairing
+/// URI. Byte arrays are length-checked at this boundary, so a malformed
+/// identity is reported as `InvalidConfig` instead of reaching the engine.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct WanConfig {
+    /// `wss://` rendezvous endpoint (`ws://` is accepted for loopback tests).
+    pub signaling_endpoint: String,
+    /// 32-character hex room id from [`wan_derive_room_id`].
+    pub room: String,
+    /// Rendezvous epoch; `0` means "use the current epoch".
+    pub epoch: u64,
+    /// Pairing PSK (secret; zeroized inside the engine).
+    pub psk: Vec<u8>,
+    /// Local 32-byte Ed25519 identity seed.
+    pub identity_seed: Vec<u8>,
+    /// Local 32-byte Ed25519 public key.
+    pub my_public_key: Vec<u8>,
+    /// Pinned peer 32-byte Ed25519 public key (never TOFU).
+    pub peer_public_key: Vec<u8>,
+    /// Relay and signalling policy.
+    pub relay: WanRelayConfig,
+    /// Optional single STUN server override.
+    pub stun_server: Option<String>,
+    /// Candidate-gathering and punching budget in milliseconds; `0` uses the
+    /// engine default of 5000 ms.
+    pub punch_timeout_ms: u64,
+    /// Skip UDP punching (and the public STUN query) entirely.
+    pub enable_hole_punching: bool,
+    /// Local LAN TCP port advertised in candidates (diagnostic metadata).
+    pub tcp_port: u16,
+    /// Start streaming over the relay immediately and migrate to direct later.
+    pub progressive: bool,
+}
+
+impl WanConfig {
+    fn into_core(self) -> Result<CoreWanConfig, WanFfiError> {
+        if self.signaling_endpoint.is_empty() {
+            return Err(WanFfiError::InvalidConfig {
+                detail: "signaling_endpoint must not be empty".into(),
+            });
+        }
+        if self.room.is_empty() {
+            return Err(WanFfiError::InvalidConfig {
+                detail: "room must not be empty; derive it with wan_derive_room_id".into(),
+            });
+        }
+        if self.psk.is_empty() {
+            return Err(WanFfiError::InvalidConfig {
+                detail: "psk must not be empty".into(),
+            });
+        }
+        let identity_seed = require_key(&self.identity_seed, "identity_seed")?;
+        let my_public_key = require_key(&self.my_public_key, "my_public_key")?;
+        let peer_public_key = require_key(&self.peer_public_key, "peer_public_key")?;
+        Ok(CoreWanConfig {
+            signaling_endpoint: self.signaling_endpoint,
+            room: self.room,
+            epoch: self.epoch,
+            psk: Zeroizing::new(self.psk),
+            identity_seed,
+            my_public_key,
+            peer_public_key,
+            relay: luciola_proto::RelayConfig {
+                allow_relay: self.relay.allow_relay,
+                allow_wan_signaling: self.relay.allow_wan_signaling,
+                relay_endpoints: self.relay.relay_endpoints,
+                connection_timeout_ms: self.relay.connection_timeout_ms,
+            },
+            stun_server: self.stun_server,
+            punch_timeout: Duration::from_millis(if self.punch_timeout_ms == 0 {
+                5_000
+            } else {
+                self.punch_timeout_ms
+            }),
+            enable_hole_punching: self.enable_hole_punching,
+            tcp_port: self.tcp_port,
+            progressive: self.progressive,
+        })
+    }
+}
+
+/// The data plane a [`WanChannel`] actually uses.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WanChannelKind {
+    /// Local network direct link.
+    LanDirect,
+    /// Direct WAN path (IPv6 GUA or a UDP hole punch).
+    HolePunchedDirect,
+    /// End-to-end encrypted relay.
+    RelayForwarded,
+    /// Physical USB link through ADB.
+    UsbAdbDirect,
+    /// The channel is closed, or reported a code this build does not know.
+    Unknown,
+}
+
+impl From<luciola_proto::ChannelType> for WanChannelKind {
+    fn from(channel: luciola_proto::ChannelType) -> Self {
+        match channel {
+            luciola_proto::ChannelType::LanDirect => Self::LanDirect,
+            luciola_proto::ChannelType::HolePunchedDirect => Self::HolePunchedDirect,
+            luciola_proto::ChannelType::RelayForwarded => Self::RelayForwarded,
+            luciola_proto::ChannelType::UsbAdbDirect => Self::UsbAdbDirect,
+        }
+    }
+}
+
+/// Errors surfaced by the WAN exports.
+///
+/// The variants mirror [`luciola::wan::WanError`], so a host can distinguish a
+/// policy refusal from a signalling failure, a missing route and a failed
+/// handshake without parsing strings.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum WanFfiError {
+    /// Third-party signalling or relay was not enabled by policy.
+    #[error("wan policy denied: {detail}")]
+    PolicyDenied {
+        /// Engine detail.
+        detail: String,
+    },
+    /// Operating-system I/O failure.
+    #[error("wan io error: {detail}")]
+    Io {
+        /// Engine detail.
+        detail: String,
+    },
+    /// Signalling transport, authentication or framing failure.
+    #[error("wan signalling error: {detail}")]
+    Signaling {
+        /// Engine detail.
+        detail: String,
+    },
+    /// No direct path and no permitted relay.
+    #[error("wan has no route: {detail}")]
+    NoRoute {
+        /// Engine detail.
+        detail: String,
+    },
+    /// The authenticated handshake failed on the chosen transport.
+    #[error("wan handshake failed: {detail}")]
+    Handshake {
+        /// Engine detail.
+        detail: String,
+    },
+    /// The supplied configuration was missing or inconsistent.
+    #[error("wan invalid configuration: {detail}")]
+    InvalidConfig {
+        /// Which field was rejected and why.
+        detail: String,
+    },
+}
+
+impl From<CoreWanError> for WanFfiError {
+    fn from(error: CoreWanError) -> Self {
+        match error {
+            CoreWanError::PolicyDenied(detail) => Self::PolicyDenied { detail },
+            CoreWanError::Io(err) => Self::Io {
+                detail: err.to_string(),
+            },
+            CoreWanError::Signaling(detail) => Self::Signaling { detail },
+            CoreWanError::NoRoute(detail) => Self::NoRoute { detail },
+            CoreWanError::Handshake(detail) => Self::Handshake { detail },
+            CoreWanError::InvalidConfig(detail) => Self::InvalidConfig { detail },
+            other => Self::Signaling {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
+fn require_key(bytes: &[u8], field: &str) -> Result<[u8; 32], WanFfiError> {
+    bytes.try_into().map_err(|_| WanFfiError::InvalidConfig {
+        detail: format!("{field} must be exactly 32 bytes"),
+    })
+}
+
+fn wan_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("luciola-wan")
+            .enable_all()
+            .build()
+            .expect("failed to build the WAN runtime")
+    })
+}
+
+/// An established WAN channel.
+///
+/// `connect_wan` blocks the calling thread while it exchanges candidates,
+/// punches and runs the authenticated handshake, bounded by
+/// `punch_timeout_ms` and the signalling timeout. On mobile platforms call it
+/// from a worker thread, never from the UI thread.
+#[derive(uniffi::Object)]
+pub struct WanChannel {
+    inner: Mutex<Option<luciola::link::secure::SecureStream>>,
+}
+
+#[uniffi::export]
+impl WanChannel {
+    /// The data plane this channel actually uses.
+    ///
+    /// Returns `Unknown` after [`WanChannel::shutdown`] or when the engine
+    /// reports a code this build does not know.
+    pub fn channel_type(&self) -> WanChannelKind {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|stream| stream.channel_type().into()))
+            .unwrap_or(WanChannelKind::Unknown)
+    }
+
+    /// The peer's socket endpoint, when the transport exposes one.
+    pub fn remote_addr(&self) -> Option<String> {
+        self.inner.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|stream| stream.remote_addr())
+                .map(|addr| addr.to_string())
+        })
+    }
+
+    /// Close the channel. Idempotent; a second call is a no-op.
+    pub fn shutdown(&self) -> Result<(), WanFfiError> {
+        let mut guard = self.inner.lock().map_err(|_| WanFfiError::Io {
+            detail: "WAN channel lock poisoned".into(),
+        })?;
+        if let Some(mut stream) = guard.take() {
+            wan_runtime()
+                .block_on(stream.shutdown())
+                .map_err(|err| WanFfiError::Io {
+                    detail: err.to_string(),
+                })?;
+        }
+        Ok(())
+    }
+}
+
+/// Establish a WAN secure channel.
+///
+/// Order of attempts: encrypted candidate exchange over WSS, simultaneous UDP
+/// hole punching on the same socket, then an end-to-end encrypted relay over
+/// the signalling WebSocket only when both peers allow it and agree on the
+/// route. The returned channel reports the plane it actually uses.
+#[uniffi::export]
+pub fn connect_wan(config: WanConfig) -> Result<Arc<WanChannel>, WanFfiError> {
+    let core = config.into_core()?;
+    let stream = wan_runtime().block_on(luciola::wan::connect_wan(core))?;
+    Ok(Arc::new(WanChannel {
+        inner: Mutex::new(Some(stream)),
+    }))
+}
+
+/// The current 10-minute rendezvous epoch (`unix_seconds / 600`).
+#[uniffi::export]
+pub fn wan_current_epoch() -> u64 {
+    luciola::wan::current_epoch()
+}
+
+/// Derive the room id both peers must use for `epoch`.
+///
+/// The PSK is required: without one the engine returns an empty room id rather
+/// than deriving a room any third party could predict from the two public keys.
+#[uniffi::export]
+pub fn wan_derive_room_id(
+    my_public_key: Vec<u8>,
+    peer_public_key: Vec<u8>,
+    psk: Vec<u8>,
+    epoch: u64,
+) -> Result<String, WanFfiError> {
+    let my = require_key(&my_public_key, "my_public_key")?;
+    let peer = require_key(&peer_public_key, "peer_public_key")?;
+    if psk.is_empty() {
+        return Err(WanFfiError::InvalidConfig {
+            detail: "psk must not be empty".into(),
+        });
+    }
+    let room = luciola::pairing::derive_rendezvous_room_id_flexible(
+        &my,
+        &peer,
+        Some(psk.as_slice()),
+        Some(epoch),
+    );
+    if room.is_empty() {
+        return Err(WanFfiError::InvalidConfig {
+            detail: "room derivation failed; check the PSK".into(),
+        });
+    }
+    Ok(room)
+}
+
+#[cfg(test)]
+mod wan_ffi_tests {
+    use super::*;
+
+    fn config() -> WanConfig {
+        WanConfig {
+            signaling_endpoint: "wss://example.invalid/ws".into(),
+            room: "room".into(),
+            epoch: 0,
+            psk: vec![7; 32],
+            identity_seed: vec![1; 32],
+            my_public_key: vec![2; 32],
+            peer_public_key: vec![3; 32],
+            relay: WanRelayConfig {
+                allow_relay: false,
+                allow_wan_signaling: true,
+                relay_endpoints: Vec::new(),
+                connection_timeout_ms: 0,
+            },
+            stun_server: None,
+            punch_timeout_ms: 0,
+            enable_hole_punching: true,
+            tcp_port: 0,
+            progressive: false,
+        }
+    }
+
+    #[test]
+    fn rejects_identity_that_is_not_32_bytes() {
+        let mut cfg = config();
+        cfg.identity_seed.pop();
+        assert!(matches!(
+            cfg.into_core(),
+            Err(WanFfiError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_psk_and_room() {
+        let mut no_psk = config();
+        no_psk.psk.clear();
+        assert!(matches!(
+            no_psk.into_core(),
+            Err(WanFfiError::InvalidConfig { .. })
+        ));
+
+        let mut no_room = config();
+        no_room.room.clear();
+        assert!(matches!(
+            no_room.into_core(),
+            Err(WanFfiError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn zero_punch_timeout_uses_the_engine_default() {
+        let core = config().into_core().expect("valid config");
+        assert_eq!(core.punch_timeout, Duration::from_millis(5_000));
+    }
+
+    #[test]
+    fn room_derivation_is_deterministic_and_epoch_sensitive() {
+        let my = vec![1u8; 32];
+        let peer = vec![2u8; 32];
+        let psk = vec![3u8; 32];
+        let first = wan_derive_room_id(my.clone(), peer.clone(), psk.clone(), 100).expect("room");
+        let again = wan_derive_room_id(my.clone(), peer.clone(), psk.clone(), 100).expect("room");
+        let next = wan_derive_room_id(my, peer, psk, 101).expect("room");
+        assert_eq!(first, again);
+        assert_ne!(first, next);
+        assert_eq!(first.len(), 32);
+    }
+
+    #[test]
+    fn room_derivation_requires_a_psk() {
+        assert!(matches!(
+            wan_derive_room_id(vec![1; 32], vec![2; 32], Vec::new(), 1),
+            Err(WanFfiError::InvalidConfig { .. })
+        ));
+    }
+}
+
 #[cfg(test)]
 mod error_taxonomy_tests {
     use super::*;
