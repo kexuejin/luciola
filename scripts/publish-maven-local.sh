@@ -31,6 +31,39 @@ if [ -n "${CENTRAL_URL:-}" ]; then
   PUBLISH_TASK=":luciola:publishAllPublicationsToCentralRepository"
   EXTRA_ARGS=(-PcentralUrl="$CENTRAL_URL" -PcentralUser="${CENTRAL_USER:-}" -PcentralToken="${CENTRAL_TOKEN:-}")
 fi
+
+# Constrained networks: the Gradle JVM does not inherit HTTPS_PROXY by itself,
+# and dl.google.com can terminate the TLS handshake while resolving the lint
+# tool that `publishToMavenLocal` pulls in. Every escape below is opt-in or
+# environment-driven — no machine-specific value is hardcoded (AGENTS.md §5).
+#   LUCIOLA_USE_ALIYUN_MIRRORS=1     add the Aliyun fallback repositories
+#   LUCIOLA_SKIP_LINT_ANNOTATIONS=1  skip the lint annotation extractor when
+#                                    the lint tool cannot be resolved at all
+#   LUCIOLA_NO_GRADLE_PROXY=1        do not forward HTTPS_PROXY to Gradle
+if [ "${LUCIOLA_USE_ALIYUN_MIRRORS:-}" = "1" ]; then
+  EXTRA_ARGS+=(-PluciolaUseAliyunMirrors=true)
+fi
+if [ "${LUCIOLA_SKIP_LINT_ANNOTATIONS:-}" = "1" ]; then
+  EXTRA_ARGS+=(-x :luciola:extractAndroidMainAnnotations)
+fi
+PROXY="${HTTPS_PROXY:-${https_proxy:-}}"
+PROXY="${PROXY%/}"
+case "$PROXY" in
+  http://*)
+    if [ -z "${LUCIOLA_NO_GRADLE_PROXY:-}" ]; then
+      HOSTPORT="${PROXY#http://}"
+      PROXY_HOST="${HOSTPORT%%:*}"
+      PROXY_PORT="${HOSTPORT##*:}"
+      case "$PROXY_PORT" in
+        ''|*[!0-9]*) echo "Ignoring malformed HTTPS_PROXY port: $PROXY" >&2 ;;
+        *)
+          EXTRA_ARGS+=(-Dhttps.proxyHost="$PROXY_HOST" -Dhttps.proxyPort="$PROXY_PORT"
+                       -Dhttp.proxyHost="$PROXY_HOST" -Dhttp.proxyPort="$PROXY_PORT")
+          ;;
+      esac
+    fi
+    ;;
+esac
 echo "==> [2/3] Publishing luciola ($PUBLISH_TASK)..."
 # bash 3.2 (the one macOS ships) treats "${EMPTY[@]}" as unbound under set -u;
 # the +form expands to nothing when the array is empty.
@@ -50,7 +83,25 @@ if ! unzip -l "$AAR" | grep -q "jni/arm64-v8a/libluciola_uniffi.so"; then
   echo "Published AAR does NOT contain the native lib: $AAR" >&2
   exit 1
 fi
-echo "OK: $AAR contains jni/arm64-v8a/libluciola_uniffi.so"
+# A version string alone does not prove the artifact carries the engine that was
+# just built (AGENTS.md §3). Compare the packaged .so with the jniLibs copy.
+TMP_SO=$(mktemp)
+trap 'rm -f "$TMP_SO"' EXIT
+unzip -p "$AAR" jni/arm64-v8a/libluciola_uniffi.so > "$TMP_SO"
+if command -v shasum >/dev/null 2>&1; then
+  AAR_SHA=$(shasum -a 256 "$TMP_SO" | awk '{print $1}')
+  SO_SHA=$(shasum -a 256 "$SO_DIR/libluciola_uniffi.so" | awk '{print $1}')
+else
+  AAR_SHA=$(sha256sum "$TMP_SO" | awk '{print $1}')
+  SO_SHA=$(sha256sum "$SO_DIR/libluciola_uniffi.so" | awk '{print $1}')
+fi
+if [ "$AAR_SHA" != "$SO_SHA" ]; then
+  echo "AAR .so does not match the freshly built jniLibs copy" >&2
+  echo "  aar:     $AAR_SHA" >&2
+  echo "  jniLibs: $SO_SHA" >&2
+  exit 1
+fi
+echo "OK: $AAR contains jni/arm64-v8a/libluciola_uniffi.so (sha256 $SO_SHA)"
 echo "Done (mavenLocal). Consumers: implementation(\"io.github.kexuejin:luciola-android:$VERSION\")"
 echo "Remote (Central) when ready: set CENTRAL_URL/CENTRAL_USER/CENTRAL_TOKEN env + GPG"
 echo "  signingKey/signingPassword gradle properties, then rerun this script."

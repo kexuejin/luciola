@@ -173,6 +173,10 @@ concluding a fix is absent from the AAR.
   post-completion final-ACK write error) are fixed.
 - `ChannelType::from_u8` replaces hardcoded byte discrimination and `to_hex`
   no longer allocates.
+- `scripts/publish-maven-local.sh` now forwards `HTTPS_PROXY` to the Gradle
+  JVM, accepts `LUCIOLA_USE_ALIYUN_MIRRORS=1` and
+  `LUCIOLA_SKIP_LINT_ANNOTATIONS=1` for constrained networks, and verifies
+  the AAR's arm64 `.so` sha256 against the freshly built jniLibs copy.
 
 ### Changed
 
