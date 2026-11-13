@@ -491,29 +491,41 @@ impl DiscoverySession {
                     // here. The requested==0 (system-assigned) case is the only
                     // one where the bound port may legitimately differ.
                     let mut engine = None;
+                    // The last real bind error. This used to be discarded, and a
+                    // failure then reported "occupied by another process" — a
+                    // guess that hid every other cause (permissions, address
+                    // family, a caller-requested port the engine refused).
+                    let mut last_error: Option<String> = None;
                     // 5s total: a restart must out-wait the previous engine
                     // thread's socket teardown (exit announce + drop) or the
                     // session silently ends up on an ephemeral port.
                     for _ in 0..25 {
-                        if let Ok(candidate) = DiscoveryEngine::bind(config.clone()).await {
-                            let actual = candidate.local_port().await.unwrap_or(0);
-                            if port == 0 || actual == port {
-                                *bound.lock().unwrap() = true;
-                                engine = Some(candidate);
-                                break;
+                        match DiscoveryEngine::bind(config.clone()).await {
+                            Ok(candidate) => {
+                                let actual = candidate.local_port().await.unwrap_or(0);
+                                if port == 0 || actual == port {
+                                    *bound.lock().unwrap() = true;
+                                    engine = Some(candidate);
+                                    break;
+                                }
+                                // Defensive: a caller opted into fallback and the
+                                // engine landed elsewhere; this session promises
+                                // the well-known port, so retry.
+                                last_error =
+                                    Some(format!("bound port {actual} instead of {port}"));
+                                drop(candidate);
                             }
-                            // Defensive: a caller opted into fallback and the
-                            // engine landed elsewhere; this session promises
-                            // the well-known port, so retry.
-                            drop(candidate);
+                            Err(err) => last_error = Some(err.to_string()),
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
                     let Some(engine) = engine else {
                         *bound.lock().unwrap() = false;
+                        let detail = last_error
+                            .unwrap_or_else(|| "no bind attempt completed".to_string());
                         let info = ErrorInfo::new(
                             ErrorCode::BindFailed,
-                            format!("discovery port {} occupied by another process", port),
+                            format!("discovery port {port} could not be bound: {detail}"),
                         );
                         listener.on_error(info.code_str().to_string(), info.message);
                         return;

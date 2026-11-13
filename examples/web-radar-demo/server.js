@@ -300,9 +300,9 @@ async function broadcastBeacon(probeIdPrefix = 'manual') {
     const ok = await sendEnvelope(buf, target);
     results.push({ target, sent: ok });
   }
-  // Unicast reconciliation: peers whose engine fell back to a random port
-  // (discovery port occupied by another process) never hear broadcasts, so
-  // also dial every known peer directly on its actual listening port.
+  // Unicast reconciliation: peers whose engine could not take the well-known
+  // discovery port never hear broadcasts, so also dial every known peer
+  // directly on its actual listening port.
   for (const peer of peers.values()) {
     if (!peer.udpPort) continue;
     const ok = await sendEnvelope(buf, peer.ip, peer.udpPort);
