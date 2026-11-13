@@ -664,16 +664,22 @@ pub fn verify_message(public_key: Buffer, message: Buffer, signature: Buffer) ->
 }
 
 /// T3：隧道事件 → 已注册 onEvent 回调（NonBlocking：不阻塞隧道命令/监督线程）。
+/// tsfn 放在 Mutex<Option<_>> 里：close() 必须能掐断隧道对回调的最后一条持有
+/// 路径——一个被引用的 ThreadsafeFunction 会钉住 JS 事件循环，进程因此永不退出。
 struct NodeReporter {
-    tsfn: ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>,
+    tsfn: std::sync::Mutex<Option<ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>>>,
 }
 
 impl TunnelReporter for NodeReporter {
     fn report(&self, kind: &str, detail: String) {
-        self.tsfn.call(
-            (Some(kind.to_string()), Some(detail), None),
-            ThreadsafeFunctionCallMode::NonBlocking,
-        );
+        // 先把句柄 clone 出锁再调用：锁内禁止上报，也不能持锁跨 N-API 调用。
+        let tsfn = self.tsfn.lock().unwrap().clone();
+        if let Some(tsfn) = tsfn {
+            tsfn.call(
+                (Some(kind.to_string()), Some(detail), None),
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+        }
     }
 }
 
@@ -697,6 +703,8 @@ pub struct SecureChannel {
     tunnel: std::sync::Arc<TunnelLink>,
     /// T3：已注册 onEvent；隧道 error/retrying 经它同步上报。
     tunnel_event: std::sync::Mutex<Option<ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>>>,
+    /// T3：交给隧道的 reporter（close() 经它释放隧道持有的 tsfn 克隆）。
+    tunnel_reporter: std::sync::Mutex<Option<std::sync::Arc<NodeReporter>>>,
 }
 
 /// Link health counters (same six fields as the uniffi `LinkStats`).
@@ -810,6 +818,7 @@ impl SecureChannel {
             timings: std::sync::Arc::new(LinkTimings::default()),
             tunnel: TunnelLink::new(identity_seed.to_vec()),
             tunnel_event: std::sync::Mutex::new(None),
+            tunnel_reporter: std::sync::Mutex::new(None),
         }
     }
 
@@ -937,6 +946,14 @@ impl SecureChannel {
             let _ = tx.send(());
         }
         *self.outbound_tx.lock().unwrap() = None;
+        // 释放事件回调的全部持有路径：链路线程退出时丢弃自己的克隆，隧道的两条
+        // （tunnel_event 与 NodeReporter）在这里掐断。少放掉一个，被引用的
+        // ThreadsafeFunction 就会把 JS 事件循环钉住——contract 测试曾因此在打印
+        // "✅ passed" 之后永不退出。
+        *self.tunnel_event.lock().unwrap() = None;
+        if let Some(rep) = self.tunnel_reporter.lock().unwrap().take() {
+            *rep.tsfn.lock().unwrap() = None;
+        }
         self.connected
             .store(false, std::sync::atomic::Ordering::SeqCst);
         // T3：消息链路关闭 → 暂停隧道（注册表保留，重连后自动恢复）。
@@ -1148,10 +1165,11 @@ impl SecureChannel {
             },
         };
         *self.tunnel_event.lock().unwrap() = Some(tsfn.clone());
-        self.tunnel.set_base(
-            tunnel_base,
-            std::sync::Arc::new(NodeReporter { tsfn: tsfn.clone() }),
-        );
+        let reporter = std::sync::Arc::new(NodeReporter {
+            tsfn: std::sync::Mutex::new(Some(tsfn.clone())),
+        });
+        *self.tunnel_reporter.lock().unwrap() = Some(reporter.clone());
+        self.tunnel.set_base(tunnel_base, reporter);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
         let timings = self.timings.clone();
