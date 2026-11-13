@@ -2,7 +2,9 @@
 
 A Cloudflare Worker + Durable Object rendezvous hub for the `luciola::wan`
 Rust core. It uses the Hibernation API so idle rooms cost no duration charges.
-This directory ships **source and config, not a deployed public endpoint**.
+This directory ships **source and config**; a deployment is a separate step
+(`scripts/deploy-signaling.sh`) and is never part of a published library
+artifact.
 
 ## What the service does
 
@@ -65,6 +67,8 @@ This directory ships **source and config, not a deployed public endpoint**.
 | `test/auth.test.js` | `node --test` suite for the helpers |
 | `wrangler.toml` | `RENDEZVOUS` binding, the SQLite-backed DO migration, staging env |
 | `../../scripts/deploy-signaling.sh` | deploy + `/health` verification, staging by default |
+| `../../scripts/probe-signaling.py` | prove a deployed Worker returns the epoch header on a `101` |
+| `../../scripts/wan-proxy-tunnel.py` | loopback `ws://` bridge to a deployed `wss://` Worker through `HTTPS_PROXY` |
 
 ## Endpoints
 
@@ -114,6 +118,43 @@ peers meeting through the Worker, a 96 KiB relay transfer, and `/health`
 reporting an epoch within one window of the client's. `ws://` is accepted by the
 client for loopback only; a deployed Worker must be `wss://`.
 
+### Verifying a deployment
+
+A deployed endpoint needs two separate observations. `scripts/probe-signaling.py`
+signs a real upgrade request with an ephemeral Ed25519 key and asserts the
+`101` carries `x-luciola-epoch` matching `/health`:
+
+```bash
+scripts/probe-signaling.py https://luciola-signaling-staging.<account>.workers.dev
+```
+
+For the two-peer test, point `LUCIOLA_WAN_WORKER` at the `wss://` endpoint and
+raise the timeout for the public TLS handshake plus Durable Object cold start:
+
+```bash
+LUCIOLA_WAN_WORKER=wss://luciola-signaling-staging.<account>.workers.dev/ws \
+  LUCIOLA_WAN_CONNECT_TIMEOUT_MS=30000 \
+  cargo test -p luciola --test wan_local_worker -- --nocapture
+```
+
+If the host's DNS resolver is hijacked for `*.workers.dev`, `curl` may reach the
+Worker through `HTTPS_PROXY` while the Rust client times out: `connect_wan` does
+not read proxy variables. `scripts/wan-proxy-tunnel.py` bridges that gap without
+changing the code under test — it listens on loopback, tunnels through the proxy
+with the correct TLS SNI, rewrites only the `Host` header and pumps bytes:
+
+```bash
+# terminal 1: prints the OS-assigned loopback port
+HTTPS_PROXY=http://127.0.0.1:8080 \
+  python3 scripts/wan-proxy-tunnel.py \
+    https://luciola-signaling-staging.<account>.workers.dev
+
+# terminal 2: use the ws:// endpoint printed above
+LUCIOLA_WAN_WORKER=ws://127.0.0.1:<port>/ws \
+  LUCIOLA_WAN_CONNECT_TIMEOUT_MS=30000 \
+  cargo test -p luciola --test wan_local_worker -- --nocapture
+```
+
 ## Deploying
 
 ```bash
@@ -122,12 +163,16 @@ scripts/deploy-signaling.sh --production     # production, explicit
 scripts/deploy-signaling.sh --check https://…/ # verify an existing deployment
 ```
 
-The script runs the Worker tests, checks `wrangler` is authenticated, deploys,
-and then asks the deployment's own `/health` which epoch it serves — a deploy
-that succeeds while the Worker does not answer is reported as a failure. It
-never reads or prints a token. Staging is a separate Worker name with its own
-Durable Object namespace (`[env.staging]` in `wrangler.toml`), so a staging
-deploy cannot serve production rooms.
+The script runs the Worker tests, verifies authentication, deploys, and then
+asks the deployment's own `/health` which epoch it serves — a deploy that
+succeeds while the Worker does not answer is reported as a failure. With
+`CLOUDFLARE_API_TOKEN` set it verifies the token against Cloudflare's token
+endpoint instead of running `wrangler whoami`, because a minimally scoped deploy
+token deliberately lacks the account/user read scopes `whoami` requires;
+otherwise it falls back to the stored `wrangler login`. It never reads, writes or
+prints a token. Staging is a separate Worker name with its own Durable Object
+namespace (`[env.staging]` in `wrangler.toml`), so a staging deploy cannot serve
+production rooms.
 
 ## Client alignment
 
@@ -138,7 +183,10 @@ to the Rust client's `auth_payload()` in
 other turns every legitimate join into a 401. The 600-second epoch definition
 must also stay in sync with `luciola::wan::current_epoch()`.
 
-Deployment status: **not deployed as part of the 0.11.0-local.1 local Maven
-validation build**. Verified in this repository against `wrangler dev` only —
-never against a deployed Cloudflare account. See `SECURITY.md` for the threat
-model and the list of WAN validations that are still outstanding.
+Deployment status: the **staging** environment was deployed and verified on
+2026-11-13 (`/health`, a real signed `101` upgrade with `x-luciola-epoch`, and
+the two-peer 96 KiB relay test against the deployed Durable Object).
+**Production is not deployed.** No deployed service ships with the
+`0.11.0-local.1` local Maven validation build, and a staging run is not a
+real-NAT/CGNAT field test. See `SECURITY.md` for the threat model and the list
+of WAN validations that are still outstanding.

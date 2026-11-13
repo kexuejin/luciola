@@ -82,6 +82,15 @@ concluding a fix is absent from the AAR.
   aligned with the Rust client, with bounded epoch windows, nonce replay
   protection, join/message rate limits, a 32 KiB frame cap, hibernation and
   blind forwarding of opaque encrypted frames.
+- **Deployed-Worker verification tooling**: `scripts/deploy-signaling.sh`
+  accepts a minimally scoped `CLOUDFLARE_API_TOKEN` (verified against the token
+  endpoint rather than `wrangler whoami`, which a scoped token cannot satisfy),
+  `scripts/probe-signaling.py` asserts a real signed `101` upgrade carries
+  `x-luciola-epoch` matching `/health`, and `scripts/wan-proxy-tunnel.py`
+  bridges a loopback `ws://` client to a deployed `wss://` Worker through
+  `HTTPS_PROXY` when local DNS is hijacked. `wan_local_worker.rs` gained a
+  configurable connect timeout and now skips its plaintext `/health` assertion
+  for `wss://` endpoints.
 - All three binding surfaces regenerated (KMP, Swift, Node) and verified
   byte-identical to a fresh bindgen run.
 - **Progressive WAN connection with hot migration** (`wan::adaptive`): a

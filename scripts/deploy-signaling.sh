@@ -14,9 +14,25 @@
 #   scripts/deploy-signaling.sh --production        # deploy production
 #   scripts/deploy-signaling.sh --check URL         # only verify a deployment
 #
-# Requires: node + npx, and wrangler authenticated either with
-# `wrangler login` or CLOUDFLARE_API_TOKEN in the environment. This script
-# never reads, writes or prints a token.
+# Authentication: a scoped API token is enough — no `wrangler login` needed.
+#
+#   export CLOUDFLARE_API_TOKEN=...     # Account API token, scoped to one account
+#   export CLOUDFLARE_ACCOUNT_ID=...    # optional if the token sees one account
+#
+# Minimum token permissions (Account scope, resource = the target account):
+#   * Workers Scripts        — Edit     (script upload; Durable Object classes
+#                                        and their migrations ride along with it)
+#   * Workers Scripts        — Read     (wrangler reads the current deployment)
+#   * Account Settings       — Read     (resolving the account)
+# Not needed for this Worker: Workers KV / D1 / R2 / Queues / Routes. Do not add
+# them "just in case" — a token that cannot touch them cannot leak them.
+#
+# First deploy on a fresh account: the account must have a workers.dev
+# subdomain registered, otherwise `wrangler deploy` stops and asks for one. That
+# step is interactive and is done once in the dashboard (Workers & Pages →
+# your subdomain), not by this script.
+#
+# Requires: node + npx. This script never reads, writes or prints a token.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -31,7 +47,7 @@ while [ $# -gt 0 ]; do
     --check)
       [ $# -ge 2 ] || { echo "--check needs a URL" >&2; exit 2; }
       CHECK_ONLY="$2"; shift 2 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -71,13 +87,41 @@ echo "==> [1/4] Worker unit tests"
 ( cd "$WORKER_DIR" && node --test )
 
 echo "==> [2/4] wrangler authentication"
-if ! ( cd "$WORKER_DIR" && npx --no-install wrangler whoami >/dev/null 2>&1 ); then
-  echo "FAIL: wrangler is not authenticated." >&2
-  echo "      Run 'npx wrangler login' in $WORKER_DIR, or export" >&2
-  echo "      CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID)." >&2
-  exit 1
+# A scoped API token is the expected path (and the only one that works in CI).
+# Do NOT gate on `wrangler whoami` in that case: it needs account/user read
+# scopes that a minimal deploy token deliberately lacks, so it can fail while
+# `deploy` would have worked. Verify the token against the endpoint that checks
+# a token's own validity instead, which needs no extra permission.
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  if curl -fsS --max-time 15 \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+      https://api.cloudflare.com/client/v4/user/tokens/verify \
+      | grep -q '"status":"active"'; then
+    echo "OK: CLOUDFLARE_API_TOKEN is active"
+  else
+    echo "FAIL: CLOUDFLARE_API_TOKEN is not valid or not active." >&2
+    echo "      Check it has not expired or been rolled in the dashboard." >&2
+    exit 1
+  fi
+  if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    # Wrangler can derive the account when the token reaches exactly one; with
+    # several it fails with "More than one account available".
+    echo "WARN: CLOUDFLARE_ACCOUNT_ID is not set." >&2
+    echo "      Fine if this token can see only one account; otherwise wrangler" >&2
+    echo "      aborts with 'More than one account available but unable to" >&2
+    echo "      select one'. Export it to be explicit." >&2
+  else
+    echo "OK: account $CLOUDFLARE_ACCOUNT_ID"
+  fi
+else
+  if ! ( cd "$WORKER_DIR" && npx --no-install wrangler whoami >/dev/null 2>&1 ); then
+    echo "FAIL: wrangler is not authenticated." >&2
+    echo "      Either 'npx wrangler login' in $WORKER_DIR, or export" >&2
+    echo "      CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID)." >&2
+    exit 1
+  fi
+  echo "OK: wrangler is authenticated via its stored login"
 fi
-echo "OK: wrangler is authenticated"
 
 # --- deploy -----------------------------------------------------------------
 
