@@ -78,17 +78,21 @@ Fetch `/health` on both sides and note its `epoch`. Room routing is
 Objects; if the epochs differ, wait for the next window and restart the row. Do
 not reuse a `$ROOM` across rows.
 
-**2. Start the receiver first (machine B).** `connect_wan` waits for a peer
-rather than failing instantly, and the Worker buffers up to 32 early frames for
-the second joiner, but starting the sender into an empty room burns the
-rendezvous timeout and risks crossing an epoch boundary. Have B listening
-before A dials.
+**2. Start the receiver first (machine B).** `connect_wan` waits for the peer's
+candidates, but only for `punch_timeout` — **5 seconds by default** — and then
+exits with `no wan route: timed out waiting for peer candidates`. The Worker
+buffers up to 32 early frames for the second joiner, so a slightly late sender
+can still be served, but a receiver that has already given up is gone. Both
+sides must therefore be alive inside one window: raise the wait on both sides
+with `--punch-timeout-secs 60` (the harness passes 60 by default) instead of
+racing two terminals.
 
 ```bash
 RECV_DIR=$(mktemp -d)
 "$CLI" transfer recv \
   --seed "$SEED_B" --accept-pin "$PIN_A" \
   --room "$ROOM" --signaling "$WORKER" --psk "$PSK" \
+  --punch-timeout-secs 60 \
   --out "$RECV_DIR"
 ```
 
@@ -111,7 +115,9 @@ scripts/field-nat-matrix.sh \
 `--peer-seed` is optional; when supplied the harness derives the peer's public
 key and aborts before the transfer if it disagrees with `--pin`, which is the
 value actually passed to the CLI as `--pin-peer`. Add `--progressive` to
-exercise the zero-wait relay with a background direct upgrade.
+exercise the zero-wait relay with a background direct upgrade. The harness
+passes `--punch-timeout-secs 60`; override it if a row needs a longer window,
+but never leave it at the CLI's 5 s default for a two-machine run.
 
 `--worker` may be the `wss://…/ws` signalling URL itself: the harness
 normalises it to `https://…/health` for the liveness probe (curl has no
@@ -125,11 +131,15 @@ same `$ROOM` / `$PSK` (a reverse-direction `--send` is optional). Set
 labels go in one summary row; a single record is a half-row and proves nothing
 about NAT.
 
-**5. Capture what the JSON cannot.** `transfer.result` is one success/failure
-and does not say whether the peers punched or stayed on the relay. Copy
-`channel_type` from the client log into the notes, along with whether relay
-bytes flowed, elapsed time, and any `NoRoute` report. A row that proves "1 MiB
-arrived once" proves exactly that.
+**5. Read the channel, not just the result.** The record's
+`transfer.channel` carries the sender's `[INFO] Active channel:` value
+(`hole_punched_direct`, `relay_forwarded`, `lan_direct`) and
+`transfer.upgraded_to` the post-upgrade channel, so a row distinguishes a
+punched path from a relayed one without anyone reading a terminal. A row that
+proves "1 MiB arrived once" proves exactly that; only `hole_punched_direct` says
+anything about NAT. Note in `LUCIOLA_FIELD_NOTES` anything the record cannot
+see: carrier name, VPN state, whether relay bytes flowed, and any `NoRoute`
+report.
 
 **6. Repeat for rows 1–4** in the table above, then follow *Filling in the
 summary*. Until then the "no real-NAT / carrier-grade-NAT field test" caveat
@@ -208,8 +218,9 @@ back the claim, per `AGENTS.md` §12.
 
 - It records **one side per run**. Pairing two machines is manual: run it on
   both, with matching `--room`/`--psk`, and put both labels in the summary row.
-- `transfer.result` is a single success/failure. It does not distinguish
-  "punched and migrated" from "stayed on the relay" — read `channel_type` from a
-  client log if that distinction matters for the row.
+- `transfer.result` is a single success/failure; `transfer.channel` names the
+  plane the sender ended on (`hole_punched_direct`, `relay_forwarded`, …) and
+  `transfer.upgraded_to` the channel it migrated to. Both come from the sender's
+  `[INFO]` lines, so a receiver-side migration is not recorded here.
 - Nothing here measures throughput or stability over time. A row that only
   proves "1 MiB arrived once" is exactly that and no more.

@@ -160,8 +160,8 @@ limits*.
   preflight, the shared 32-hex room / PSK / seed / pin values, receiver-first
   ordering, the 600-second epoch constraint, why proxy environment variables
   must be cleared on field machines (otherwise relay bytes egress through the
-  proxy instead of the NAT under test), and what to capture that the JSON
-  record cannot (`channel_type`, relay usage, `NoRoute`). It contains no
+  proxy instead of the NAT under test), and what to capture beyond the JSON
+  record (relay usage, carrier, `NoRoute`). It contains no
   results — the matrix is still empty.
 - **Production deployment plan.** `deploy/cloudflare-signaling/README.md` now
   carries a *not-executed* checklist: decisions due before the first production
@@ -171,6 +171,16 @@ limits*.
   gains `--dry-run` (print the exact wrangler command without contacting
   Cloudflare) and `--self-test` (offline argument regression checks).
   **Production is still not deployed.**
+- **`transfer send` / `recv --punch-timeout-secs`.** `connect_wan` waits 5 s
+  for the peer's candidates and then exits, which is fine for an automated test
+  that starts both sides together and hostile to a two-person field run. The
+  wait is now a CLI flag (default unchanged at 5). The field harness passes 60.
+- **The NAT matrix record now says which path won.** `transfer.channel` carries
+  the sender's `[INFO] Active channel:` value and `transfer.upgraded_to` the
+  post-upgrade channel, so a row distinguishes a punched path from a relayed
+  one. The harness used to discard the sender's output entirely, which forced
+  the operator to retype `channel_type` from a terminal — a relay-only row and
+  a punched row were otherwise identical.
 
 ### Fixed
 
