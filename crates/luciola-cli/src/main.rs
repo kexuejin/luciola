@@ -172,6 +172,11 @@ enum TransferCommands {
         /// Enable progressive zero-wait relay with background direct upgrade
         #[arg(long, default_value_t = false)]
         progressive: bool,
+        /// Seconds to wait for the peer's candidates and for hole punching
+        /// (default 5). A two-machine field run needs both sides alive inside
+        /// one window, so it is usually raised well above the default.
+        #[arg(long, default_value_t = 5)]
+        punch_timeout_secs: u64,
         /// ADB device serial number for physical direct USB transmission
         #[arg(long)]
         adb_device: Option<String>,
@@ -202,6 +207,11 @@ enum TransferCommands {
         /// Enable progressive zero-wait relay with background direct upgrade
         #[arg(long, default_value_t = false)]
         progressive: bool,
+        /// Seconds to wait for the peer's candidates and for hole punching
+        /// (default 5). Both peers must be alive in the same window, so a field
+        /// run usually raises this.
+        #[arg(long, default_value_t = 5)]
+        punch_timeout_secs: u64,
         /// ADB device serial number for physical direct USB transmission
         #[arg(long)]
         adb_device: Option<String>,
@@ -680,6 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signaling,
                 psk,
                 progressive,
+                punch_timeout_secs,
                 adb_device,
             } => {
                 let seed = parse_seed(&seed)?;
@@ -742,6 +753,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ..Default::default()
                         },
                         progressive,
+                        punch_timeout: Duration::from_secs(punch_timeout_secs),
                         ..Default::default()
                     };
                     println!("📡 Connecting to WAN rendezvous {sig_url} (room={room_id}) progressive={progressive} …");
@@ -785,6 +797,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signaling,
                 psk,
                 progressive,
+                punch_timeout_secs,
                 adb_device,
             } => {
                 let seed = parse_seed(&seed)?;
@@ -829,6 +842,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ..Default::default()
                         },
                         progressive,
+                        punch_timeout: Duration::from_secs(punch_timeout_secs),
                         ..Default::default()
                     };
                     println!("📡 Waiting on WAN rendezvous {sig_url} (room={room_id}) progressive={progressive} …");
