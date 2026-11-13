@@ -10,9 +10,15 @@
 # whose Worker is not answering is a failure here, not a success.
 #
 # Usage:
-#   scripts/deploy-signaling.sh                     # deploy staging
-#   scripts/deploy-signaling.sh --production        # deploy production
-#   scripts/deploy-signaling.sh --check URL         # only verify a deployment
+#   scripts/deploy-signaling.sh                       # deploy staging
+#   scripts/deploy-signaling.sh --production          # deploy production
+#   scripts/deploy-signaling.sh --check URL           # only verify a deployment
+#   scripts/deploy-signaling.sh --dry-run --production  # print command, deploy nothing
+#   scripts/deploy-signaling.sh --self-test           # offline argument regression checks
+#
+# Production is the top-level wrangler environment, so its argument array is
+# empty. macOS bash 3.2 aborts on "${DEPLOY_ARGS[@]}" for an empty array under
+# set -u; the guarded expansion below is what makes --production work at all.
 #
 # Authentication: a scoped API token is enough — no `wrangler login` needed.
 #
@@ -32,14 +38,63 @@
 # step is interactive and is done once in the dashboard (Workers & Pages →
 # your subdomain), not by this script.
 #
-# Requires: node + npx. This script never reads, writes or prints a token.
+# Requires: node + npx. CLOUDFLARE_API_TOKEN is read from the environment and
+# sent only in an Authorization header to Cloudflare's token-verify endpoint;
+# it is never written to disk, logged or printed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 WORKER_DIR="deploy/cloudflare-signaling"
 
+# Production is the top-level environment: no --env flag, hence an empty array.
+build_deploy_args() {
+  DEPLOY_ARGS=()
+  if [ "$1" != "production" ]; then
+    DEPLOY_ARGS=(--env staging)
+  fi
+}
+
+# Render the exact command for --dry-run and --self-test. This is also the
+# place where the empty-array case is exercised under set -u: if the guarded
+# expansion is ever replaced with "${DEPLOY_ARGS[@]}" the production self-test
+# fails here instead of at the moment of a real deploy.
+render_deploy_args() {
+  local a out="npx --no-install wrangler deploy"
+  for a in ${DEPLOY_ARGS[@]+"${DEPLOY_ARGS[@]}"}; do
+    out="$out $a"
+  done
+  printf '%s' "$out"
+}
+
+assert_eq() {
+  local want="$1" got="$2" what="$3"
+  if [ "$want" != "$got" ]; then
+    echo "FAIL: $what: expected <$want>, got <$got>" >&2
+    return 1
+  fi
+  echo "ok: $what"
+}
+
+# Offline: no node, no network, no credentials, no deploy.
+run_self_test() {
+  local failed=0 rendered
+  build_deploy_args production
+  assert_eq 0 "${#DEPLOY_ARGS[@]}" \
+    "production uses the top-level environment (no --env)" || failed=1
+  rendered=$(render_deploy_args) || failed=1
+  assert_eq "npx --no-install wrangler deploy" "$rendered" \
+    "production deploy command" || failed=1
+  build_deploy_args staging
+  assert_eq 2 "${#DEPLOY_ARGS[@]}" "staging passes two arguments" || failed=1
+  rendered=$(render_deploy_args) || failed=1
+  assert_eq "npx --no-install wrangler deploy --env staging" "$rendered" \
+    "staging deploy command" || failed=1
+  return "$failed"
+}
+
 ENV_NAME="staging"
 CHECK_ONLY=""
+DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --production) ENV_NAME="production"; shift ;;
@@ -47,10 +102,23 @@ while [ $# -gt 0 ]; do
     --check)
       [ $# -ge 2 ] || { echo "--check needs a URL" >&2; exit 2; }
       CHECK_ONLY="$2"; shift 2 ;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --self-test) run_self_test || exit 1; exit 0 ;;
+    -h|--help) awk 'NR == 1 {next} /^set -euo pipefail$/ {exit} {print}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# Planning aid: show the exact command without contacting Cloudflare at all.
+# Useful for reviewing a production deploy before authorising it. It runs
+# before the node check so a reviewer needs no toolchain installed.
+if [ "$DRY_RUN" = "1" ]; then
+  build_deploy_args "$ENV_NAME"
+  echo "==> dry run ($ENV_NAME): no tests, no auth check, no deploy, no network"
+  printf '    %s\n' "$(render_deploy_args)"
+  echo "    working directory: $WORKER_DIR"
+  exit 0
+fi
 
 [ -d "$WORKER_DIR" ] || { echo "missing $WORKER_DIR" >&2; exit 1; }
 command -v node >/dev/null || { echo "node is required" >&2; exit 1; }
@@ -127,12 +195,14 @@ fi
 
 if [ "$ENV_NAME" = "production" ]; then
   echo "==> [3/4] Deploying PRODUCTION (luciola-signaling)"
-  DEPLOY_ARGS=()
 else
   echo "==> [3/4] Deploying staging (luciola-signaling-staging)"
-  DEPLOY_ARGS=(--env staging)
 fi
-( cd "$WORKER_DIR" && npx --no-install wrangler deploy "${DEPLOY_ARGS[@]}" )
+build_deploy_args "$ENV_NAME"
+# DEPLOY_ARGS is empty for production. The guarded expansion is required:
+# "${DEPLOY_ARGS[@]}" on an empty array aborts under bash 3.2 + set -u
+# before wrangler is even started.
+( cd "$WORKER_DIR" && npx --no-install wrangler deploy ${DEPLOY_ARGS[@]+"${DEPLOY_ARGS[@]}"} )
 
 # --- verify -----------------------------------------------------------------
 
@@ -141,7 +211,7 @@ if [ -n "${LUCIOLA_WAN_URL:-}" ]; then
   verify_health "$LUCIOLA_WAN_URL"
 else
   echo "SKIP: set LUCIOLA_WAN_URL to the deployed https:// URL to verify /health."
-  echo "      Example: LUCIOLA_WAN_URL=https://luciola-signaling-staging.<acct>.workers.dev \\"
+  echo "      Example: LUCIOLA_WAN_URL=https://luciola-signaling-staging.<account>.workers.dev \\"
   echo "               scripts/deploy-signaling.sh --check \$LUCIOLA_WAN_URL"
   echo "      The URL is the 'Deployed ... triggers' line above; it is not parsed"
   echo "      from wrangler's output because that format is not stable."
