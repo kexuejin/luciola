@@ -18,12 +18,22 @@
 #       --send /tmp/probe.bin --peer-seed "$PEER_SEED" --pin "$PEER_PIN" \
 #       --room "$ROOM" --psk "$PSK"
 #
+# Both peers must be alive inside one window: `connect_wan` waits 5 s for the
+# peer's candidates by default and then exits. The harness passes
+# --punch-timeout-secs (default 60) so a two-person field run is not a race
+# between two terminals.
+#
 # --worker accepts either an https:// base URL or the wss:// signalling URL
 # that --send passes to --signaling. The /health probe normalises it: curl
 # cannot speak ws:// or wss://, and /health is at the root, not under /ws.
 #
 # Output: one JSON object per line on stdout, and appended to
 # $LUCIOLA_FIELD_LOG (default: field-records.jsonl in the repo root).
+#
+# `transfer.channel` carries the sender's `[INFO] Active channel:` value
+# (`hole_punched_direct`, `relay_forwarded`, …) and `transfer.upgraded_to` the
+# post-upgrade channel, so a row distinguishes a punched path from a relayed one
+# without anyone reading a terminal.
 #
 # Everything printed here is metadata the operator already has. Secrets (seed,
 # PSK) are passed on the command line to the CLI but never written to the record.
@@ -98,6 +108,7 @@ SEED="${LUCIOLA_SEED:-}"
 OUT="${LUCIOLA_FIELD_LOG:-field-records.jsonl}"
 TIMEOUT_SECS=8
 PROGRESSIVE=0
+PUNCH_TIMEOUT_SECS=60
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -112,6 +123,7 @@ while [ $# -gt 0 ]; do
     --out) OUT="$2"; shift 2 ;;
     --timeout-secs) TIMEOUT_SECS="$2"; shift 2 ;;
     --progressive) PROGRESSIVE=1; shift ;;
+    --punch-timeout-secs) PUNCH_TIMEOUT_SECS="$2"; shift 2 ;;
     --self-test) run_self_test || exit 1; exit 0 ;;
     -h|--help) awk 'NR == 1 {next} /^set -euo pipefail$/ {exit} {print}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -189,6 +201,12 @@ if [ -n "$SEND_FILE" ]; then
   if [ "$PROGRESSIVE" = "1" ]; then
     EXTRA+=(--progressive)
   fi
+  # The channel type is the point of a NAT matrix row. A relayed transfer proves
+  # the Worker works; only hole_punched_direct says anything about NAT. The CLI
+  # reports it on stderr, and discarding that output used to force the operator
+  # to retype it from a terminal — so a run where nobody watched the scrollback
+  # produced a record that could not be told apart from a relay-only run.
+  SEND_LOG=$(mktemp "${TMPDIR:-/tmp}/luciola-send-XXXXXX")
   START=$(date +%s)
   if "$CLI" transfer send \
       --file "$SEND_FILE" \
@@ -197,14 +215,23 @@ if [ -n "$SEND_FILE" ]; then
       --room "$ROOM" \
       --signaling "$WORKER" \
       --psk "$PSK" \
-      ${EXTRA[@]+"${EXTRA[@]}"} >/dev/null 2>&1; then
+      --punch-timeout-secs "$PUNCH_TIMEOUT_SECS" \
+      ${EXTRA[@]+"${EXTRA[@]}"} >"$SEND_LOG" 2>&1; then
     RESULT='"ok"'
   else
     RESULT='"failed"'
+    echo "==> sender output (tail), for diagnosis:" >&2
+    tail -5 "$SEND_LOG" >&2 || true
   fi
   ELAPSED=$(( $(date +%s) - START ))
-  TRANSFER_JSON=$(printf '{"result":%s,"bytes":%s,"elapsed_s":%s}' \
-    "$RESULT" "$(wc -c < "$SEND_FILE" | tr -d ' ')" "$ELAPSED")
+  CHANNEL=$(sed -n 's/^\[INFO\] Active channel: //p' "$SEND_LOG" | head -1)
+  UPGRADED=$(sed -n 's/^\[INFO\] Channel upgraded: .* -> \(.*\)!$/\1/p' "$SEND_LOG" | tail -1)
+  rm -f "$SEND_LOG"
+  json_str() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
+  TRANSFER_JSON=$(printf \
+    '{"result":%s,"bytes":%s,"elapsed_s":%s,"punch_timeout_s":%s,"channel":%s,"upgraded_to":%s}' \
+    "$RESULT" "$(wc -c < "$SEND_FILE" | tr -d ' ')" "$ELAPSED" "$PUNCH_TIMEOUT_SECS" \
+    "$(json_str "$CHANNEL")" "$(json_str "$UPGRADED")")
 fi
 
 # --- record -----------------------------------------------------------------
