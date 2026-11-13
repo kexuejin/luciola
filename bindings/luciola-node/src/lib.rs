@@ -1582,6 +1582,9 @@ impl JsWanConfig {
             enable_hole_punching: self.enable_hole_punching.unwrap_or(true),
             tcp_port,
             progressive: self.progressive.unwrap_or(false),
+            // Explicit proxy configuration is Rust-core/CLI only. Node callers
+            // use the process environment (HTTPS_PROXY / NO_PROXY).
+            proxy: None,
         })
     }
 }

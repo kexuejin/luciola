@@ -4,7 +4,10 @@ The one thing this repository cannot do for you. Hole-punching claims in
 `CHANGELOG.md` and `SECURITY.md` stay qualified with "unit / loopback layer
 only" until the runs below exist, because hole punching either works through a
 real carrier NAT or it does not, and no amount of loopback testing — nor a
-relay-only run against a deployed signalling Worker — answers that. The
+relay-only run against a deployed signalling Worker — answers that. Native
+HTTP CONNECT proxy support only changes how the client reaches the signalling
+endpoint over TCP; it says nothing about UDP hole punching or NAT behaviour,
+and a proxied staging run is still a single-host relay-only run. The
 deployed staging verification is recorded separately by layer in those files.
 
 ## What to collect

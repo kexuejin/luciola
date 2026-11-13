@@ -30,14 +30,21 @@
 //! `face:b00c` 那类无关地址），客户端会连到一个黑洞 IP 并一路挂到超时，报的却是
 //! `rendezvous connect timed out` —— 看起来像服务端问题，实际是本地 DNS。
 //! `curl` 走代理时用远程 DNS 所以能通，于是"curl 能通、客户端不能"这个组合就是
-//! 该故障的指纹。`connect_wan` 目前不支持 `HTTPS_PROXY`，见下方"已知限制"。
+//! 该故障的指纹。`connect_wan` 现已原生支持 HTTP CONNECT 代理：`wss://` 端点读
+//! `HTTPS_PROXY` / `https_proxy`（回退 `ALL_PROXY` / `all_proxy`），遵守
+//! `NO_PROXY` / `no_proxy`，并始终绕过回环地址。因此上面那条 `wss://` 命令在 DNS
+//! 被劫持的主机上也能直连，不需要外部桥接脚本。TLS 仍由 Rust 客户端自己完成，
+//! SNI 是 Worker 的真实主机名，代理只转发不透明字节。
+//!
+//! 想确认代理确实生效，可用 `NO_PROXY=<worker-host>` 跑同一条命令作对照：直连
+//! 路径会重新出现 `rendezvous connect timed out`。`WanConfig::proxy` 可显式指定
+//! 代理，`Some("")` 则强制关闭代理；这两个开关只在 Rust 核心 / CLI 层可用。
 //!
 //! ## 已知限制
 //!
-//! - `connect_wan` 不读代理环境变量；本机 DNS 被劫持时无法直连已部署的 Worker。
-//!   此时可用 `scripts/wan-proxy-tunnel.py` 把 `ws://127.0.0.1:<port>/ws` 经
-//!   CONNECT 隧道转发到真实 Worker，再把这个回环端点填给 `LUCIOLA_WAN_WORKER`。
-//!   它只转发字节、改写 `Host` 头，不解密，也不改变被测代码路径。
+//! - 只支持明文 `http://` 的 CONNECT 代理；`https://` 与 `socks5://` 代理 URL
+//!   会直接报配置错误，而不是被静默忽略。`scripts/wan-proxy-tunnel.py` 仍保留为
+//!   诊断用的独立回环桥（只转发字节、改写 `Host` 头，不解密），但不再是必经步骤。
 //! - 下面这条 `/health` 断言用的是明文 HTTP，只适用于本地 `wrangler dev` 或上述
 //!   回环桥；指向 `wss://` 真实端点时会跳过，否则会把纯 HTTP 发给 443 端口。
 

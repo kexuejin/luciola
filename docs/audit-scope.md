@@ -22,17 +22,18 @@ deployed. Deployment is not review, and it is not a real-NAT field test.
 | # | Path | What to review |
 | :-- | :-- | :-- |
 | 1 | `crates/luciola/src/pairing.rs` | HKDF room derivation (`derive_rendezvous_room_id`, `_flexible`); the fail-closed empty-room path when no PSK is supplied |
-| 2 | `crates/luciola/src/wan/signaling.rs` | `auth_payload` / `auth_url`, `signaling_key`, `seal` / `open` (AES-256-GCM, AAD, sequence), relay chunking, `x-luciola-epoch` parsing |
-| 3 | `crates/luciola/src/wan/mod.rs` | `connect_wan` orchestration: policy gate, epoch realignment, `RouteDecision` agreement, which route is *claimed* |
-| 4 | `crates/luciola/src/wan/udp.rs` | packet codec, `punch`, `drive` (ARQ driver), `start_stream` |
-| 5 | `crates/luciola/src/wan/arq.rs` | `AimdWindow`, RTO backoff, duplicate-ACK handling, `sent_udp` tracking |
-| 6 | `crates/luciola/src/wan/adaptive.rs` | progressive start, migration barrier (`migrate_propose` / `migrate_ack`), post-migration `KIND_CLOSE`, `RelayPacer` |
-| 7 | `crates/luciola/src/wan/bridge.rs` | `StreamBridge`, flow credit, half-close semantics |
-| 8 | `crates/luciola/src/stun.rs` | RFC 5389 parsing (length/padding), RFC 5780 `probe_nat_behavior`, the `Unknown` classification rule |
-| 9 | `crates/luciola/src/traversal.rs` | one-socket candidate gathering, `peer_udp_targets`, srflx port preservation |
-| 10 | `crates/luciola-transfer` | `TransferMeta`, `LUCMETA1` framing, CRC-32 + SHA-256, chunk bitmap persistence order |
-| 11 | `deploy/cloudflare-signaling/src/auth.js` | `validateParams` (shapes, epoch window), `verifyEd25519`, join/message budgets, `currentEpoch` |
-| 12 | `deploy/cloudflare-signaling/src/index.js` | Worker fetch, `RendezvousRoom` Durable Object: nonce replay store, 2-peer cap, pre-join buffer, `/health`, `101` epoch header |
+| 2 | `crates/luciola/src/wan/signaling.rs` | `auth_payload` / `auth_url`, `signaling_key`, `seal` / `open` (AES-256-GCM, AAD, sequence), relay chunking, `x-luciola-epoch` parsing, custom-stream WebSocket upgrade |
+| 3 | `crates/luciola/src/wan/proxy.rs` | proxy URL parsing, env / `NO_PROXY` / loopback resolution, HTTP CONNECT framing and bounded response handling, Basic credential hygiene |
+| 4 | `crates/luciola/src/wan/mod.rs` | `connect_wan` orchestration: policy gate, epoch realignment, `RouteDecision` agreement, which route is *claimed* |
+| 5 | `crates/luciola/src/wan/udp.rs` | packet codec, `punch`, `drive` (ARQ driver), `start_stream` |
+| 6 | `crates/luciola/src/wan/arq.rs` | `AimdWindow`, RTO backoff, duplicate-ACK handling, `sent_udp` tracking |
+| 7 | `crates/luciola/src/wan/adaptive.rs` | progressive start, migration barrier (`migrate_propose` / `migrate_ack`), post-migration `KIND_CLOSE`, `RelayPacer` |
+| 8 | `crates/luciola/src/wan/bridge.rs` | `StreamBridge`, flow credit, half-close semantics |
+| 9 | `crates/luciola/src/stun.rs` | RFC 5389 parsing (length/padding), RFC 5780 `probe_nat_behavior`, the `Unknown` classification rule |
+| 10 | `crates/luciola/src/traversal.rs` | one-socket candidate gathering, `peer_udp_targets`, srflx port preservation |
+| 11 | `crates/luciola-transfer` | `TransferMeta`, `LUCMETA1` framing, CRC-32 + SHA-256, chunk bitmap persistence order |
+| 12 | `deploy/cloudflare-signaling/src/auth.js` | `validateParams` (shapes, epoch window), `verifyEd25519`, join/message budgets, `currentEpoch` |
+| 13 | `deploy/cloudflare-signaling/src/index.js` | Worker fetch, `RendezvousRoom` Durable Object: nonce replay store, 2-peer cap, pre-join buffer, `/health`, `101` epoch header |
 
 ## Invariants the code claims
 
@@ -75,6 +76,13 @@ the claim rather than take it on faith.
     bytes are sealed end to end.
 12. **Bounded abuse surface.** Nonce replay store per room, 20 joins/min,
     256 messages/s, 2-peer cap, 32 KiB frame cap, 15-minute room TTL.
+13. **A CONNECT proxy cannot decrypt or forge signalling.** The client opens
+    its own TLS with the Worker's hostname as SNI after CONNECT; the proxy sees
+    only the hostname/timing. The CONNECT header read is bounded to 8 KiB and
+    never consumes bytes past the `\r\n\r\n` terminator, so tunnelled TLS/WS
+    bytes cannot be swallowed or injected.
+    `wan::signaling::tests::connect_tunnels_through_an_http_connect_proxy`,
+    `wan::signaling::tests::connect_reports_a_rejected_connect_tunnel`.
 
 ## Questions worth answering explicitly
 
@@ -92,6 +100,10 @@ the claim rather than take it on faith.
   attacker learns nothing; confirm that reasoning.)
 - Does the Durable Object's hibernation path preserve the replay store and the
   peer cap across eviction?
+- Can a hostile `HTTPS_PROXY` value (or a proxy that answers CONNECT with a
+  truncated/oversized header block) do more than delay the connection? Confirm
+  the SNI/certificate check still binds to the Worker hostname and that Basic
+  credentials never reach the Worker or a log.
 
 ## Evidence available
 
@@ -100,11 +112,20 @@ the claim rather than take it on faith.
 - `crates/luciola/tests/wan_local_worker.rs` — the real Worker and Durable
   Object under `wrangler dev` (signed upgrade, edge verification, pre-join
   buffer, 96 KiB relay transfer), and on 2026-11-13 against the **deployed
-  staging** Cloudflare runtime through `scripts/wan-proxy-tunnel.py`.
+  staging** Cloudflare runtime. Two runs: first through
+  `scripts/wan-proxy-tunnel.py` (TLS terminated in the bridge), then — after
+  native CONNECT proxy support — **directly** against the `wss://` endpoint
+  with `HTTPS_PROXY`, with the Rust client doing its own TLS (2/2 green). A
+  `NO_PROXY=<worker-host>` control on the same host still timed out, confirming
+  the proxy path was load-bearing.
 - `scripts/probe-signaling.py` — a signed `101` upgrade on the deployed
   runtime carrying `x-luciola-epoch` matching `/health`
   (`0.11.0-local.1-staging`). The bridge logged ~198 KiB to and ~199 KiB from
-  the Worker during the two-peer relay run.
+  the Worker during the first two-peer relay run.
+- `wan::proxy` / `wan::signaling` unit tests — proxy URL and `NO_PROXY`
+  parsing as pure functions, and a fully in-process fake CONNECT proxy that
+  checks the request target, Basic auth and that the `x-luciola-epoch` header
+  survives the tunnel; a 407 response is asserted to fail the handshake.
 - `deploy/cloudflare-signaling` — `node --test` for the pure auth helpers.
 
 ## Evidence that does **not** exist

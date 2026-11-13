@@ -91,17 +91,19 @@ luciola-tunnel = "0.10.0" # mux v2 转发(见下文隧道小节)
 > `~/.m2`,由 `scripts/publish-maven-local.sh` 产出;Maven Central 与 crates.io 上都没有。
 > WAN 数据面现已在 **Rust 核心**实现(`luciola::wan::connect_wan`:加密 WSS 会合、
 > UDP 打洞 + 可靠有序 ARQ、显式开启的加密中继兜底),并加了渐进式中继→直连热迁移、
-> RFC 5780 NAT 诊断、断点续传 checkpoint、AIMD 拥塞窗口与可选的 USB ADB 通路。
+> RFC 5780 NAT 诊断、断点续传 checkpoint、AIMD 拥塞窗口、可选的 USB ADB 通路,
+> 以及 `wss://` 信令的原生 HTTP CONNECT 代理支持(`HTTPS_PROXY` / `NO_PROXY`,
+> Rust 侧还可用 `WanConfig::proxy`)。
 > 上述数据面能力**仅在 Rust 核心 + CLI 层可用**:uniffi(KMP/Swift)与 Node 绑定面
 > 只暴露 `connectWan` / `WanChannel`(建连、通道类型、关闭),不含 WAN 数据面与文件传输。
-> 验证层级是单元测试 / 回环集成测试,加上已部署的 **staging** 信令 Worker,
-> **不是**真实网络。真实 NAT 现场测试、production 部署、移动端后台常驻、外部审计
+> 验证层级是单元测试 / 回环集成测试,加上已部署的 **staging** 信令 Worker
+> (现已通过原生代理直连 `wss://`),**不是**真实网络。真实 NAT 现场测试、production 部署、移动端后台常驻、外部审计
 > **均未完成**。
 > 见 [CHANGELOG.md](CHANGELOG.md) 的 Unreleased 小节与 [SECURITY.md](SECURITY.md) 的 WAN 小节。
 > 仅在专门的验证工程里把 `mavenLocal()` 放在最前,并锁定
 > `io.github.kexuejin:luciola:0.11.0-local.1`;这个独立版本号不会遮蔽已发布的
-> `0.10.0`。**该坐标已于 2026-11-13 用同一版本号重新发布两次**(最近一次 11:34,
-> 在 WAN 通道 API 进入绑定层之后),早前解析过的验证工程需要加
+> `0.10.0`。**该坐标已于 2026-11-13 用同一版本号重新发布四次**(最近一次 12:21,
+> 在原生 CONNECT 代理支持与 rustls provider 修复之后),早前解析过的验证工程需要加
 > `--refresh-dependencies` 刷新,否则 Gradle 缓存里的旧 AAR 会静默保留旧引擎。
 > 验证结束后移除本地仓库与该覆盖。
 

@@ -137,11 +137,33 @@ LUCIOLA_WAN_WORKER=wss://luciola-signaling-staging.<account>.workers.dev/ws \
   cargo test -p luciola --test wan_local_worker -- --nocapture
 ```
 
-If the host's DNS resolver is hijacked for `*.workers.dev`, `curl` may reach the
-Worker through `HTTPS_PROXY` while the Rust client times out: `connect_wan` does
-not read proxy variables. `scripts/wan-proxy-tunnel.py` bridges that gap without
-changing the code under test — it listens on loopback, tunnels through the proxy
-with the correct TLS SNI, rewrites only the `Host` header and pumps bytes:
+`connect_wan` has native HTTP CONNECT proxy support, so a `wss://` endpoint
+reaches the Worker directly even on hosts whose `*.workers.dev` DNS is
+hijacked. For `wss://` it reads `HTTPS_PROXY` / `https_proxy` (falling back to
+`ALL_PROXY` / `all_proxy`), honours `NO_PROXY` / `no_proxy`, and always bypasses
+loopback so a local `wrangler dev` endpoint is never tunnelled. TLS terminates
+in the Rust client with the Worker's real hostname as SNI; the proxy only moves
+opaque bytes and sees the hostname, not the signalling payload. Your existing
+`HTTPS_PROXY` is enough — no bridge process is needed.
+
+To verify the proxy is actually in use, run the same command with
+`NO_PROXY=<worker-host>` as a control. On a hijacked resolver the forced direct
+path fails with `rendezvous connect timed out`, while the proxied run completes.
+
+Rust-core / CLI callers can override the environment with `WanConfig::proxy`:
+`Some("http://127.0.0.1:8080")` forces one proxy and `Some("")` disables
+proxying entirely. The uniffi (KMP/Swift) and Node surfaces do not expose that
+field; they use the environment. Only plain `http://` CONNECT proxies are
+supported — an `https://` or `socks5://` proxy URL is a configuration error, not
+a silent fallback. Proxy credentials in `http://user:pass@host:port` are sent as
+Basic auth, held in zeroizing storage and never logged. Proxying applies only
+to the signalling WebSocket's TCP connection — STUN queries and UDP hole
+punching still use the host's own UDP path and are unaffected by `HTTPS_PROXY`.
+
+`scripts/wan-proxy-tunnel.py` remains in-tree as a diagnostic loopback bridge:
+it listens on loopback, tunnels through the proxy with the correct TLS SNI,
+rewrites only the `Host` header and pumps bytes. It changes no code under test,
+but is no longer required for a deployed run:
 
 ```bash
 # terminal 1: prints the OS-assigned loopback port

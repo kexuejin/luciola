@@ -31,6 +31,7 @@ socket2.workspace = true
 rand.workspace = true
 zeroize.workspace = true
 tokio-tungstenite.workspace = true
+rustls.workspace = true
 futures-util.workspace = true
 
 [features]

@@ -64,9 +64,11 @@ Before shipping products that carry secrets:
 
 The 0.11.0 line adds STUN candidate discovery, a third-party rendezvous
 Worker (`deploy/cloudflare-signaling`) and a `luciola::wan::connect_wan`
-orchestrator. This is **Rust core tier only**: the KMP, Swift and Node binding
-surfaces do not expose WAN establishment. This section describes the *new*
-threat model, which is materially different from the LAN-only one.
+orchestrator. The WAN **data plane** and file transfer are Rust-core + CLI only;
+the uniffi (KMP/Swift) and Node surfaces expose `connectWan` / `WanChannel`
+for establishment, channel type and shutdown, but not the data plane. This
+section describes the *new* threat model, which is materially different from
+the LAN-only one.
 
 - **Metadata leaves the LAN.** A public STUN server and the signalling Worker
   can observe public keys, public IP addresses, room identifiers and online
@@ -157,6 +159,25 @@ threat model, which is materially different from the LAN-only one.
   changes no frame format, cipher suite, pinning default or nonce rule. It is
   nevertheless additional custom, unaudited code, like the migration
   protocol and the checkpoint format.
+- **An HTTP CONNECT proxy is an observer, not a decryption point.**
+  `connect_wan` reads `HTTPS_PROXY` / `https_proxy` (and `ALL_PROXY` /
+  `all_proxy`) for `wss://`, honours `NO_PROXY` / `no_proxy`, and always
+  bypasses loopback, so a local `wrangler dev` endpoint is never tunnelled.
+  Because TLS terminates in the client with the Worker's hostname as SNI and
+  the upgrade is Ed25519-signed, the proxy sees the rendezvous hostname and
+  connection timing but cannot read, forge or replay signalling frames — it
+  can only delay or drop the connection (a DoS, the same capability a network
+  observer already has). `WanConfig::proxy` (`Some(url)` forces one proxy,
+  `Some("")` disables proxying) overrides the environment for Rust-core/CLI
+  callers; an environment variable can therefore change egress routing, so
+  hosts that require a fixed network path should set it explicitly. Proxy
+  Basic credentials are held in `Zeroizing` storage, never logged, and never
+  sent to the Worker. Only plain `http://` CONNECT proxies are accepted; an
+  `https://` or `socks5://` URL is a configuration error rather than a silent
+  bypass. CONNECT responses are bounded to 8 KiB and a non-200 status fails
+  the connection. Only the signalling WebSocket's TCP hop is proxied; STUN
+  queries and UDP hole punching still use the host's own UDP path, so proxy
+  support does not change the NAT-traversal threat model.
 - **No deployed service ships with this build.** `deploy/cloudflare-signaling`
   ships source + `wrangler.toml`; a deployment is a separate, explicit step.
   The **staging** environment was deployed to the Cloudflare runtime on
@@ -172,17 +193,25 @@ threat model, which is materially different from the LAN-only one.
   blind-forwarding WebSocket, a real `SecureStream` handshake over the UDP ARQ
   byte stream, and ARQ recovery under a lossy/reordering proxy. The progressive
   migration, RFC 5780 classification, checkpoint resume, AIMD window, ADB path
-  and epoch realignment have unit / process-test / loopback coverage only.
+  and epoch realignment have unit / process-test / loopback coverage only. The
+  native proxy path is covered at the same layer by an in-process fake CONNECT
+  proxy (Basic auth, epoch header through the tunnel, 407 rejection), plus pure
+  unit tests for URL parsing, env precedence and `NO_PROXY` / loopback bypass.
   Proven on the **deployed staging** Cloudflare runtime: `/health` reports a
   versioned build whose epoch agrees with the client's;
   `scripts/probe-signaling.py` observed a real signed `101` upgrade carrying
   `x-luciola-epoch`; and `crates/luciola/tests/wan_local_worker.rs` ran two
   Rust peers through the deployed Durable Object (edge Ed25519 verification,
-  pre-join buffering, a 96 KiB relay transfer) via
-  `scripts/wan-proxy-tunnel.py`, which recorded ~198 KiB to and ~199 KiB from
-  the Worker. That is a relay-only, single-host run through a proxy bridge —
-  no hole punching and no real NAT were involved. What is
-  **not** proven: no real-NAT / carrier-grade-NAT field test, no production
+  pre-join buffering, a 96 KiB relay transfer). The first such run went through
+  `scripts/wan-proxy-tunnel.py` (~198 KiB to / ~199 KiB from the Worker) with
+  TLS terminated in that bridge. After native CONNECT proxy support landed, the
+  same two-peer test ran **directly** against the `wss://` endpoint with
+  `HTTPS_PROXY` (2/2 green in 5.7 s), with the Rust client doing its own TLS;
+  a `NO_PROXY=<worker-host>` control on the same host still failed with
+  `rendezvous connect timed out`, confirming the proxied path is what made the
+  run work. Both are relay-only, single-host runs — no hole punching and no real
+  NAT were involved. What is **not** proven: no real-NAT / carrier-grade-NAT
+  field test, no production
   deployment or test, no cross-platform WAN smoke, no physical-device ADB
   transfer, no real-device background run on either mobile platform (Android's
   foreground service has only been compiled and linted; iOS `BGAppRefreshTask`

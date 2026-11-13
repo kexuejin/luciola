@@ -94,19 +94,22 @@ luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
 > (`luciola::wan::connect_wan`: encrypted WSS rendezvous, UDP hole punching
 > with a reliable ordered ARQ, and an opt-in encrypted relay fallback), plus
 > progressive relay→direct migration, RFC 5780 NAT diagnostics, resumable
-> checkpoints, an AIMD congestion window and an optional USB ADB path. Those
+> checkpoints, an AIMD congestion window, an optional USB ADB path and native
+> HTTP CONNECT proxy support for `wss://` signalling (`HTTPS_PROXY` /
+> `NO_PROXY`, or `WanConfig::proxy` in Rust). Those
 > data-plane features are **Rust-core + CLI only**: the uniffi (KMP/Swift) and
 > Node surfaces expose `connectWan` / `WanChannel` (establishment, channel
 > type, shutdown) but not the WAN data plane or file transfer. Verified at the
-> unit / loopback layer plus the deployed **staging** signalling Worker — not
-> on real NATs, in production, or with mobile background presence. No external
-> audit either. See the Unreleased section of [CHANGELOG.md](CHANGELOG.md) and
+> unit / loopback layer plus the deployed **staging** signalling Worker, now
+> reached directly over `wss://` through the native proxy — not on real NATs,
+> in production, or with mobile background presence. No external audit either. See the Unreleased section of [CHANGELOG.md](CHANGELOG.md) and
 > the WAN section of [SECURITY.md](SECURITY.md).
 > Only in a dedicated validation consumer, put `mavenLocal()` first and pin
 > `io.github.kexuejin:luciola:0.11.0-local.1`; the distinct version means this
 > cannot shadow the published `0.10.0` artifact. **This coordinate was
-> republished twice on 2026-11-13** (latest at 11:34, after the WAN channel
-> API reached the binding surfaces) — a consumer that resolved it earlier
+> republished four times on 2026-11-13** (latest at 12:21, after native
+> CONNECT proxy support and the rustls provider fix) — a consumer that resolved
+> it earlier
 > must refresh with `--refresh-dependencies`, or a cached AAR silently keeps
 > the old engine. Remove the local repo and the override when validation is
 > done.

@@ -19,6 +19,7 @@
 //! `relay` payload is the ordered EOF marker, not an empty data frame.
 
 use super::bridge::{bridge_pair, BridgeEnds, StreamBridge};
+use super::proxy;
 use super::WanError;
 use crate::relay_crypto::{aead_open_raw, aead_seal_raw, frame_nonce, hkdf_sha256, AEAD_KEY_LEN};
 use ed25519_dalek::{Signer, SigningKey};
@@ -28,8 +29,10 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Request;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{client_async_tls_with_config, MaybeTlsStream, WebSocketStream};
 use zeroize::Zeroizing;
 
 /// Domain-separation context for the signalling traffic key.
@@ -232,6 +235,24 @@ pub(crate) struct SignalParams<'a> {
     pub(crate) psk: &'a [u8],
     /// Connection timeout.
     pub(crate) timeout: Duration,
+    /// Explicit proxy override (`None` = resolve from the environment).
+    pub(crate) proxy: Option<&'a str>,
+}
+
+/// Install the rustls crypto provider needed by `wss://`.
+///
+/// `tokio-tungstenite` pulls in rustls with `default-features = false` and no
+/// provider feature, so its default `ClientConfig::builder()` panics on the
+/// first TLS handshake. Every earlier WAN test used plain `ws://` loopback (or
+/// terminated TLS in the Python bridge), so this only showed up once the
+/// client itself could reach a deployed `wss://` Worker. If the embedding
+/// application already installed a provider, we keep theirs.
+fn ensure_tls_provider() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 impl SignalingClient {
@@ -284,10 +305,41 @@ impl SignalingClient {
             &to_hex(&signature.to_bytes()),
         );
 
-        let (ws, response) = tokio::time::timeout(p.timeout, connect_async(url))
-            .await
-            .map_err(|_| WanError::Signaling("rendezvous connect timed out".into()))?
-            .map_err(|e| WanError::Signaling(format!("websocket handshake: {e}")))?;
+        // `connect_async()` opens its own TcpStream with
+        // `TcpStream::connect("{host}:{port}")`, leaving nowhere to insert a
+        // CONNECT tunnel. Build the request once, derive the target authority
+        // from that same request, and pass a caller-created stream to the
+        // lower-level handshake helper. TLS, SNI, the origin-form request
+        // target and the Host header are byte-for-byte what connect_async()
+        // would have produced.
+        let request: Request = url
+            .into_client_request()
+            .map_err(|e| WanError::Signaling(format!("signalling url: {e}")))?;
+        let (host, port) = proxy::uri_authority(request.uri())?;
+        let selected = proxy::resolve_proxy(request.uri(), p.proxy, |key| std::env::var(key).ok())?;
+        if let Some(chosen) = &selected {
+            // Never log proxy credentials.
+            tracing::debug!(
+                proxy_host = %chosen.host,
+                proxy_port = chosen.port,
+                "tunnelling WAN signalling through an HTTP CONNECT proxy"
+            );
+        }
+        // Must happen before the TLS handshake starts, not when the endpoint
+        // is validated: a plain ws:// loopback connection never needs it.
+        if request.uri().scheme_str() == Some("wss") {
+            ensure_tls_provider();
+        }
+        // One deadline covers TCP connect, CONNECT, TLS and the upgrade: a
+        // proxy that accepts TCP but never answers cannot hang connect_wan.
+        let (ws, response) = tokio::time::timeout(p.timeout, async {
+            let socket = proxy::open_socket(selected.as_ref(), &host, port).await?;
+            client_async_tls_with_config(request, socket, None, None)
+                .await
+                .map_err(|e| WanError::Signaling(format!("websocket handshake: {e}")))
+        })
+        .await
+        .unwrap_or_else(|_| Err(WanError::Signaling("rendezvous connect timed out".into())))?;
         // The Worker reports the epoch it is actually serving. The header is
         // advisory: an older Worker omits it and the caller keeps the local
         // epoch, which is the pre-alignment behaviour.
@@ -732,11 +784,25 @@ mod tests {
             peer_pk: &[2u8; 32],
             psk: b"psk",
             timeout: Duration::from_secs(2),
+            // A loopback endpoint must bypass any proxy in the environment;
+            // this would fail against a machine-wide HTTPS_PROXY otherwise.
+            proxy: None,
         })
         .await
         .unwrap();
         assert_eq!(client.server_epoch, Some(424_242));
         server.abort();
+    }
+
+    /// The first real `wss://` connect panicked because tokio-tungstenite
+    /// enables rustls without a crypto provider. Pin that fix at the unit
+    /// layer: the deployed-Worker test is skipped by default, so without this
+    /// the local gate would not catch a regression.
+    #[test]
+    fn tls_provider_is_installed_before_the_first_wss_handshake() {
+        ensure_tls_provider();
+        let _ = rustls::ClientConfig::builder();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 
     #[test]
@@ -749,5 +815,153 @@ mod tests {
             .unwrap();
         assert_eq!(kind, "relay");
         assert!(plaintext.is_empty());
+    }
+
+    /// Read an HTTP header block one byte at a time, so no bytes belonging to
+    /// the tunnelled WebSocket handshake are consumed.
+    async fn read_http_head(stream: &mut (impl tokio::io::AsyncRead + Unpin)) -> String {
+        use tokio::io::AsyncReadExt;
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            let read = stream.read(&mut byte).await.unwrap();
+            assert_eq!(read, 1, "peer closed before the header terminator");
+            head.push(byte[0]);
+            assert!(head.len() < 4096, "unterminated HTTP header block");
+        }
+        String::from_utf8(head).unwrap()
+    }
+
+    /// A real in-process CONNECT proxy proves the native path: valid CONNECT
+    /// request target, Basic credentials, no bytes swallowed past the header
+    /// terminator, and the Worker's epoch header still arrives over the tunnel.
+    /// Entirely local — no external network and no process-wide env mutation.
+    #[tokio::test]
+    async fn connect_tunnels_through_an_http_connect_proxy() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_hdr_async;
+        use tokio_tungstenite::tungstenite::handshake::server::{
+            Request as SrvRequest, Response as SrvResponse,
+        };
+
+        let worker = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let worker_port = worker.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = worker.accept().await.unwrap();
+            let _ws = accept_hdr_async(stream, |_req: &SrvRequest, mut resp: SrvResponse| {
+                resp.headers_mut()
+                    .append("x-luciola-epoch", "424242".parse().unwrap());
+                Ok(resp)
+            })
+            .await
+            .unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_port = proxy_listener.local_addr().unwrap().port();
+        let (observed_tx, observed_rx) = tokio::sync::oneshot::channel::<String>();
+        let proxy_task = tokio::spawn(async move {
+            let (mut client, _) = proxy_listener.accept().await.unwrap();
+            let head = read_http_head(&mut client).await;
+            let _ = observed_tx.send(head.clone());
+            let expected = format!("CONNECT 127.0.0.1:{worker_port} HTTP/1.1\r\n");
+            let ok = head.starts_with(&expected)
+                && head.contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n");
+            if ok {
+                client
+                    .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                    .await
+                    .unwrap();
+                let upstream = TcpStream::connect(("127.0.0.1", worker_port))
+                    .await
+                    .unwrap();
+                let (mut cr, mut cw) = tokio::io::split(client);
+                let (mut ur, mut uw) = tokio::io::split(upstream);
+                tokio::select! {
+                    _ = tokio::io::copy(&mut cr, &mut uw) => {},
+                    _ = tokio::io::copy(&mut ur, &mut cw) => {},
+                }
+            } else {
+                client
+                    .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let seed = [1u8; 32];
+        let my_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        let proxy_url = format!("http://user:pass@127.0.0.1:{proxy_port}");
+        let endpoint = format!("ws://127.0.0.1:{worker_port}/ws");
+        let client = SignalingClient::connect(SignalParams {
+            endpoint: &endpoint,
+            room: ROOM,
+            epoch: 7,
+            identity_seed: &seed,
+            my_pk: &my_pk,
+            peer_pk: &[2u8; 32],
+            psk: b"psk",
+            timeout: Duration::from_secs(3),
+            proxy: Some(&proxy_url),
+        })
+        .await
+        .unwrap();
+        assert_eq!(client.server_epoch, Some(424_242));
+
+        let observed = observed_rx.await.unwrap();
+        assert!(
+            observed.starts_with(&format!("CONNECT 127.0.0.1:{worker_port} HTTP/1.1\r\n")),
+            "unexpected CONNECT request: {observed:?}"
+        );
+        assert!(
+            observed.contains(&format!("Host: 127.0.0.1:{worker_port}\r\n")),
+            "unexpected CONNECT request: {observed:?}"
+        );
+        drop(client);
+        server.abort();
+        proxy_task.abort();
+    }
+
+    /// A non-200 CONNECT response must surface as a signalling error naming the
+    /// status, not as a generic timeout.
+    #[tokio::test]
+    async fn connect_reports_a_rejected_connect_tunnel() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_port = listener.local_addr().unwrap().port();
+        let proxy_task = tokio::spawn(async move {
+            let (mut client, _) = listener.accept().await.unwrap();
+            let _ = read_http_head(&mut client).await;
+            client
+                .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let seed = [1u8; 32];
+        let my_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+        let err = SignalingClient::connect(SignalParams {
+            // Non-loopback wss:// keeps this fully offline: the target host is
+            // only ever written into the CONNECT request line.
+            endpoint: "wss://hub.example/ws",
+            room: ROOM,
+            epoch: 7,
+            identity_seed: &seed,
+            my_pk: &my_pk,
+            peer_pk: &[2u8; 32],
+            psk: b"psk",
+            timeout: Duration::from_secs(3),
+            proxy: Some(&proxy_url),
+        })
+        .await
+        .err()
+        .expect("a rejected CONNECT tunnel must fail the handshake");
+        assert!(err.to_string().contains("407"), "{err}");
+        proxy_task.abort();
     }
 }

@@ -15,6 +15,7 @@
 mod adaptive;
 mod arq;
 mod bridge;
+mod proxy;
 mod signaling;
 mod udp;
 
@@ -97,6 +98,16 @@ pub struct WanConfig {
     /// immediately over the relay channel while hole punching races in the
     /// background, seamlessly migrating to direct once punched.
     pub progressive: bool,
+    /// Optional HTTP `CONNECT` proxy for the signalling connection.
+    ///
+    /// `None` (the default) honours `HTTPS_PROXY` / `https_proxy` for `wss://`
+    /// and `HTTP_PROXY` / `http_proxy` for `ws://`, with `ALL_PROXY` /
+    /// `all_proxy` as a fallback; `NO_PROXY` / `no_proxy` and loopback hosts
+    /// bypass it. `Some("")` disables proxying entirely, and `Some(url)` forces
+    /// that one proxy regardless of the environment. Only plain `http://`
+    /// proxies are supported. Explicit proxy configuration is Rust-core/CLI
+    /// only; binding surfaces rely on the environment.
+    pub proxy: Option<String>,
 }
 
 impl Default for WanConfig {
@@ -117,6 +128,7 @@ impl Default for WanConfig {
             enable_hole_punching: true,
             tcp_port: 0,
             progressive: false,
+            proxy: None,
         }
     }
 }
@@ -173,6 +185,7 @@ async fn open_signaling(
         peer_pk: &config.peer_public_key,
         psk: &config.psk,
         timeout: Duration::from_millis(config.relay.connection_timeout_ms.max(500)),
+        proxy: config.proxy.as_deref(),
     })
     .await
 }

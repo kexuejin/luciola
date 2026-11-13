@@ -45,15 +45,21 @@ primary one is cited.
 Published to **mavenLocal only** under one unchanged local coordinate. crates.io,
 Maven Central, npm, the git tag and `origin/main` are all untouched; the public
 registries remain at 0.10.0 until downstream products finish validation. The
-local artifact was **republished twice on 2026-11-13**: first after the WAN
-stability fixes, resumable transfers, USB transport and the AIMD window, then
-again at 11:34 after the WAN channel API reached the uniffi/Node surfaces and
-the epoch realignment, mobile background and deployed-Worker verification work
-landed. The coordinate is deliberately unchanged, so a consumer that resolved
-`0.11.0-local.1` before either republish may still hold an older engine in its
-Gradle cache — refresh dependencies (`--refresh-dependencies`) before
-concluding a fix is absent from the AAR. The current AAR embeds an arm64 `.so`
-with sha256 `0f5888987613453ad5d7483162e346858e6b812ee357b4e0278f59f482801680`.
+local artifact was **republished four times on 2026-11-13**: first after the
+WAN stability fixes, resumable transfers, USB transport and the AIMD window;
+at 11:34 after the WAN channel API reached the uniffi/Node surfaces and the
+epoch realignment, mobile background and deployed-Worker verification work
+landed; at 12:16 after native HTTP CONNECT proxy support and the rustls
+crypto-provider fix; and at 12:21, the final republish, after the unit-level
+TLS-provider regression guard. The coordinate is deliberately unchanged, so a
+consumer that resolved `0.11.0-local.1` before any of those republishes may
+still hold an older engine in its Gradle cache — refresh dependencies
+(`--refresh-dependencies`) before concluding a fix is absent from the AAR. The
+current AAR embeds an arm64 `.so` with sha256
+`ea41c96867534a2f8e062b11a4340a07109fa8f57b88570c264a47b6e357aed2`. The
+Android arm64 native library was rebuilt for this republish; the iOS
+xcframework was not rebuilt, so that layer remains unverified with the new
+`ring` dependency.
 
 ### Added (Rust core tier — local validation only)
 
@@ -95,6 +101,18 @@ with sha256 `0f5888987613453ad5d7483162e346858e6b812ee357b4e0278f59f482801680`.
   `HTTPS_PROXY` when local DNS is hijacked. `wan_local_worker.rs` gained a
   configurable connect timeout and now skips its plaintext `/health` assertion
   for `wss://` endpoints.
+- **Native HTTP CONNECT proxy support** (`wan::proxy`): `connect_wan` can now
+  reach a deployed `wss://` Worker through `HTTPS_PROXY` / `https_proxy`
+  (`ALL_PROXY` / `all_proxy` fallback), respecting `NO_PROXY` / `no_proxy` and
+  always bypassing loopback. `WanConfig::proxy` forces one proxy (`Some("")`
+  disables proxying); that explicit field is Rust-core/CLI only, the binding
+  surfaces use the environment. CONNECT supports Basic credentials, bounds the
+  response headers and rejects non-200 replies with the status. TLS, SNI and the
+  Ed25519-authenticated upgrade are unchanged — the proxy sees the hostname and
+  timing, never a signalling payload. `scripts/wan-proxy-tunnel.py` is retained
+  for diagnostics but is no longer required. In-process tests cover proxy URL
+  parsing, `NO_PROXY` matching, a real fake CONNECT proxy with Basic auth, a
+  rejected 407 tunnel and loopback bypass.
 - All three binding surfaces regenerated (KMP, Swift, Node) and verified
   byte-identical to a fresh bindgen run.
 - **Progressive WAN connection with hot migration** (`wan::adaptive`): a
@@ -152,6 +170,14 @@ with sha256 `0f5888987613453ad5d7483162e346858e6b812ee357b4e0278f59f482801680`.
   Worker from an undeployed production, and no longer say the WAN channel API
   is absent from the uniffi/Node surfaces. The real-NAT, real-device and audit
   caveats stay in place.
+- The Rust client can now actually complete a `wss://` handshake.
+  `tokio-tungstenite` enables rustls with `default-features = false` and no
+  crypto provider, so `ClientConfig::builder()` panicked on the first TLS
+  connection; every earlier WAN test used plain `ws://` loopback or terminated
+  TLS inside `scripts/wan-proxy-tunnel.py`. `wan::signaling` installs the
+  `ring` provider once (keeping an embedder-installed provider if present), and
+  `rustls` is an explicit workspace dependency with that feature. This was
+  exposed by removing the bridge, not by the proxy code itself.
 - Aliyun Gradle mirrors are opt-in **fallbacks**
   (`-PluciolaUseAliyunMirrors=true`), placed after `mavenCentral()` / `google()`
   so official registries always resolve first and can never be shadowed in a

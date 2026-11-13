@@ -42,4 +42,8 @@ socket2 = "0.5"
 zeroize = "1.8"
 clap = { version = "4.5", features = ["derive"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+# tokio-tungstenite enables rustls with default-features = false and does not
+# pick a crypto provider. Without this, the first wss:// connect panics inside
+# ClientConfig::builder(). See wan::signaling::ensure_tls_provider().
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 futures-util = "0.3"

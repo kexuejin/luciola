@@ -1907,6 +1907,9 @@ impl WanConfig {
             enable_hole_punching: self.enable_hole_punching,
             tcp_port: self.tcp_port,
             progressive: self.progressive,
+            // Explicit proxy configuration is Rust-core/CLI only. Binding
+            // callers use the process environment (HTTPS_PROXY / NO_PROXY).
+            proxy: None,
         })
     }
 }
