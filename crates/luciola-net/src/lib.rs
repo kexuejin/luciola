@@ -670,12 +670,20 @@ pub fn scope_id_by_name(name: &str) -> Option<u32> {
 /// Interface indices eligible for IPv6 link-local multicast (ff02::1):
 /// physical NICs only — virtual adapters (TUN/VPN/Docker) are excluded by
 /// the same classifier the candidate scorer uses.
+///
+/// The interface must also carry an IPv6 address: real-but-down ports (an
+/// unplugged Thunderbolt bridge on macOS) pass the name filter, and the
+/// kernel rejects `IPV6_JOIN_GROUP` on them with EINVAL — one warn line of
+/// noise per dead port on every socket bind.
 pub fn multicast_scope_interfaces() -> Vec<u32> {
-    use network_interface::NetworkInterface;
+    use network_interface::{Addr, NetworkInterface};
     match NetworkInterface::show() {
         Ok(list) => list
             .into_iter()
-            .filter(|i| is_physical_interface_name(&i.name))
+            .filter(|i| {
+                is_physical_interface_name(&i.name)
+                    && i.addr.iter().any(|a| matches!(a, Addr::V6(_)))
+            })
             .map(|i| i.index)
             .collect(),
         Err(_) => Vec::new(),

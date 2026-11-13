@@ -86,14 +86,27 @@ impl TransferMeta {
     }
 
     /// Mark a byte range `[offset, offset + len)` as completed.
+    ///
+    /// Only chunks the range **fully** covers are marked. The bitmap is what a
+    /// resumed transfer trusts, so a half-written chunk marked complete is a
+    /// hole that survives a crash — the resume path would skip right over it.
+    /// The final chunk is the one exception: it is complete as soon as the
+    /// range reaches `total_bytes`, however short it is.
     pub fn mark_range(&mut self, offset: u64, len: usize) {
         if len == 0 || self.chunk_size == 0 {
             return;
         }
-        let start_chunk = (offset / self.chunk_size as u64) as u32;
-        let end_chunk = (offset + len as u64).div_ceil(self.chunk_size as u64) as u32;
-        for c in start_chunk..end_chunk.min(self.chunk_count) {
-            self.mark_chunk(c);
+        let size = self.chunk_size as u64;
+        let end = offset.saturating_add(len as u64);
+        // First chunk whose whole extent starts at or after `offset`.
+        let first_covered = offset.div_ceil(size);
+        // Chunks ending at or before `end`.
+        let last_exclusive = end / size;
+        for c in first_covered..last_exclusive.min(self.chunk_count as u64) {
+            self.mark_chunk(c as u32);
+        }
+        if end >= self.total_bytes && self.chunk_count > 0 {
+            self.mark_chunk(self.chunk_count - 1);
         }
     }
 
@@ -144,7 +157,6 @@ impl TransferMeta {
     /// Decode and validate checksum, magic, and transfer identity.
     pub fn decode(buf: &[u8], expected_transfer_id: &str) -> Option<Self> {
         if buf.len() < 64 || &buf[0..8] != MAGIC_META {
-            eprintln!("[DEBUG checkpoint] bad len or magic");
             return None;
         }
         let stored_crc = u32::from_le_bytes(buf[56..60].try_into().ok()?);
@@ -201,6 +213,48 @@ mod tests {
     fn crc32_matches_standard_test_vector() {
         // Standard check: CRC-32 of b"123456789" is 0xCBF43926
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    /// A partially written chunk must not be recorded as done: resume would
+    /// skip it and silently leave a hole in the file.
+    #[test]
+    fn mark_range_only_marks_fully_covered_chunks() {
+        let chunk = 64 * 1024u64;
+        let mut meta = TransferMeta::new("t", 4 * chunk, 64 * 1024);
+        assert_eq!(meta.chunk_count, 4);
+
+        // Half of chunk 1.
+        meta.mark_range(chunk + 1024, 1024);
+        assert!(
+            !meta.is_chunk_completed(1),
+            "a partial chunk is not complete"
+        );
+        assert_eq!(meta.contiguous_bytes(), 0);
+
+        // All of chunk 1 plus a sliver of chunk 2.
+        meta.mark_range(chunk, 64 * 1024 + 10);
+        assert!(meta.is_chunk_completed(1));
+        assert!(!meta.is_chunk_completed(2), "the sliver must not count");
+
+        // Two whole chunks in one write.
+        meta.mark_range(0, (2 * chunk) as usize);
+        assert!(meta.is_chunk_completed(0));
+        assert!(meta.is_chunk_completed(1));
+        assert!(!meta.is_chunk_completed(2));
+    }
+
+    /// The short tail chunk counts once the range reaches EOF.
+    #[test]
+    fn reaching_eof_marks_the_short_tail_chunk() {
+        let chunk = 64 * 1024u64;
+        let total = 3 * chunk + 100;
+        let mut meta = TransferMeta::new("t", total, 64 * 1024);
+        assert_eq!(meta.chunk_count, 4);
+        meta.mark_range(0, (3 * chunk) as usize);
+        assert!(!meta.is_chunk_completed(3));
+        meta.mark_range(3 * chunk, 100);
+        assert!(meta.is_chunk_completed(3));
+        assert_eq!(meta.contiguous_bytes(), total);
     }
 
     #[test]

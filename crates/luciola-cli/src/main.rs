@@ -156,7 +156,7 @@ enum TransferCommands {
         /// Optional WAN room id for rendezvous signaling
         #[arg(long)]
         room: Option<String>,
-        /// Optional signaling server URL (e.g. wss://...)
+        /// Optional signaling server URL — the rendezvous route is /ws (e.g. wss://host.example/ws)
         #[arg(long)]
         signaling: Option<String>,
         /// Optional pairing PSK for WAN encryption
@@ -186,7 +186,7 @@ enum TransferCommands {
         /// Optional WAN room id for rendezvous signaling
         #[arg(long)]
         room: Option<String>,
-        /// Optional signaling server URL (e.g. wss://...)
+        /// Optional signaling server URL — the rendezvous route is /ws (e.g. wss://host.example/ws)
         #[arg(long)]
         signaling: Option<String>,
         /// Optional pairing PSK for WAN encryption
@@ -369,9 +369,14 @@ fn run_ports(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-        .init();
+    // RUST_LOG wins when set; `add_directive(INFO)` on top of it silently
+    // degraded every debug target back to info, hiding the WAN driver's
+    // diagnostics exactly when they were needed.
+    let filter = match std::env::var("RUST_LOG") {
+        Ok(spec) if !spec.trim().is_empty() => EnvFilter::new(spec),
+        _ => EnvFilter::new("info"),
+    };
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let cli = Cli::parse();
 
@@ -678,35 +683,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .len();
                 let id = transfer::make_transfer_id(&file, total);
 
+                // Kept alive for the whole transfer: dropping it removes the
+                // port forward instead of leaving one behind on the host.
+                let mut adb_forward_guard: Option<AdbForward> = None;
                 let stream = if let Some(ref device_serial) = adb_device {
-                    let target_port: u16 = if !connect.is_empty() {
-                        parse_host_port(&connect).map(|(_, p)| p).unwrap_or(3020)
-                    } else {
-                        3020
-                    };
+                    let target_port = adb_target_port(&connect)?;
                     eprintln!(
-                        "[INFO] Setting up physical USB ADB proxy (device: {device_serial}, port: {target_port})..."
+                        "[INFO] adb forward tcp:{target_port} -> device tcp:{target_port} ({device_serial})"
                     );
-                    let adb_out = std::process::Command::new("adb")
-                        .args([
-                            "-s",
-                            device_serial,
-                            "forward",
-                            &format!("tcp:{target_port}"),
-                            &format!("tcp:{target_port}"),
-                        ])
-                        .output();
-                    match adb_out {
-                        Ok(o) if !o.status.success() => {
-                            eprintln!(
-                                "[WARN] adb forward returned non-zero: {}",
-                                String::from_utf8_lossy(&o.stderr)
-                            );
-                        }
-                        Err(e) => eprintln!("[WARN] adb execution failed: {e}"),
-                        _ => {}
-                    }
-                    println!("📡 Dialing 127.0.0.1:{target_port} over physical USB bus …");
+                    // A failed forward is fatal. Ignoring it used to leave the
+                    // dial below connecting to a *local* listener, which made a
+                    // same-machine test look like a successful USB transfer.
+                    adb_forward_guard = Some(AdbForward::add(device_serial, target_port).await?);
+                    println!("📡 Dialing 127.0.0.1:{target_port} over the USB bus …");
                     let mut s = luciola::link::secure::connect_secure_raced(
                         vec!["127.0.0.1".to_string()],
                         target_port,
@@ -714,7 +703,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &pin,
                     )
                     .await
-                    .map_err(|e| format!("ADB secure connection failed: {e}"))?;
+                    .map_err(|e| {
+                        format!("adb forward is up but the device side did not answer: {e}")
+                    })?;
                     s.set_channel_type(luciola_proto::ChannelType::UsbAdbDirect);
                     s
                 } else if let (Some(room_id), Some(sig_url)) = (room, signaling) {
@@ -762,6 +753,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await
                     .map_err(|e| format!("secure dial failed: {e}"))?
                 };
+                // Lives until this command arm ends, i.e. until the transfer is
+                // over; its Drop removes the adb port forward.
+                let _adb_guard = adb_forward_guard;
 
                 println!("🔐 Secure channel established, sending {file} ({total} bytes) …");
                 let tx = luciola_transfer::FileSender::open(id, &src, Default::default())
@@ -789,20 +783,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&accept_pin)?;
 
+                // No adb setup on this side on purpose. The sender's
+                // `adb forward tcp:P` already delivers host:P to device:P,
+                // which is exactly the port this process listens on. An
+                // `adb reverse tcp:P tcp:P` here would bind the same device
+                // port and fight the listener for it.
                 if let Some(ref device_serial) = adb_device {
-                    let listen_port = if port == 0 { 3020 } else { port };
                     eprintln!(
-                        "[INFO] Setting up ADB reverse socket proxy on device {device_serial} for port {listen_port}..."
+                        "[INFO] --adb-device {device_serial}: nothing to set up on the receiving side; \
+                         the sender's adb forward already reaches this port."
                     );
-                    let _ = std::process::Command::new("adb")
-                        .args([
-                            "-s",
-                            device_serial,
-                            "reverse",
-                            &format!("tcp:{listen_port}"),
-                            &format!("tcp:{listen_port}"),
-                        ])
-                        .status();
                 }
 
                 let stream = if let (Some(room_id), Some(sig_url)) = (room, signaling) {
@@ -1138,6 +1128,80 @@ fn parse_host_port(s: &str) -> Result<(String, u16), String> {
     Ok((h.to_string(), port))
 }
 
+/// Default TCP port of the ADB USB bridge.
+const ADB_DEFAULT_PORT: u16 = 3020;
+
+/// Port to forward when `--adb-device` is used.
+///
+/// An explicit `--connect host:port` wins; otherwise the documented default is
+/// used rather than silently falling back after a malformed address.
+fn adb_target_port(connect: &str) -> Result<u16, String> {
+    if connect.is_empty() {
+        return Ok(ADB_DEFAULT_PORT);
+    }
+    parse_host_port(connect)
+        .map(|(_, port)| port)
+        .map_err(|e| format!("--connect must be host:port when --adb-device is used: {e}"))
+}
+
+fn adb_forward_args(serial: &str, port: u16) -> Vec<String> {
+    vec![
+        "-s".to_string(),
+        serial.to_string(),
+        "forward".to_string(),
+        format!("tcp:{port}"),
+        format!("tcp:{port}"),
+    ]
+}
+
+fn adb_remove_args(serial: &str, port: u16) -> Vec<String> {
+    vec![
+        "-s".to_string(),
+        serial.to_string(),
+        "forward".to_string(),
+        "--remove".to_string(),
+        format!("tcp:{port}"),
+    ]
+}
+
+/// A host-side `adb forward` that removes itself when dropped.
+///
+/// Without the cleanup every run leaves a forward behind: the host port stays
+/// bound, and the next run silently talks to a stale bridge.
+struct AdbForward {
+    serial: String,
+    port: u16,
+}
+
+impl AdbForward {
+    async fn add(serial: &str, port: u16) -> Result<Self, String> {
+        let args = adb_forward_args(serial, port);
+        let output = tokio::process::Command::new("adb")
+            .args(&args)
+            .output()
+            .await
+            .map_err(|e| format!("could not run adb ({e}); is platform-tools on PATH?"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("adb {} failed: {}", args.join(" "), stderr.trim()));
+        }
+        Ok(Self {
+            serial: serial.to_string(),
+            port,
+        })
+    }
+}
+
+impl Drop for AdbForward {
+    fn drop(&mut self) {
+        // Best effort: the transfer is over and a leftover forward would keep
+        // the host port bound for whoever runs next.
+        let _ = std::process::Command::new("adb")
+            .args(adb_remove_args(&self.serial, self.port))
+            .output();
+    }
+}
+
 /// `IP/主机名:PORT` → [DialTarget]（§1.2 合法性在解析阶段即检查；主机名由
 /// 拨号侧解析并按会话钉扎，v2）。
 fn parse_target(s: &str) -> Result<DialTarget, String> {
@@ -1408,7 +1472,8 @@ async fn forward_dial(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_hex, encode_hex, parse_host_port, parse_listen_target, parse_pin, parse_seed,
+        adb_forward_args, adb_remove_args, adb_target_port, decode_hex, encode_hex,
+        parse_host_port, parse_listen_target, parse_pin, parse_seed, ADB_DEFAULT_PORT,
     };
 
     #[test]
@@ -1441,6 +1506,35 @@ mod tests {
         );
         assert!(parse_pin(&encode_hex(&[9u8; 32])).is_ok());
         assert!(parse_pin(&encode_hex(&[9u8; 16])).is_err());
+    }
+
+    #[test]
+    fn adb_forward_and_cleanup_args_are_symmetric() {
+        assert_eq!(
+            adb_forward_args("ABC123", 3020),
+            vec!["-s", "ABC123", "forward", "tcp:3020", "tcp:3020"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            adb_remove_args("ABC123", 3020),
+            vec!["-s", "ABC123", "forward", "--remove", "tcp:3020"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn adb_target_port_defaults_and_respects_connect() {
+        assert_eq!(adb_target_port("").unwrap(), ADB_DEFAULT_PORT);
+        assert_eq!(adb_target_port("127.0.0.1:9999").unwrap(), 9999);
+        assert_eq!(adb_target_port("[::1]:4000").unwrap(), 4000);
+        assert!(
+            adb_target_port("no-port-here").is_err(),
+            "a malformed --connect must be rejected, not silently defaulted"
+        );
     }
 
     #[test]

@@ -20,7 +20,7 @@ luciola-tunnel = { path = "../luciola-tunnel", version = "0.11.0-local.1" }
 luciola-transfer = { path = "../luciola-transfer", version = "0.11.0-local.1" }
 clap.workspace = true
 rand.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "signal", "process"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 qrcode = "0.14"

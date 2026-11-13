@@ -16,6 +16,30 @@ use luciola::link::secure::SecureStream;
 use luciola_transfer::protocol::{is_chunk_frame, is_intro_frame, FileAck, FileChunk, FileIntro};
 use luciola_transfer::{FileReceiver, FileSender, ReceiverConfig};
 
+/// Decide whether this transfer may proceed on the channel it will actually use.
+///
+/// A progressive connection starts on the relay and migrates to a direct path
+/// shortly afterwards. Judging the relay quota on that transient hop rejects a
+/// 200 MiB file that is about to travel over a free path, so a file that only
+/// fails on the relay waits, bounded, for the migration to land first. A
+/// connection that cannot migrate is judged immediately — the quota still
+/// exists, it is just not applied to a hop the data never crosses.
+async fn admit(stream: &mut SecureStream, tx: &FileSender) -> Result<(), String> {
+    let mut channel = stream.channel_type();
+    if tx.check_channel_policy(channel).is_err() && stream.may_migrate() {
+        // Wait for the routing decision, not a fixed deadline. The progressive
+        // driver flips the channel tracker the instant punching succeeds and
+        // raises the migration gate the instant it gives up, so a hard-NAT punch
+        // that takes a few seconds but eventually wins is judged on its real
+        // (free, direct) path rather than its transient relay hop. The timeout
+        // below is only a safety net if the gate is somehow never raised.
+        channel = stream
+            .wait_channel_settle(std::time::Duration::from_secs(30))
+            .await;
+    }
+    tx.check_channel_policy(channel).map_err(|e| e.to_string())
+}
+
 /// 发送方驱动：intro → 滑窗 → 消费 ACK → 超时重传，直到 done 或通道死亡。
 /// 进度按 acked 前缀打到 stderr（stdout 留给最终摘要）。
 pub async fn run_send(
@@ -26,8 +50,7 @@ pub async fn run_send(
     // Enforce the relay quota *before* the first byte leaves the device. A
     // relay is a billed third-party path; without this check SenderConfig's
     // limit would exist in the type but never be applied by the real driver.
-    tx.check_channel_policy(stream.channel_type())
-        .map_err(|e| e.to_string())?;
+    admit(&mut stream, &tx).await?;
 
     let intro = FileIntro {
         transfer_id: tx.transfer_id().to_string(),
@@ -69,7 +92,10 @@ pub async fn run_send(
             frame = stream.recv(&mut buf) => match frame {
                 Ok(()) if !is_chunk_frame(&buf) => {
                     let ack = FileAck::decode(&buf).map_err(|e| e.to_string())?;
-                    if tx.acked_up_to() == 0 && ack.acked_up_to > 0 {
+                    // The receiver states a checkpoint skip explicitly; by
+                    // value alone it is indistinguishable from a fresh
+                    // transfer's first cumulative ACK.
+                    if ack.resume {
                         eprintln!(
                             "[INFO] Remote peer requested resume: skipping {}/{} bytes ({:.1}%)",
                             ack.acked_up_to,
@@ -136,6 +162,7 @@ pub async fn run_recv(
         let resume_ack = FileAck {
             transfer_id: rx.transfer_id().to_string(),
             acked_up_to: rx.acked_up_to(),
+            resume: true,
         };
         stream
             .send(&resume_ack.encode())
@@ -166,16 +193,21 @@ pub async fn run_recv(
         let chunk = FileChunk::decode(&buf).map_err(|e| e.to_string())?;
         let acked = rx.on_chunk(&chunk).await.map_err(|e| e.to_string())?;
         report_progress(total, acked, &mut last_reported);
-        stream
-            .send(
-                &FileAck {
-                    transfer_id: chunk.transfer_id.clone(),
-                    acked_up_to: acked,
-                }
-                .encode(),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+        let ack = FileAck {
+            transfer_id: chunk.transfer_id.clone(),
+            acked_up_to: acked,
+            resume: false,
+        };
+        if let Err(e) = stream.send(&ack.encode()).await {
+            // The sender can hang up the moment its final ACK is in hand. A
+            // failed write *after* completion means the answer was already
+            // delivered — reporting it as a transfer failure would turn a
+            // successful download into a non-zero exit.
+            if rx.is_complete() {
+                return Ok(rx);
+            }
+            return Err(e.to_string());
+        }
     }
 }
 
@@ -223,7 +255,7 @@ fn sanitize_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{make_transfer_id, run_recv, run_send, sanitize_name, FileSender};
+    use super::{admit, make_transfer_id, run_recv, run_send, sanitize_name, FileSender};
     use luciola::link::secure::{accept_secure, SecureStream};
     use luciola::trust::generate_identity;
     use luciola_transfer::protocol::FileIntro;
@@ -250,6 +282,72 @@ mod tests {
                 .expect("client handshake");
         let server = server.await.expect("server task");
         (client, server)
+    }
+
+    /// A 120 MiB transfer must not be rejected on the relay hop it is about to
+    /// leave. The file is sparse: only its length matters here.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn large_transfer_is_admitted_once_the_channel_migrates() {
+        use luciola_proto::ChannelType;
+        use std::sync::atomic::{AtomicU8, Ordering};
+
+        let dir =
+            std::env::temp_dir().join(format!("luciola-cli-quota-migrate-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let src = dir.join("big.bin");
+        let file = tokio::fs::File::create(&src).await.unwrap();
+        file.set_len(120 * 1024 * 1024).await.unwrap();
+        drop(file);
+
+        let (mut client, _server) = secure_pair().await;
+        let tracker = Arc::new(AtomicU8::new(ChannelType::RelayForwarded as u8));
+        client.set_channel_tracker(tracker.clone());
+        assert!(client.may_migrate());
+
+        let tx = FileSender::open("big", &src, SenderConfig::default())
+            .await
+            .unwrap();
+        // Over the 100 MiB relay quota: this is exactly the case that used to
+        // be refused before the punch had a chance to succeed.
+        assert!(tx
+            .check_channel_policy(ChannelType::RelayForwarded)
+            .is_err());
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tracker.store(ChannelType::HolePunchedDirect as u8, Ordering::Release);
+        });
+        admit(&mut client, &tx)
+            .await
+            .expect("a migrating connection must not be judged on its transient relay hop");
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    /// Negative control: the quota still applies to a connection that really is
+    /// relay-only. Otherwise "fix" would just mean "delete the limit".
+    #[tokio::test(flavor = "multi_thread")]
+    async fn large_transfer_over_a_pure_relay_is_still_refused() {
+        use luciola_proto::ChannelType;
+
+        let dir = std::env::temp_dir().join(format!("luciola-cli-quota2-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let src = dir.join("big.bin");
+        let file = tokio::fs::File::create(&src).await.unwrap();
+        file.set_len(120 * 1024 * 1024).await.unwrap();
+        drop(file);
+
+        let (mut client, _server) = secure_pair().await;
+        client.set_channel_type(ChannelType::RelayForwarded);
+        assert!(!client.may_migrate());
+
+        let tx = FileSender::open("big", &src, SenderConfig::default())
+            .await
+            .unwrap();
+        let err = admit(&mut client, &tx).await.unwrap_err();
+        assert!(err.contains("exceeds limit"), "{err}");
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
     }
 
     #[test]

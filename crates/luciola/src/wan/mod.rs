@@ -13,6 +13,7 @@
 //! the handshake are unchanged.
 
 mod adaptive;
+mod arq;
 mod bridge;
 mod signaling;
 mod udp;
@@ -207,6 +208,7 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
         .map_err(|e| WanError::Handshake(e.to_string()))?;
         stream.set_channel_type(ChannelType::RelayForwarded);
         stream.set_channel_tracker(prog.tracker);
+        stream.set_migration_gate(prog.punching_done);
         return Ok(stream);
     }
 

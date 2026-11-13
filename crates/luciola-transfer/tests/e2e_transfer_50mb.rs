@@ -151,16 +151,23 @@ async fn run_receiver(
             final_dropped = true; // simulate the lost last ACK
             continue;
         }
-        server
+        // Same race the CLI hit: the sender may close as soon as its final ACK
+        // lands, so a post-completion write can fail. That is "peer gone", not
+        // "transfer broken" — the assertions below decide the outcome.
+        let sent = server
             .send(
                 &FileAck {
                     transfer_id: chunk.transfer_id.clone(),
                     acked_up_to: acked,
+                    resume: false,
                 }
                 .encode(),
             )
-            .await
-            .unwrap();
+            .await;
+        if sent.is_err() && rx.is_complete() {
+            return rx;
+        }
+        sent.unwrap();
     }
 }
 
@@ -276,6 +283,7 @@ async fn out_of_order_arrival_lands_byte_exact() {
             &FileAck {
                 transfer_id: "e2e-ooo".into(),
                 acked_up_to: SIZE as u64,
+                resume: false,
             }
             .encode(),
         )

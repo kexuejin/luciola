@@ -11,6 +11,22 @@ import {
 } from "./auth.js";
 
 /**
+ * Frames that arrive while the room holds fewer than two sockets are stored
+ * under this prefix (one storage key per frame, zero-padded sequence for
+ * ordered replay) and delivered to the second peer on join.
+ *
+ * Without this, the first peer's handshake and candidate frames are forwarded
+ * to nobody and lost: the responder then waits for a handshake that was sent
+ * before it existed, and the initiator waits for a reply that never comes —
+ * the rendezvous deadlocks, and hole punching can never even start because
+ * neither side holds the other's candidates.
+ */
+const PENDING_PREFIX = "pend:";
+const PENDING_SEQ_KEY = "pendSeq";
+/** Storage bound for an unpaired socket; the client needs a handful of frames. */
+const PENDING_MAX = 32;
+
+/**
  * Cloudflare Worker for Luciola WAN rendezvous signalling.
  *
  * The Worker is a blind forwarder: it authenticates the Ed25519 handshake and
@@ -58,6 +74,23 @@ export default {
     return env.RENDEZVOUS.get(doId).fetch(request);
   },
 };
+
+/**
+ * Forward a frame without letting one dead peer take the handler down.
+ *
+ * `getWebSockets()` keeps returning a socket that has just closed, so a bare
+ * `send` throws inside the event handler and the whole message is lost for the
+ * *other* peer too.
+ */
+function sendSafely(socket, payload) {
+  if (!socket || socket.readyState !== 1) return false;
+  try {
+    socket.send(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * RendezvousRoom Durable Object: hibernatable two-peer blind forwarding.
@@ -122,12 +155,24 @@ export class RendezvousRoom extends DurableObject {
       windowCount: 0,
     });
 
+    // Deliver everything the first peer sent before this join (handshake,
+    // candidates), in original order, then drop the buffer. The frames were
+    // forwarded to nobody at the time they arrived.
+    const pending = await this.ctx.storage.list({ prefix: PENDING_PREFIX });
+    if (pending.size > 0) {
+      for (const message of pending.values()) {
+        sendSafely(server, message);
+      }
+      await this.ctx.storage.delete([...pending.keys()]);
+      await this.ctx.storage.delete(PENDING_SEQ_KEY);
+    }
+
     const allSockets = this.ctx.getWebSockets();
     if (allSockets.length === 2) {
       for (const s of allSockets) {
         const other = allSockets.find((x) => x !== s);
         const otherPeer = other?.deserializeAttachment()?.peer || "";
-        s.send(JSON.stringify({ type: "peer_online", peer: otherPeer }));
+        sendSafely(s, JSON.stringify({ type: "peer_online", peer: otherPeer }));
       }
     }
 
@@ -157,10 +202,24 @@ export class RendezvousRoom extends DurableObject {
       windowCount: budget.windowCount,
     });
 
+    // No second socket yet: keep the frame for replay instead of dropping it
+    // on the floor. Still rate-limited and size-capped above, and bounded in
+    // count so an unpaired socket cannot grow storage unboundedly.
+    if (this.ctx.getWebSockets().length < 2) {
+      const seq = ((await this.ctx.storage.get(PENDING_SEQ_KEY)) ?? 0) + 1;
+      if (seq > PENDING_MAX) {
+        ws.close(1013, "too many frames before the peer joined");
+        return;
+      }
+      await this.ctx.storage.put(PENDING_SEQ_KEY, seq);
+      await this.ctx.storage.put(`${PENDING_PREFIX}${String(seq).padStart(12, "0")}`, message);
+      return;
+    }
+
     // Opaque blind forwarding: never parse candidate or relay frames.
     for (const other of this.ctx.getWebSockets()) {
       if (other !== ws) {
-        other.send(message);
+        sendSafely(other, message);
       }
     }
   }
@@ -169,7 +228,18 @@ export class RendezvousRoom extends DurableObject {
     const peer = ws.deserializeAttachment()?.peer || "unknown";
     for (const other of this.ctx.getWebSockets()) {
       if (other !== ws) {
-        other.send(JSON.stringify({ type: "peer_offline", peer }));
+        sendSafely(other, JSON.stringify({ type: "peer_offline", peer }));
+      }
+    }
+    // A room that emptied before the second peer ever joined has nobody left
+    // to replay its buffered frames to; a rejoining peer re-sends its own
+    // handshake under a fresh nonce, so stale frames would only confuse it.
+    const remaining = this.ctx.getWebSockets().filter((s) => s !== ws);
+    if (remaining.length === 0) {
+      const stale = await this.ctx.storage.list({ prefix: PENDING_PREFIX });
+      if (stale.size > 0) {
+        await this.ctx.storage.delete([...stale.keys()]);
+        await this.ctx.storage.delete(PENDING_SEQ_KEY);
       }
     }
   }

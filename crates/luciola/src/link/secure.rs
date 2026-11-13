@@ -38,9 +38,10 @@ use sha2::Sha256;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
@@ -229,22 +230,24 @@ pub struct SecureStream {
     pub peer_public_key: Vec<u8>,
     channel_type: crate::proto::ChannelType,
     channel_tracker: Option<Arc<AtomicU8>>,
+    /// Set once hole punching has resolved (succeeded or given up). When
+    /// present, `wait_channel_settle` stops waiting the instant the routing
+    /// decision is final instead of burning its whole timeout.
+    migration_gate: Option<Arc<AtomicBool>>,
 }
 
 impl SecureStream {
     /// Returns the underlying transport channel type.
     pub fn channel_type(&self) -> crate::proto::ChannelType {
         if let Some(ref tracker) = self.channel_tracker {
-            match tracker.load(Ordering::Acquire) {
-                0 => crate::proto::ChannelType::LanDirect,
-                1 => crate::proto::ChannelType::HolePunchedDirect,
-                2 => crate::proto::ChannelType::RelayForwarded,
-                3 => crate::proto::ChannelType::UsbAdbDirect,
-                _ => self.channel_type,
+            // Decode through the enum so inserting a variant cannot silently
+            // relabel an existing code.
+            if let Some(live) = crate::proto::ChannelType::from_u8(tracker.load(Ordering::Acquire))
+            {
+                return live;
             }
-        } else {
-            self.channel_type
         }
+        self.channel_type
     }
 
     /// Sets the underlying transport channel type.
@@ -256,6 +259,62 @@ impl SecureStream {
     /// update the reported channel type in real time.
     pub fn set_channel_tracker(&mut self, tracker: Arc<AtomicU8>) {
         self.channel_tracker = Some(tracker);
+    }
+
+    /// Attach the "punching resolved" flag set by the progressive driver once
+    /// hole punching has definitively succeeded or failed. Without it,
+    /// `wait_channel_settle` can only wait out its timeout; with it, a caller
+    /// learns the final route the moment the decision is made (see
+    /// [`SecureStream::wait_channel_settle`]).
+    pub fn set_migration_gate(&mut self, gate: Arc<AtomicBool>) {
+        self.migration_gate = Some(gate);
+    }
+
+    /// Whether the transport can still change underneath this stream.
+    ///
+    /// True for a progressive WAN connection, which starts on the relay and
+    /// may migrate to a direct path a few hundred milliseconds later.
+    pub fn may_migrate(&self) -> bool {
+        self.channel_tracker.is_some()
+    }
+
+    /// Wait, bounded, for the channel type to settle.
+    ///
+    /// Any decision taken on `channel_type` — quota, UI, telemetry — should be
+    /// taken on the value the connection actually settles on. Returns as soon
+    /// as the tracker changes, or the current value once `timeout` elapses (a
+    /// progressive connection whose punch fails stays on the relay, and that is
+    /// a legitimate final answer).
+    ///
+    /// Takes `&mut self` on purpose: the transport is `Box<dyn ByteStream>`,
+    /// which is `Send` but not `Sync`, so a future holding `&self` cannot be
+    /// spawned. `&mut` keeps the method usable from inside a spawned driver.
+    pub async fn wait_channel_settle(&mut self, timeout: Duration) -> crate::proto::ChannelType {
+        let Some(tracker) = self.channel_tracker.clone() else {
+            return self.channel_type();
+        };
+        let initial = tracker.load(Ordering::Acquire);
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if tracker.load(Ordering::Acquire) != initial {
+                break;
+            }
+            // The routing decision is final the instant punching resolves: a
+            // connection that failed to punch stays on the relay, and one that
+            // succeeded has already flipped the tracker. Returning here instead
+            // of on the deadline is what keeps a slow-but-successful hard-NAT
+            // punch from being misjudged on its transient relay hop.
+            if let Some(gate) = &self.migration_gate {
+                if gate.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.channel_type()
     }
 
     /// Send one encrypted frame.
@@ -330,6 +389,7 @@ impl SecureStream {
             peer_public_key,
             channel_type,
             channel_tracker: None,
+            migration_gate: None,
         }
     }
 
@@ -680,6 +740,7 @@ async fn handshake_client_inner(
         peer_public_key: peer_key.to_vec(),
         channel_type: crate::proto::ChannelType::LanDirect,
         channel_tracker: None,
+        migration_gate: None,
     })
 }
 
@@ -842,6 +903,7 @@ async fn handshake_server_inner(
         peer_public_key: peer_key.to_vec(),
         channel_type: crate::proto::ChannelType::LanDirect,
         channel_tracker: None,
+        migration_gate: None,
     })
 }
 
@@ -875,6 +937,70 @@ mod tests {
         server.send(b"clipboard: ack").await.unwrap();
         client.recv(&mut buf).await.unwrap();
         assert_eq!(buf, b"clipboard: ack");
+    }
+
+    /// `wait_channel_settle` must return as soon as the tracker moves, and
+    /// must not block a caller whose connection will never migrate.
+    #[tokio::test]
+    async fn wait_channel_settle_follows_a_migration() {
+        use crate::proto::ChannelType;
+        use std::sync::atomic::AtomicU8;
+
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seed_b = b.seed.clone();
+        let key_a = a.public_key.clone();
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let mut client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
+            .await
+            .expect("client handshake");
+        let _server = server.await.unwrap().expect("server handshake");
+
+        let tracker = Arc::new(AtomicU8::new(ChannelType::RelayForwarded as u8));
+        client.set_channel_tracker(tracker.clone());
+        assert!(client.may_migrate());
+        assert_eq!(client.channel_type(), ChannelType::RelayForwarded);
+
+        let mover = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            tracker.store(ChannelType::HolePunchedDirect as u8, Ordering::Release);
+        });
+        let started = std::time::Instant::now();
+        let settled = client.wait_channel_settle(Duration::from_secs(2)).await;
+        assert_eq!(settled, ChannelType::HolePunchedDirect);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "must return when the tracker moves, not on the deadline"
+        );
+        mover.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_channel_settle_gives_up_when_nothing_migrates() {
+        use crate::proto::ChannelType;
+        use std::sync::atomic::AtomicU8;
+
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seed_b = b.seed.clone();
+        let key_a = a.public_key.clone();
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_b, Some(&key_a)).await });
+        let mut client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
+            .await
+            .expect("client handshake");
+        let _server = server.await.unwrap().expect("server handshake");
+
+        client.set_channel_tracker(Arc::new(AtomicU8::new(ChannelType::RelayForwarded as u8)));
+        let started = std::time::Instant::now();
+        let settled = client.wait_channel_settle(Duration::from_millis(150)).await;
+        assert_eq!(settled, ChannelType::RelayForwarded);
+        assert!(started.elapsed() >= Duration::from_millis(140));
     }
 
     #[tokio::test]

@@ -9,6 +9,16 @@ use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
+/// Target number of checkpoint writes for one transfer.
+///
+/// The interval is derived from the chunk count, not fixed: a ten-chunk file
+/// checkpoints every chunk (a 2-byte bitmap), while a 3200-chunk file
+/// checkpoints 64 times instead of 3200. Writing the whole bitmap per chunk is
+/// O(n^2) I/O; writing it before the data is flushed can record bytes that a
+/// power loss erases. Bounding the write count fixes the first, the fsync
+/// ordering fixes the second.
+const CHECKPOINT_WRITES_TARGET: u32 = 64;
+
 /// Tunables for [`FileReceiver`].
 #[derive(Debug, Clone)]
 pub struct ReceiverConfig {
@@ -46,6 +56,7 @@ pub struct FileReceiver {
     completed_at: Option<Instant>,
     config: ReceiverConfig,
     meta: TransferMeta,
+    chunks_since_checkpoint: u32,
 }
 
 impl FileReceiver {
@@ -118,6 +129,7 @@ impl FileReceiver {
             completed_at: None,
             config,
             meta,
+            chunks_since_checkpoint: 0,
         })
     }
 
@@ -131,7 +143,11 @@ impl FileReceiver {
         self.total_size
     }
 
-    /// Contiguous prefix durably written so far.
+    /// Contiguous prefix written so far.
+    ///
+    /// Not necessarily on disk yet: the checkpoint is persisted in batches (see
+    /// [`CHECKPOINT_WRITES_TARGET`]) and only after a data fsync, so a crash can
+    /// cost a re-send but never resume past bytes that were not written.
     pub fn acked_up_to(&self) -> u64 {
         match self.intervals.first() {
             Some(i) if i.start == 0 => i.end,
@@ -188,12 +204,18 @@ impl FileReceiver {
 
         self.insert_interval(chunk.offset, end);
         self.meta.mark_range(chunk.offset, chunk.payload.len());
-        let meta_bytes = self.meta.encode();
-        let _ = tokio::fs::write(&self.meta_path, meta_bytes).await;
+
+        // Batched, and only after the bytes it describes are on disk.
+        self.chunks_since_checkpoint += 1;
+        let interval = (self.meta.chunk_count / CHECKPOINT_WRITES_TARGET).max(1);
+        if self.chunks_since_checkpoint >= interval {
+            self.persist_checkpoint().await?;
+        }
 
         if self.is_complete() {
             // Durability point: the final ACK may now be credited honestly.
             self.file.sync_data().await?;
+            self.chunks_since_checkpoint = 0;
             // Atomic rename of in-progress .part file to destination
             tokio::fs::rename(&self.part_path, &self.dest).await?;
             // Remove meta checkpoint file
@@ -206,6 +228,18 @@ impl FileReceiver {
             );
         }
         Ok(self.acked_up_to())
+    }
+
+    /// Flush data, then the bitmap that describes it.
+    ///
+    /// Order matters: a checkpoint written before the fsync can claim chunks
+    /// that a power loss will erase, and a resumed transfer would then skip
+    /// them, leaving a hole that no checksum covers.
+    async fn persist_checkpoint(&mut self) -> Result<(), TransferError> {
+        self.file.sync_data().await?;
+        let _ = tokio::fs::write(&self.meta_path, self.meta.encode()).await;
+        self.chunks_since_checkpoint = 0;
+        Ok(())
     }
 
     /// Read the finished file back and compute its SHA-256.

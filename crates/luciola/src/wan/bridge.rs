@@ -17,27 +17,59 @@ use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-/// Maximum bytes written but not yet released by the transport driver.
-pub(crate) const MAX_UNACKED_BYTES: usize = 4 * 1024 * 1024;
+/// Ceiling on bytes written but not yet released by the transport driver.
+///
+/// This bounds the ARQ in-flight budget for the direct UDP path: the relay
+/// driver releases credit as soon as the WebSocket sink accepts, so only the
+/// UDP driver ever holds credit for a full round trip. 256 KiB is roughly
+/// three bandwidth-delay products of a healthy LAN WiFi hop; larger values
+/// made the sender blast thousands of 1200-byte datagrams faster than the
+/// access point buffers them, and the resulting tail loss stalled the whole
+/// ordered stream. The *effective* window oscillates below this ceiling with
+/// AIMD — see [`super::arq::AimdWindow`] — via [`Flow::set_cap`].
+pub(crate) const MAX_UNACKED_BYTES: usize = 256 * 1024;
 
-#[derive(Default)]
 struct FlowState {
     outstanding: usize,
+    cap: usize,
     waker: Option<Waker>,
 }
 
 /// Credit counter shared by a [`StreamBridge`] and its driver task.
-#[derive(Default)]
 pub(crate) struct Flow(Mutex<FlowState>);
+
+impl Default for Flow {
+    fn default() -> Self {
+        Self(Mutex::new(FlowState {
+            outstanding: 0,
+            cap: MAX_UNACKED_BYTES,
+            waker: None,
+        }))
+    }
+}
 
 impl Flow {
     /// Reserve up to `want` bytes. Returns how many may actually be written.
     pub(crate) fn take(&self, want: usize) -> usize {
         let mut state = self.0.lock().expect("flow mutex poisoned");
-        let free = MAX_UNACKED_BYTES.saturating_sub(state.outstanding);
+        let free = state.cap.saturating_sub(state.outstanding);
         let n = want.min(free);
         state.outstanding += n;
         n
+    }
+
+    /// Move the ceiling itself (AIMD). Raising it must wake a writer parked
+    /// on the old, smaller cap; lowering it below `outstanding` simply parks
+    /// new writes until ACKs drain the excess.
+    pub(crate) fn set_cap(&self, cap: usize) {
+        let mut state = self.0.lock().expect("flow mutex poisoned");
+        let clamped = cap.clamp(1, MAX_UNACKED_BYTES);
+        if clamped > state.cap {
+            if let Some(waker) = state.waker.take() {
+                waker.wake();
+            }
+        }
+        state.cap = clamped;
     }
 
     /// Register the writer's waker for when the driver releases credit.
@@ -146,6 +178,18 @@ impl AsyncWrite for StreamBridge {
         }
         let n = this.flow.take(buf.len());
         if n == 0 {
+            // A driver that exited while holding credit (a failed send breaks
+            // its loop before releasing) would park the writer forever: the
+            // waker it waits for lives in a dead task. The channel being
+            // closed is the observable the writer actually has, so fail
+            // instead of hanging — observed on a real device as a silent
+            // 0%-CPU stall mid-transfer.
+            if this.outbound.is_closed() {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "wan transport driver stopped",
+                )));
+            }
             this.flow.park(cx);
             return Poll::Pending;
         }

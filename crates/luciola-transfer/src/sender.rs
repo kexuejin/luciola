@@ -13,6 +13,12 @@ pub struct SenderConfig {
     /// Payload bytes per chunk.
     pub chunk_size: usize,
     /// Max chunks in flight before an ACK frees a slot.
+    ///
+    /// Layering note: this window sits ABOVE the transport's own credit. On
+    /// the direct UDP path the bridge flow cap (AIMD-managed, 16 KiB…256 KiB
+    /// by round-trip feedback) is the binding constraint on a healthy link;
+    /// this chunk window only bounds memory and retransmit scope for the
+    /// file protocol itself.
     pub window: usize,
     /// Re-send in-flight chunks with no ACK covering them for this long.
     pub retransmit_after: Duration,

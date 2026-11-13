@@ -47,3 +47,65 @@ our code. The lint is enforced everywhere it can be.
 one an attacker can intercept, and a file transfer is exactly the operation
 where that matters. Pairing (QR / `luciola://pair`) is the supported way to
 learn a key; the transfer command then requires the key it learned.
+
+## A dead direct path fails the stream; it does not silently fall back
+
+`wan::adaptive` migrates a progressive connection from the relay to a punched
+UDP path. If that path stops acknowledging, the driver ends the stream instead
+of switching back to the relay.
+
+**Not done, deliberately.** The peer stopped reading the relay at the moment it
+accepted the migration (that is what the barrier guarantees), so "falling back"
+would write into a channel nobody drains and report success while the file is
+truncated. Failing loudly is the only honest option; a reconnect starts a new
+exchange and can pick a route from scratch.
+
+## Checkpoints are written in batches, after the data fsync
+
+`luciola-transfer` persists its chunk bitmap roughly 64 times per transfer, and
+never before `sync_data` of the bytes it describes.
+
+**Not done, deliberately.** The alternatives are both wrong: a bitmap write per
+chunk is O(n²) I/O on a large file, and a bitmap written before the fsync can
+record chunks that a power loss erases — a resume would then skip them and leave
+a hole no checksum covers. Batching costs at most a re-send of the last
+interval after a crash, which the protocol already supports.
+
+## `--adb-device` is set up on the sending side only
+
+The sender runs `adb forward tcp:P tcp:P` (host:P → device:P) and removes it on
+exit. The receiving side runs nothing.
+
+**Not done, deliberately.** `adb reverse` on the receiver would bind the very
+port the receiver listens on inside the device and fight it for the socket. The
+forward already delivers to that port. A unit test cannot cover this (it needs a
+real device); the fallback is that a failed `adb forward` is now fatal, so a
+same-machine run cannot masquerade as a USB transfer.
+
+## Post-migration EOF travels over UDP and is retransmitted like data
+
+A progressive connection that migrated to the direct path ends its half-close
+with a `KIND_CLOSE` datagram inside the ARQ (`sent_udp`), not a relay frame.
+
+**Done this way, deliberately.** After the migration barrier both sides have
+stopped writing the relay, so a relay EOF can never arrive; the only honest EOF
+source is the direct path. The marker is tracked in `sent_udp` so the existing
+retransmit/backoff machinery keeps it alive against datagram loss, and the
+receiver answers it with a cumulative ACK and flips `peer_eof` — which is what
+lets the driver's termination condition (`outbound_done && peer_eof`) ever be
+met. A receiver that vanished instead of closing is still bounded by the
+retransmit-rounds cap, matching `udp::drive`'s semantics.
+
+## Relay-quota admission waits for the routing decision, not a deadline
+
+`admit` judges a large transfer on the channel it will actually use: it waits
+until the channel tracker flips to direct **or** the migration gate (raised the
+moment hole punching resolves, success or failure) releases the wait.
+
+**Done this way, deliberately.** Judging on the transient relay hop rejects a
+file that is about to travel free; judging on a fixed 1.5 s window rejects a
+hard-NAT punch that takes three seconds and wins. The gate converts "wait a
+while and hope" into "wait exactly until the answer is known", so a
+relay-bound connection is still refused promptly (the guard in
+`discover_and_punch` raises the flag on every return path) while a slow
+success is admitted on its merits. The remaining timeout is a safety net only.

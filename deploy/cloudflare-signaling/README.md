@@ -30,6 +30,18 @@ This directory ships **source and config, not a deployed public endpoint**.
   before they leave the device under an HKDF-SHA256 key derived from the
   pairing PSK. The service never sees endpoint addresses or file data. Do not
   add plaintext fields to that envelope.
+- **Pre-join frames are buffered, not dropped** — while a room holds fewer
+  than two sockets there is no forward target, so the first peer's frames
+  (handshake, candidates) are stored opaquely in Durable Object storage —
+  bounded at 32 frames, still ciphertext — and replayed in order to the second
+  peer on join. Without this the rendezvous deadlocks whenever the initiator
+  joins first, and neither side can hole-punch because neither holds the
+  other's candidates. A room that empties again discards the buffer.
+- **Relay budget is 256 messages/second and overflow closes the socket** —
+  clients must pace relay writes (the Rust driver's `RelayPacer` sustains
+  ~224 frames/s with a 16-frame burst, keeping every server-observable
+  one-second window under the budget). Raising the limit trades against the
+  bounded-abuse posture; client pacing is the contract, not server headroom.
 - **Strict 2-peer limit** — one room accepts two distinct peers, rejects
   duplicates, and emits `peer_online` / `peer_offline` control notices.
 - **Hibernation API** — idle WebSockets do not incur duration charges. This is

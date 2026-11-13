@@ -42,7 +42,17 @@ pub struct FileAck {
     pub transfer_id: String,
     /// Exclusive end of the contiguous prefix durably written.
     pub acked_up_to: u64,
+    /// Set on the one ack a resuming receiver sends before any data flows.
+    /// The sender cannot tell a checkpoint skip from a fresh transfer's first
+    /// cumulative ACK by value alone — both can cover bytes already in flight
+    /// — so the receiver states it. Encoded as a trailing flags byte that
+    /// older peers (which stop reading after `acked_up_to`) safely ignore;
+    /// decoding a frame without it defaults to `false`.
+    pub resume: bool,
 }
+
+/// Flag bit for [`FileAck::resume`] in the trailing flags byte.
+const ACK_FLAG_RESUME: u8 = 0x01;
 
 fn put_u64(buf: &mut Vec<u8>, v: u64) {
     buf.extend_from_slice(&v.to_be_bytes());
@@ -125,15 +135,23 @@ impl FileChunk {
 impl FileAck {
     /// Encode this acknowledgement into its wire frame.
     pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(2 + 1 + self.transfer_id.len() + 8);
+        let mut flags = 0u8;
+        if self.resume {
+            flags |= ACK_FLAG_RESUME;
+        }
+        let mut buf = Vec::with_capacity(2 + 1 + self.transfer_id.len() + 9);
         buf.extend_from_slice(&MAGIC_ACK);
         buf.push(self.transfer_id.len() as u8);
         buf.extend_from_slice(self.transfer_id.as_bytes());
         put_u64(&mut buf, self.acked_up_to);
+        buf.push(flags);
         buf
     }
 
     /// Decode an acknowledgement frame; bad magic is rejected.
+    ///
+    /// The trailing flags byte is optional: frames written by peers predating
+    /// it end after `acked_up_to`, and decode must accept them unchanged.
     pub fn decode(buf: &[u8]) -> Result<Self, crate::TransferError> {
         let mut r = Reader { buf, pos: 0 };
         let magic = r.take(2)?;
@@ -142,9 +160,15 @@ impl FileAck {
         }
         let transfer_id = r.id()?;
         let acked_up_to = r.u64()?;
+        let resume = if r.buf.len() > r.pos {
+            r.u8()? & ACK_FLAG_RESUME != 0
+        } else {
+            false
+        };
         Ok(Self {
             transfer_id,
             acked_up_to,
+            resume,
         })
     }
 }
@@ -243,8 +267,31 @@ mod tests {
         let ack = FileAck {
             transfer_id: "t-1".into(),
             acked_up_to: u64::MAX,
+            resume: false,
         };
         assert_eq!(FileAck::decode(&ack.encode()).unwrap(), ack);
+        let ack = FileAck {
+            transfer_id: "t-1".into(),
+            acked_up_to: 4096,
+            resume: true,
+        };
+        assert_eq!(FileAck::decode(&ack.encode()).unwrap(), ack);
+    }
+
+    /// A frame written by a peer predating the flags byte ends after
+    /// `acked_up_to`; decode must accept it and default `resume` to false.
+    #[test]
+    fn legacy_ack_without_flags_byte_decodes() {
+        let ack = FileAck {
+            transfer_id: "t-1".into(),
+            acked_up_to: 4096,
+            resume: true,
+        };
+        let mut legacy = ack.encode();
+        legacy.pop();
+        let decoded = FileAck::decode(&legacy).unwrap();
+        assert_eq!(decoded.acked_up_to, 4096);
+        assert!(!decoded.resume);
     }
 
     #[test]
@@ -274,6 +321,7 @@ mod tests {
         let ack = FileAck {
             transfer_id: "t".into(),
             acked_up_to: 1,
+            resume: false,
         };
         assert!(is_chunk_frame(&chunk.encode()));
         assert!(!is_chunk_frame(&ack.encode()));
@@ -292,7 +340,8 @@ mod tests {
         assert!(!is_intro_frame(
             &FileAck {
                 transfer_id: "t".into(),
-                acked_up_to: 1
+                acked_up_to: 1,
+                resume: false
             }
             .encode()
         ));

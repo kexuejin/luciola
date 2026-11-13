@@ -90,18 +90,23 @@ luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
 > **Local validation build (NOT published).** `0.11.0-local.1` carries the
 > WAN/STUN work and exists **only** in `~/.m2`, produced by
 > `scripts/publish-maven-local.sh`. It is on neither Maven Central nor
-> crates.io. The WAN data plane is now implemented in the **Rust core**
+> crates.io. The WAN data plane is implemented in the **Rust core**
 > (`luciola::wan::connect_wan`: encrypted WSS rendezvous, UDP hole punching
-> with a reliable ordered ARQ, and an opt-in encrypted relay fallback), but
-> is **Rust-core-only** — the KMP/Swift/Node surfaces do not expose it — and
-> has been verified only on loopback (local WebSocket relay E2E and UDP ARQ
-> tests). No real-NAT field test, no deployed public signaling service, no
-> mobile background presence, no external audit. See the Unreleased section of
-> [CHANGELOG.md](CHANGELOG.md) and the WAN section of [SECURITY.md](SECURITY.md).
+> with a reliable ordered ARQ, and an opt-in encrypted relay fallback), plus
+> progressive relay→direct migration, RFC 5780 NAT diagnostics, resumable
+> checkpoints, an AIMD congestion window and an optional USB ADB path. All of
+> it is **Rust-core + CLI only** — the KMP/Swift/Node surfaces do not expose
+> it — and is verified at the unit / loopback layer, not on real NATs, a
+> deployed signaling service or mobile background presence. No external audit
+> either. See the Unreleased section of [CHANGELOG.md](CHANGELOG.md) and the
+> WAN section of [SECURITY.md](SECURITY.md).
 > Only in a dedicated validation consumer, put `mavenLocal()` first and pin
 > `io.github.kexuejin:luciola:0.11.0-local.1`; the distinct version means this
-> cannot shadow the published `0.10.0` artifact. Remove the local repo and the
-> override when validation is done.
+> cannot shadow the published `0.10.0` artifact. **This coordinate was
+> republished on 2026-11-13** with the fixes above — a consumer that resolved
+> it earlier must refresh with `--refresh-dependencies`, or a cached AAR
+> silently keeps the old engine. Remove the local repo and the override when
+> validation is done.
 
 > **Released 0.10.0** (2026-11-05), checked against the registries rather than
 > assumed: crates.io answers `0.10.0` for all seven crates; the Maven Central

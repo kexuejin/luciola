@@ -451,6 +451,20 @@ pub enum ChannelType {
 }
 
 impl ChannelType {
+    /// Decode the numeric code used on the FFI wire and in `AtomicU8` trackers.
+    ///
+    /// Returns `None` for an unknown code so callers fall back deliberately
+    /// instead of silently mislabelling a channel.
+    pub fn from_u8(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(ChannelType::LanDirect),
+            1 => Some(ChannelType::HolePunchedDirect),
+            2 => Some(ChannelType::RelayForwarded),
+            3 => Some(ChannelType::UsbAdbDirect),
+            _ => None,
+        }
+    }
+
     /// Text label for diagnostics and UI status.
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -532,6 +546,24 @@ impl Default for RelayConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The numeric codes are on the FFI wire; inserting a variant must not
+    /// silently shift them.
+    #[test]
+    fn channel_type_codes_round_trip() {
+        for (code, expected) in [
+            (0u8, ChannelType::LanDirect),
+            (1, ChannelType::HolePunchedDirect),
+            (2, ChannelType::RelayForwarded),
+            (3, ChannelType::UsbAdbDirect),
+        ] {
+            assert_eq!(ChannelType::from_u8(code), Some(expected));
+            assert_eq!(expected as u8, code);
+            assert!(!expected.as_str().is_empty());
+        }
+        assert_eq!(ChannelType::from_u8(4), None);
+        assert_eq!(ChannelType::from_u8(255), None);
+    }
 
     #[test]
     fn test_envelope_encode_decode() {

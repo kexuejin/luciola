@@ -18,7 +18,7 @@
 //! increasing per direction, which gives replay protection for free. An empty
 //! `relay` payload is the ordered EOF marker, not an empty data frame.
 
-use super::bridge::{bridge_pair, StreamBridge};
+use super::bridge::{bridge_pair, BridgeEnds, StreamBridge};
 use super::WanError;
 use crate::relay_crypto::{aead_open_raw, aead_seal_raw, frame_nonce, hkdf_sha256, AEAD_KEY_LEN};
 use ed25519_dalek::{Signer, SigningKey};
@@ -52,10 +52,16 @@ struct WireFrame {
     ct: String,
 }
 
+/// Lowercase hex, no allocation per byte.
+///
+/// This sits on the relay data path: a 16 KiB frame is 32 thousand bytes, and
+/// `format!` per byte meant 32 thousand allocations per frame.
 pub(crate) fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
 }
@@ -103,6 +109,29 @@ fn aad(room: &str, epoch: u64, seq: u64, kind: &str) -> Vec<u8> {
 /// below pins the format so the two sides cannot drift silently.
 fn auth_payload(room: &str, epoch: u64, nonce_hex: &str, peer_hex: &str) -> String {
     format!("{AUTH_PREFIX}:{room}:{epoch}:{nonce_hex}:{peer_hex}")
+}
+
+/// Build the authenticated WebSocket URL.
+///
+/// The request target must be origin-form (`GET /ws?room=...`). An endpoint
+/// without a path (`ws://host:8787`) would otherwise produce `GET ?room=...`,
+/// which is not a valid request target: real servers reject it before any
+/// Worker code runs, as an opaque 400/500 with nothing in the server log.
+fn auth_url(
+    endpoint: &str,
+    room: &str,
+    peer_hex: &str,
+    nonce_hex: &str,
+    epoch: u64,
+    sig_hex: &str,
+) -> String {
+    let base = match endpoint.find("://") {
+        Some(scheme) if !endpoint[scheme + 3..].contains('/') => format!("{endpoint}/"),
+        None if !endpoint.contains('/') => format!("{endpoint}/"),
+        _ => endpoint.to_string(),
+    };
+    let separator = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{separator}room={room}&peer={peer_hex}&nonce={nonce_hex}&epoch={epoch}&sig={sig_hex}")
 }
 
 pub(crate) fn seal(
@@ -239,16 +268,13 @@ impl SignalingClient {
         let nonce_hex = to_hex(&nonce);
         let payload = auth_payload(p.room, p.epoch, &nonce_hex, &my_hex);
         let signature = signing.sign(payload.as_bytes());
-        let separator = if p.endpoint.contains('?') { '&' } else { '?' };
-        let url = format!(
-            "{}{}room={}&peer={}&nonce={}&epoch={}&sig={}",
+        let url = auth_url(
             p.endpoint,
-            separator,
             p.room,
-            my_hex,
-            nonce_hex,
+            &my_hex,
+            &nonce_hex,
             p.epoch,
-            to_hex(&signature.to_bytes())
+            &to_hex(&signature.to_bytes()),
         );
 
         let (ws, _) = tokio::time::timeout(p.timeout, connect_async(url))
@@ -327,7 +353,7 @@ impl SignalingClient {
     /// relay frame is an explicit EOF marker: because the WebSocket preserves
     /// order, all preceding data has already been delivered when it arrives.
     pub(crate) fn into_relay(self) -> StreamBridge {
-        let (bridge, mut ends) = bridge_pair();
+        let (bridge, ends) = bridge_pair();
         let Self {
             mut sink,
             mut stream,
@@ -337,13 +363,26 @@ impl SignalingClient {
             mut send_seq,
             mut recv_seq,
         } = self;
+        // Pulled apart so the inbound sender can be dropped on its own: that
+        // drop *is* the EOF the reader sees, and it must not take the write
+        // half with it.
+        let BridgeEnds {
+            mut outbound_rx,
+            inbound_tx,
+            flow,
+        } = ends;
         tokio::spawn(async move {
+            let mut inbound = Some(inbound_tx);
             let mut outbound_done = false;
+            let mut read_done = false;
             loop {
+                if outbound_done && read_done {
+                    break;
+                }
                 tokio::select! {
                     // A dropped or shut-down writer must not spin on `None`,
                     // and must not kill the read half before the peer's EOF.
-                    outbound = ends.outbound_rx.recv(), if !outbound_done => {
+                    outbound = outbound_rx.recv(), if !outbound_done => {
                         match outbound {
                             None => {
                                 outbound_done = true;
@@ -383,28 +422,28 @@ impl SignalingClient {
                                 if !sent_all {
                                     break;
                                 }
-                                ends.flow.release(bytes.len());
+                                flow.release(bytes.len());
                             }
                         }
                     }
-                    incoming = stream.next() => {
+                    incoming = stream.next(), if !read_done => {
                         let (kind, pt) = match incoming {
                             Some(Ok(Message::Binary(bytes))) => {
                                 match open(&key, &room, epoch, &mut recv_seq, &bytes) {
                                     Ok(Some(frame)) => frame,
                                     Ok(None) => continue,
-                                    Err(_) => break,
+                                    Err(_) => { read_done = true; continue; }
                                 }
                             }
                             Some(Ok(Message::Text(text))) => {
                                 match open(&key, &room, epoch, &mut recv_seq, text.as_bytes()) {
                                     Ok(Some(frame)) => frame,
                                     Ok(None) => continue,
-                                    Err(_) => break,
+                                    Err(_) => { read_done = true; continue; }
                                 }
                             }
                             Some(Ok(_)) => continue,
-                            Some(Err(_)) | None => break,
+                            Some(Err(_)) | None => { read_done = true; continue; }
                         };
                         if kind != "relay" {
                             continue;
@@ -412,9 +451,14 @@ impl SignalingClient {
                         if pt.is_empty() {
                             // Ordered EOF marker: everything before it has
                             // already been pushed into the inbound channel.
-                            break;
+                            // Dropping the sender surfaces EOF to the reader
+                            // while the write half keeps working.
+                            read_done = true;
+                            inbound = None;
+                            continue;
                         }
-                        if ends.inbound_tx.send(pt).is_err() {
+                        let Some(tx) = inbound.as_ref() else { continue };
+                        if tx.send(pt).is_err() {
                             break;
                         }
                     }
@@ -437,6 +481,25 @@ mod tests {
         assert_eq!(
             auth_payload(ROOM, EPOCH, "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", "abab"),
             format!("LUCIOLA_WAN_AUTH:{ROOM}:{EPOCH}:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd:abab")
+        );
+    }
+
+    /// A pathless endpoint must still yield a valid origin-form request
+    /// target; this is the `GET ?room=...` regression.
+    #[test]
+    fn auth_url_keeps_the_request_target_well_formed() {
+        let u = auth_url("ws://127.0.0.1:8787", ROOM, "ab", "cd", 1, "ef");
+        assert!(u.starts_with("ws://127.0.0.1:8787/?room="), "{u}");
+        let u = auth_url("wss://hub.example/ws", ROOM, "ab", "cd", 1, "ef");
+        assert!(u.starts_with("wss://hub.example/ws?room="), "{u}");
+        // Endpoint already carrying a query string keeps its parameters.
+        let u = auth_url("ws://127.0.0.1:8787/ws?legacy=1", ROOM, "ab", "cd", 1, "ef");
+        assert!(u.contains("/ws?legacy=1&room="), "{u}");
+        // Query params are appended in a fixed order with fixed names.
+        let u = auth_url("ws://h/ws", ROOM, "ab", "cd", 7, "ef");
+        assert_eq!(
+            u,
+            format!("ws://h/ws?room={ROOM}&peer=ab&nonce=cd&epoch=7&sig=ef")
         );
     }
 
@@ -544,6 +607,76 @@ mod tests {
             .unwrap();
         assert_eq!(kind, "relay");
         assert_eq!(plaintext, chunk);
+    }
+
+    /// Peer EOF must not take the write half with it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn relay_half_close_keeps_the_write_side_usable() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::{accept_async, connect_async};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let forwarder = tokio::spawn(async move {
+            let (s1, _) = listener.accept().await.unwrap();
+            let ws1 = accept_async(s1).await.unwrap();
+            let (s2, _) = listener.accept().await.unwrap();
+            let ws2 = accept_async(s2).await.unwrap();
+            let (mut w1, mut r1) = ws1.split();
+            let (mut w2, mut r2) = ws2.split();
+            loop {
+                tokio::select! {
+                    m = r1.next() => match m {
+                        Some(Ok(m)) => { if w2.send(m).await.is_err() { break } }
+                        _ => break,
+                    },
+                    m = r2.next() => match m {
+                        Some(Ok(m)) => { if w1.send(m).await.is_err() { break } }
+                        _ => break,
+                    },
+                }
+            }
+        });
+
+        let connect = |port: u16| async move {
+            let (ws, _) = connect_async(format!("ws://127.0.0.1:{port}/ws"))
+                .await
+                .unwrap();
+            let (sink, stream) = ws.split();
+            SignalingClient {
+                sink,
+                stream,
+                key: [3u8; AEAD_KEY_LEN],
+                room: ROOM.to_string(),
+                epoch: EPOCH,
+                send_seq: 0,
+                recv_seq: 0,
+            }
+        };
+        let mut a = connect(port).await.into_relay();
+        let mut b = connect(port).await.into_relay();
+
+        a.write_all(b"ping").await.unwrap();
+        let mut buf = [0u8; 4];
+        b.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"ping");
+
+        // A closes only its write direction.
+        a.shutdown().await.unwrap();
+        let mut probe = [0u8; 1];
+        assert_eq!(b.read(&mut probe).await.unwrap(), 0, "B must see EOF");
+
+        // B's write half must still work after the peer's EOF.
+        b.write_all(b"pong").await.unwrap();
+        let mut back = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(3), a.read_exact(&mut back))
+            .await
+            .expect("response must survive the peer's half close")
+            .unwrap();
+        assert_eq!(&back, b"pong");
+
+        forwarder.abort();
     }
 
     #[test]

@@ -26,6 +26,7 @@
 //! and then for this data plane; dropping it (or binding a second one) would
 //! invalidate the server-reflexive mapping the peer was told to dial.
 
+use super::arq::AimdWindow;
 use super::bridge::{bridge_pair, StreamBridge};
 use super::WanError;
 use std::collections::BTreeMap;
@@ -41,6 +42,16 @@ const HEADER_LEN: usize = 24;
 /// Stay below the 1280-byte IPv6 minimum MTU with room for encapsulation.
 pub(crate) const MAX_PAYLOAD: usize = 1200;
 const MAX_DATAGRAM: usize = HEADER_LEN + MAX_PAYLOAD;
+/// Cumulative-ACK cadence for clean in-order DATA. Retransmissions and
+/// out-of-order arrivals always ACK immediately; the former tell the sender
+/// its ACK was lost, the latter are the duplicate-ACK signal behind fast
+/// retransmit. Batching the healthy case keeps the ACK airtime — one radio
+/// frame per datagram — from rivalling the data it credits.
+pub(crate) const ACK_EVERY: u32 = 4;
+/// Duplicate cumulative ACKs before the sender retransmits the hole packet
+/// immediately, instead of waiting for the backoff timer to re-flood the
+/// whole in-flight window.
+pub(crate) const DUP_ACK_FAST_RETRANSMIT: u32 = 3;
 
 pub(crate) const KIND_DATA: u8 = 1;
 pub(crate) const KIND_ACK: u8 = 2;
@@ -50,7 +61,12 @@ pub(crate) const KIND_CLOSE: u8 = 4;
 const PUNCH_INTERVAL: Duration = Duration::from_millis(50);
 const RETRANSMIT_INTERVAL: Duration = Duration::from_millis(200);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_RETRANSMITS: u32 = 40;
+/// Retransmission *rounds* before the peer is declared gone. Rounds back off
+/// exponentially, so this is tens of seconds of patience, not 8 seconds of
+/// blind full-window flooding.
+const MAX_RETRANSMIT_ROUNDS: u32 = 8;
+/// Upper bound (in 200 ms ticks) for the backoff interval.
+const MAX_BACKOFF_TICKS: u32 = 32;
 /// Bound the lifetime of a half-closed driver whose peer never answers.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -149,8 +165,15 @@ async fn drive(
     let mut next_seq: u64 = 0;
     let mut recv_next: u64 = 0;
     let mut recv_ooo: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
-    let mut retransmits: u32 = 0;
+    let mut retransmit_rounds: u32 = 0;
+    let mut retransmit_every: u32 = 1;
+    let mut ticks: u32 = 0;
     let mut last_activity = Instant::now();
+    let mut last_ack_seen: u64 = 0;
+    let mut dup_acks: u32 = 0;
+    let mut inorder_since_ack: u32 = 0;
+    let mut aimd = AimdWindow::new();
+    ends.flow.set_cap(aimd.value());
     let mut tick = interval(RETRANSMIT_INTERVAL);
     let mut buf = [0u8; MAX_DATAGRAM];
     // Half-close state. CLOSE carries the sender's final DATA sequence in its
@@ -230,12 +253,40 @@ async fn drive(
                 }
                 if freed > 0 {
                     ends.flow.release(freed);
-                    retransmits = 0;
+                    aimd.on_progress(freed);
+                    ends.flow.set_cap(aimd.value());
+                    retransmit_rounds = 0;
+                    retransmit_every = 1;
+                    ticks = 0;
                     last_activity = Instant::now();
                 }
 
-                if kind == KIND_DATA && seq >= recv_next {
-                    if recv_ooo.insert(seq, payload.to_vec()).is_none() {
+                // Fast retransmit: repeated ACKs at the same cumulative
+                // position mean the packet at that offset was lost. Resending
+                // just the hole now beats waiting for the backoff timer to
+                // re-flood the entire in-flight window.
+                if ack > last_ack_seen {
+                    last_ack_seen = ack;
+                    dup_acks = 0;
+                } else if ack == last_ack_seen {
+                    dup_acks += 1;
+                    if dup_acks >= DUP_ACK_FAST_RETRANSMIT {
+                        dup_acks = 0;
+                        aimd.on_loss();
+                        ends.flow.set_cap(aimd.value());
+                        if let Some(packet) = sent.get(&ack) {
+                            socket.send_to(packet, peer).await?;
+                        }
+                    }
+                }
+
+                if kind == KIND_DATA {
+                    // Decide the cadence before the insert mutates the state:
+                    // a retransmission or an out-of-order arrival answers at
+                    // once, a clean in-order packet shares one ACK per
+                    // [`ACK_EVERY`] packets.
+                    let ack_now = seq != recv_next || !recv_ooo.is_empty();
+                    if seq >= recv_next && recv_ooo.insert(seq, payload.to_vec()).is_none() {
                         while let Some(seg) = recv_ooo.remove(&recv_next) {
                             recv_next += 1;
                             if ends.inbound_tx.send(seg).is_err() {
@@ -243,8 +294,18 @@ async fn drive(
                             }
                         }
                     }
-                    // Always ACK: a lost ACK would otherwise stall the sender
-                    // until its retransmission timer fired.
+                    if !ack_now {
+                        inorder_since_ack += 1;
+                        if inorder_since_ack < ACK_EVERY {
+                            continue;
+                        }
+                    }
+                    inorder_since_ack = 0;
+                    // A duplicate *is* the sender saying "my ACK was lost":
+                    // staying silent strands its window until it gives up and
+                    // tears the stream down, which truncates the transfer at
+                    // the tail. Batched or immediate, every decision above
+                    // ends here.
                     let ack_packet = build_packet(KIND_ACK, 0, recv_next, &[]);
                     socket.send_to(&ack_packet, peer).await?;
                     last_activity = Instant::now();
@@ -268,15 +329,23 @@ async fn drive(
                         last_activity = Instant::now();
                     }
                 } else {
-                    retransmits += 1;
-                    if retransmits > MAX_RETRANSMITS {
-                        return Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "peer stopped acknowledging UDP data",
-                        ));
-                    }
-                    for packet in sent.values() {
-                        socket.send_to(packet, peer).await?;
+                    // Exponential backoff. Resending the whole window every
+                    // 200 ms turns a congested link into a self-inflicted DoS.
+                    ticks += 1;
+                    if ticks.is_multiple_of(retransmit_every) {
+                        retransmit_rounds += 1;
+                        if retransmit_rounds > MAX_RETRANSMIT_ROUNDS {
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "peer stopped acknowledging UDP data",
+                            ));
+                        }
+                        for packet in sent.values() {
+                            socket.send_to(packet, peer).await?;
+                        }
+                        aimd.on_loss();
+                        ends.flow.set_cap(aimd.value());
+                        retransmit_every = (retransmit_every * 2).min(MAX_BACKOFF_TICKS);
                     }
                 }
             }
@@ -455,5 +524,75 @@ mod tests {
         server.send(b"ack").await.unwrap();
         client.recv(&mut buf).await.unwrap();
         assert_eq!(buf, b"ack");
+    }
+
+    /// A single lost ACK must not strand the sender. The receiver has to answer
+    /// a retransmitted (duplicate) DATA packet with a fresh cumulative ACK;
+    /// otherwise the sender burns every retransmission and then tears the
+    /// driver down, and the byte stream ends mid-flight.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn duplicate_data_earns_a_fresh_ack() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let sock_a = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let sock_b = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let proxy_a = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let proxy_b = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let a_addr = sock_a.local_addr().unwrap();
+        let b_addr = sock_b.local_addr().unwrap();
+        let pa = proxy_a.local_addr().unwrap();
+        let pb = proxy_b.local_addr().unwrap();
+
+        let acks_after_drop = Arc::new(AtomicUsize::new(0));
+        let counter = acks_after_drop.clone();
+
+        let proxy = tokio::spawn(async move {
+            let mut ba = [0u8; MAX_DATAGRAM];
+            let mut bb = [0u8; MAX_DATAGRAM];
+            let mut dropped_first_ack = false;
+            loop {
+                tokio::select! {
+                    r = proxy_a.recv_from(&mut ba) => {
+                        let Ok((n, _)) = r else { break };
+                        let _ = proxy_b.send_to(&ba[..n], b_addr).await;
+                    }
+                    r = proxy_b.recv_from(&mut bb) => {
+                        let Ok((n, _)) = r else { break };
+                        let is_ack = parse_packet(&bb[..n])
+                            .map(|p| p.0 == KIND_ACK)
+                            .unwrap_or(false);
+                        if is_ack {
+                            if !dropped_first_ack {
+                                // Swallow exactly the ACK for the first DATA.
+                                dropped_first_ack = true;
+                                continue;
+                            }
+                            counter.fetch_add(1, Ordering::SeqCst);
+                        }
+                        let _ = proxy_a.send_to(&bb[..n], a_addr).await;
+                    }
+                }
+            }
+        });
+
+        let mut a = start_stream(sock_a, pa);
+        let mut b = start_stream(sock_b, pb);
+
+        a.write_all(b"hello").await.unwrap();
+        let mut got = vec![0u8; 5];
+        tokio::time::timeout(Duration::from_secs(5), b.read_exact(&mut got))
+            .await
+            .expect("payload must be delivered")
+            .unwrap();
+        assert_eq!(&got, b"hello");
+
+        // One retransmission cadence is 200 ms; give it three.
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(
+            acks_after_drop.load(Ordering::SeqCst) >= 1,
+            "the retransmitted duplicate DATA was never ACKed"
+        );
+
+        proxy.abort();
     }
 }

@@ -151,16 +151,18 @@ impl NatReport {
         if self.mapping == NatMappingBehavior::AddressAndPortDependent {
             return NatClassification::Symmetric;
         }
-        match self.filtering {
-            NatFilteringBehavior::EndpointIndependent => NatClassification::FullCone,
-            NatFilteringBehavior::AddressDependent => NatClassification::RestrictedCone,
-            NatFilteringBehavior::AddressAndPortDependent => NatClassification::PortRestrictedCone,
-            _ => {
-                if self.mapping == NatMappingBehavior::EndpointIndependent {
-                    NatClassification::RestrictedCone
-                } else {
-                    NatClassification::Unknown
-                }
+        // A classification is only worth printing when both dimensions were
+        // actually measured. Guessing "cone" from one half is how a symmetric
+        // NAT ends up being advertised as punchable.
+        match (self.mapping, self.filtering) {
+            (_, NatFilteringBehavior::Unknown) | (NatMappingBehavior::Unknown, _) => {
+                NatClassification::Unknown
+            }
+            (_, NatFilteringBehavior::DirectOpen) => NatClassification::OpenInternet,
+            (_, NatFilteringBehavior::EndpointIndependent) => NatClassification::FullCone,
+            (_, NatFilteringBehavior::AddressDependent) => NatClassification::RestrictedCone,
+            (_, NatFilteringBehavior::AddressAndPortDependent) => {
+                NatClassification::PortRestrictedCone
             }
         }
     }
@@ -458,14 +460,20 @@ pub async fn query_public_address(
     }
 }
 
+/// Sends one probe and returns the parsed response **plus the address it came
+/// from**.
+///
+/// The source address is not decoration: RFC 5780's filtering tests are only
+/// meaningful if the reply really came from the alternate endpoint. A server
+/// that ignores CHANGE-REQUEST answers from its primary address, and treating
+/// that as success reports a Full Cone NAT that does not exist.
 async fn query_stun_target(
     socket: &UdpSocket,
     target_addr: SocketAddr,
     req_bytes: &[u8],
     expected_tid: &[u8; 12],
     timeout_duration: Duration,
-    verify_source: bool,
-) -> Result<StunResponseDetails, StunError> {
+) -> Result<(StunResponseDetails, SocketAddr), StunError> {
     socket.send_to(req_bytes, target_addr).await?;
     let deadline = Instant::now() + timeout_duration;
     let mut buf = [0u8; 512];
@@ -476,11 +484,8 @@ async fn query_stun_target(
         }
         match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
             Ok(Ok((len, from))) => {
-                if !verify_source || from == target_addr {
-                    if let Ok(details) = parse_detailed_binding_response(&buf[..len], expected_tid)
-                    {
-                        return Ok(details);
-                    }
+                if let Ok(details) = parse_detailed_binding_response(&buf[..len], expected_tid) {
+                    return Ok((details, from));
                 }
             }
             Ok(Err(e)) => return Err(StunError::Io(e)),
@@ -520,13 +525,14 @@ pub async fn probe_nat_behavior(
     let mut tid_1 = [0u8; 12];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_1);
     let req_1 = build_binding_request(tid_1);
-    let resp_1 = query_stun_target(
+    // First query also pinpoints the address the server answers from, which is
+    // the baseline every filtering test is compared against.
+    let (resp_1, _server_source) = query_stun_target(
         socket,
         primary_server,
         &req_1,
         &tid_1,
         Duration::from_millis(1500),
-        true,
     )
     .await?;
 
@@ -552,54 +558,61 @@ pub async fn probe_nat_behavior(
     }
 
     // --- MAPPING BEHAVIOR TEST ---
-    let mapping = if let Some(other_addr) = resp_1.other_address {
-        let mut target_alt = other_addr;
-        target_alt.set_port(primary_server.port());
+    // A server that advertises OTHER-ADDRESS is RFC 5780 aware, which makes a
+    // failed alternate probe meaningful rather than a guess.
+    let server_supports_rfc5780 = resp_1.other_address.is_some();
 
-        let mut tid_map = [0u8; 12];
-        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_map);
-        let req_map = build_binding_request(tid_map);
+    let mapping = if let Some(other_addr) = resp_1.other_address {
+        // Probe the alternate endpoint exactly as advertised: OTHER-ADDRESS
+        // carries its own port and that is the only port listening there.
+        let mut tid_alt = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_alt);
+        let req_alt = build_binding_request(tid_alt);
         match query_stun_target(
             socket,
-            target_alt,
-            &req_map,
-            &tid_map,
+            other_addr,
+            &req_alt,
+            &tid_alt,
             Duration::from_millis(1200),
-            true,
         )
         .await
         {
-            Ok(resp_map) => {
-                if resp_map.mapped_address.port() == reflexive_addr.port()
-                    && resp_map.mapped_address.ip() == reflexive_addr.ip()
-                {
-                    NatMappingBehavior::EndpointIndependent
+            Ok((resp_alt, _)) if resp_alt.mapped_address == reflexive_addr => {
+                NatMappingBehavior::EndpointIndependent
+            }
+            Ok((resp_alt, _)) => {
+                // Same alternate IP, primary port: an unchanged mapping here
+                // means the mapping depends on the destination IP only.
+                let same_ip_primary_port = SocketAddr::new(other_addr.ip(), primary_server.port());
+                if same_ip_primary_port == other_addr {
+                    NatMappingBehavior::AddressAndPortDependent
                 } else {
-                    let mut tid_map3 = [0u8; 12];
-                    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_map3);
-                    let req_map3 = build_binding_request(tid_map3);
+                    let mut tid_third = [0u8; 12];
+                    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_third);
+                    let req_third = build_binding_request(tid_third);
                     match query_stun_target(
                         socket,
-                        other_addr,
-                        &req_map3,
-                        &tid_map3,
-                        Duration::from_millis(1200),
-                        true,
+                        same_ip_primary_port,
+                        &req_third,
+                        &tid_third,
+                        Duration::from_millis(800),
                     )
                     .await
                     {
-                        Ok(resp_map3) => {
-                            if resp_map3.mapped_address.port() == resp_map.mapped_address.port() {
-                                NatMappingBehavior::AddressDependent
-                            } else {
-                                NatMappingBehavior::AddressAndPortDependent
-                            }
+                        Ok((resp_third, _))
+                            if resp_third.mapped_address.port()
+                                == resp_alt.mapped_address.port() =>
+                        {
+                            NatMappingBehavior::AddressDependent
                         }
-                        Err(_) => NatMappingBehavior::AddressAndPortDependent,
+                        Ok(_) => NatMappingBehavior::AddressAndPortDependent,
+                        Err(_) => NatMappingBehavior::Unknown,
                     }
                 }
             }
-            Err(_) => NatMappingBehavior::EndpointIndependent,
+            // A timeout proves nothing about the mapping. Defaulting it to
+            // "cone" is how a symmetric NAT gets advertised as punchable.
+            Err(_) => NatMappingBehavior::Unknown,
         }
     } else if resolved_servers.len() > 1 {
         let secondary_server = resolved_servers[1];
@@ -612,59 +625,69 @@ pub async fn probe_nat_behavior(
             &req_2,
             &tid_2,
             Duration::from_millis(1500),
-            true,
         )
         .await
         {
-            Ok(resp_2) => {
-                if resp_2.mapped_address.port() == reflexive_addr.port()
-                    && resp_2.mapped_address.ip() == reflexive_addr.ip()
-                {
-                    NatMappingBehavior::EndpointIndependent
-                } else {
-                    NatMappingBehavior::AddressAndPortDependent
-                }
+            Ok((resp_2, _)) if resp_2.mapped_address == reflexive_addr => {
+                NatMappingBehavior::EndpointIndependent
             }
-            Err(_) => NatMappingBehavior::EndpointIndependent,
+            Ok(_) => NatMappingBehavior::AddressAndPortDependent,
+            Err(_) => NatMappingBehavior::Unknown,
         }
     } else {
-        NatMappingBehavior::EndpointIndependent
+        // One server and no OTHER-ADDRESS: the mapping cannot be measured.
+        NatMappingBehavior::Unknown
     };
 
     // --- FILTERING BEHAVIOR TEST ---
-    // Test II: Send CHANGE-REQUEST (change IP + change Port)
+    // Test II asks the server to answer from a different IP *and* port. Only a
+    // reply that demonstrably came from somewhere else counts: a server that
+    // ignores CHANGE-REQUEST answers from its own address, which is evidence of
+    // nothing at all.
     let mut tid_f2 = [0u8; 12];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_f2);
     let req_f2 = build_binding_request_with_change(tid_f2, true, true);
-    let filtering = match query_stun_target(
-        socket,
-        primary_server,
-        &req_f2,
-        &tid_f2,
-        Duration::from_millis(600),
-        false,
-    )
-    .await
-    {
-        Ok(_) => NatFilteringBehavior::EndpointIndependent,
-        Err(_) => {
-            // Test III: Send CHANGE-REQUEST (change Port only)
-            let mut tid_f3 = [0u8; 12];
-            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_f3);
-            let req_f3 = build_binding_request_with_change(tid_f3, false, true);
-            match query_stun_target(
-                socket,
-                primary_server,
-                &req_f3,
-                &tid_f3,
-                Duration::from_millis(600),
-                false,
-            )
-            .await
-            {
-                Ok(_) => NatFilteringBehavior::AddressDependent,
-                Err(_) => NatFilteringBehavior::AddressAndPortDependent,
+    // The discriminator that actually matters: did the reply come from the
+    // endpoint we sent to, or from somewhere else? A server that ignores
+    // CHANGE-REQUEST answers from its own address and proves nothing; one that
+    // honours it necessarily answers from another endpoint.
+    let request_honoured = matches!(
+        query_stun_target(
+            socket,
+            primary_server,
+            &req_f2,
+            &tid_f2,
+            Duration::from_millis(700),
+        )
+        .await,
+        Ok((_, from)) if from != primary_server
+    );
+
+    let filtering = if request_honoured {
+        NatFilteringBehavior::EndpointIndependent
+    } else {
+        let mut tid_f3 = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut tid_f3);
+        let req_f3 = build_binding_request_with_change(tid_f3, false, true);
+        match query_stun_target(
+            socket,
+            primary_server,
+            &req_f3,
+            &tid_f3,
+            Duration::from_millis(700),
+        )
+        .await
+        {
+            Ok((_, from)) if from.port() != primary_server.port() => {
+                NatFilteringBehavior::AddressDependent
             }
+            // Answered from the primary endpoint: CHANGE-REQUEST was ignored.
+            Ok(_) => NatFilteringBehavior::Unknown,
+            // Silence from an RFC 5780 server is the documented signature of
+            // port-restricted filtering; silence from anything else says
+            // nothing.
+            Err(_) if server_supports_rfc5780 => NatFilteringBehavior::AddressAndPortDependent,
+            Err(_) => NatFilteringBehavior::Unknown,
         }
     };
 
@@ -889,5 +912,262 @@ mod tests {
             "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
         );
         assert_eq!(resolved.port(), client_port);
+    }
+
+    // ------------------------------------------------------------ NAT 行为探测
+    //
+    // 公网 NAT 的行为无法在 CI 里复现，但"服务器到底有没有换地址回包"是可以在本机
+    // 精确构造的。这些用例全部对着本地 mock STUN 跑，断言的是**分类逻辑**，不是
+    // 真实网络。
+
+    /// Public endpoint the mock reports, deliberately not a loopback address so
+    /// the open-internet short circuit does not swallow the probes.
+    const PROBE_PUBLIC: &str = "203.0.113.9:40000";
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum MockReply {
+        /// Answers every request from the primary socket, ignoring CHANGE-REQUEST.
+        IgnoreChange,
+        /// Answers CHANGE-REQUEST from a *second* socket on another port.
+        HonorChange,
+        /// Answers the first request only, then stays silent.
+        SilentAfterFirst,
+        /// Advertises an OTHER-ADDRESS it will actually answer on.
+        AdvertiseOther,
+    }
+
+    fn attr_xor_mapped(addr: SocketAddr, tid: &[u8; 12]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(20);
+        v.push(0);
+        match addr {
+            SocketAddr::V4(a) => {
+                v.push(0x01);
+                v.extend_from_slice(&(a.port() ^ (STUN_MAGIC_COOKIE >> 16) as u16).to_be_bytes());
+                let ip = u32::from_be_bytes(a.ip().octets()) ^ STUN_MAGIC_COOKIE;
+                v.extend_from_slice(&ip.to_be_bytes());
+            }
+            SocketAddr::V6(a) => {
+                v.push(0x02);
+                v.extend_from_slice(&(a.port() ^ (STUN_MAGIC_COOKIE >> 16) as u16).to_be_bytes());
+                let mut key = [0u8; 16];
+                key[..4].copy_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+                key[4..].copy_from_slice(tid);
+                for (i, byte) in a.ip().octets().iter().enumerate() {
+                    v.push(byte ^ key[i]);
+                }
+            }
+        }
+        v
+    }
+
+    fn attr_sockaddr(addr: SocketAddr) -> Vec<u8> {
+        let mut v = Vec::with_capacity(20);
+        v.push(0);
+        match addr {
+            SocketAddr::V4(a) => {
+                v.push(0x01);
+                v.extend_from_slice(&a.port().to_be_bytes());
+                v.extend_from_slice(&a.ip().octets());
+            }
+            SocketAddr::V6(a) => {
+                v.push(0x02);
+                v.extend_from_slice(&a.port().to_be_bytes());
+                v.extend_from_slice(&a.ip().octets());
+            }
+        }
+        v
+    }
+
+    fn push_attr(out: &mut Vec<u8>, kind: u16, value: &[u8]) {
+        out.extend_from_slice(&kind.to_be_bytes());
+        out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        out.extend_from_slice(value);
+        while !out.len().is_multiple_of(4) {
+            out.push(0);
+        }
+    }
+
+    fn build_mock_response(
+        request: &[u8],
+        mapped: SocketAddr,
+        origin: Option<SocketAddr>,
+        other: Option<SocketAddr>,
+    ) -> Option<Vec<u8>> {
+        if request.len() < 20 {
+            return None;
+        }
+        let tid: [u8; 12] = request[8..20].try_into().ok()?;
+        let mut body = Vec::new();
+        push_attr(
+            &mut body,
+            ATTR_XOR_MAPPED_ADDRESS,
+            &attr_xor_mapped(mapped, &tid),
+        );
+        if let Some(origin) = origin {
+            push_attr(&mut body, ATTR_RESPONSE_ORIGIN, &attr_sockaddr(origin));
+        }
+        if let Some(other) = other {
+            push_attr(&mut body, ATTR_OTHER_ADDRESS, &attr_sockaddr(other));
+        }
+        let mut resp = Vec::with_capacity(20 + body.len());
+        resp.extend_from_slice(&BINDING_RESPONSE.to_be_bytes());
+        resp.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        resp.extend_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+        resp.extend_from_slice(&tid);
+        resp.extend_from_slice(&body);
+        Some(resp)
+    }
+
+    fn has_change_request(buf: &[u8]) -> bool {
+        if buf.len() < 20 {
+            return false;
+        }
+        let end = (20 + u16::from_be_bytes([buf[2], buf[3]]) as usize).min(buf.len());
+        let mut off = 20;
+        while off + 4 <= end {
+            let kind = u16::from_be_bytes([buf[off], buf[off + 1]]);
+            let len = u16::from_be_bytes([buf[off + 2], buf[off + 3]]) as usize;
+            if kind == ATTR_CHANGE_REQUEST {
+                return true;
+            }
+            off += 4 + ((len + 3) & !3);
+        }
+        false
+    }
+
+    struct MockStun {
+        primary: SocketAddr,
+        /// Hits on the alternate endpoint. Used to prove OTHER-ADDRESS is
+        /// probed as advertised instead of being rewritten.
+        alt_hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    async fn spawn_mock(reply: MockReply) -> MockStun {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let primary = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let alt = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let primary_addr = primary.local_addr().unwrap();
+        let alt_addr = alt.local_addr().unwrap();
+        let alt_hits = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(AtomicUsize::new(0));
+
+        // Primary responder.
+        let alt_for_primary = alt.clone();
+        let hits_for_primary = alt_hits.clone();
+        let seen_primary = seen.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 512];
+            loop {
+                let Ok((n, from)) = primary.recv_from(&mut buf).await else {
+                    break;
+                };
+                let request = &buf[..n];
+                let count = seen_primary.fetch_add(1, Ordering::SeqCst);
+                if reply == MockReply::SilentAfterFirst && count > 0 {
+                    continue;
+                }
+                let mapped: SocketAddr = PROBE_PUBLIC.parse().unwrap();
+                if reply == MockReply::HonorChange && has_change_request(request) {
+                    if let Some(resp) = build_mock_response(request, mapped, Some(alt_addr), None) {
+                        let _ = alt_for_primary.send_to(&resp, from).await;
+                        hits_for_primary.fetch_add(1, Ordering::SeqCst);
+                    }
+                    continue;
+                }
+                let other = matches!(reply, MockReply::AdvertiseOther | MockReply::HonorChange)
+                    .then_some(alt_addr);
+                if let Some(resp) = build_mock_response(request, mapped, Some(primary_addr), other)
+                {
+                    let _ = primary.send_to(&resp, from).await;
+                }
+            }
+        });
+
+        // The advertised alternate endpoint answers plain binding requests, so a
+        // correct implementation gets a real mapping answer from it.
+        let alt_reader = alt.clone();
+        let alt_hits_reader = alt_hits.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 512];
+            loop {
+                let Ok((n, from)) = alt_reader.recv_from(&mut buf).await else {
+                    break;
+                };
+                let mapped: SocketAddr = PROBE_PUBLIC.parse().unwrap();
+                let count = alt_hits_reader.fetch_add(1, Ordering::SeqCst);
+                let _ = count;
+                if let Some(resp) = build_mock_response(&buf[..n], mapped, Some(alt_addr), None) {
+                    let _ = alt_reader.send_to(&resp, from).await;
+                }
+            }
+        });
+
+        MockStun {
+            primary: primary_addr,
+            alt_hits,
+        }
+    }
+
+    async fn probe_against(reply: MockReply) -> (NatReport, MockStun) {
+        let mock = spawn_mock(reply).await;
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server = mock.primary.to_string();
+        let report = probe_nat_behavior(&socket, &[server.as_str()])
+            .await
+            .expect("probe must complete against the mock");
+        (report, mock)
+    }
+
+    /// A server that ignores CHANGE-REQUEST answers from its own address. That
+    /// is **not** evidence of endpoint-independent filtering.
+    #[tokio::test]
+    async fn ignored_change_request_is_not_reported_as_full_cone() {
+        let (report, _mock) = probe_against(MockReply::IgnoreChange).await;
+        assert_ne!(
+            report.filtering,
+            NatFilteringBehavior::EndpointIndependent,
+            "a reply from the server's primary address must not be read as Full Cone"
+        );
+        assert_ne!(report.classification(), NatClassification::FullCone);
+    }
+
+    /// Positive control: when the change really is honoured (reply from another
+    /// port), the classification must still be Full Cone. Without this the test
+    /// above would also pass if the classifier simply returned Unknown forever.
+    #[tokio::test]
+    async fn honoured_change_request_is_reported_as_full_cone() {
+        let (report, mock) = probe_against(MockReply::HonorChange).await;
+        assert_eq!(report.filtering, NatFilteringBehavior::EndpointIndependent);
+        assert_eq!(report.classification(), NatClassification::FullCone);
+        assert!(
+            mock.alt_hits.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "the alternate endpoint must have answered"
+        );
+    }
+
+    /// A timeout is the *expected* signature of a restrictive NAT. Reporting it
+    /// as endpoint-independent inverts the meaning of the measurement.
+    #[tokio::test]
+    async fn mapping_timeout_is_unknown_not_endpoint_independent() {
+        let (report, _mock) = probe_against(MockReply::SilentAfterFirst).await;
+        assert_eq!(
+            report.mapping,
+            NatMappingBehavior::Unknown,
+            "a timed-out mapping probe proves nothing; it must not default to cone"
+        );
+    }
+
+    /// OTHER-ADDRESS carries an IP *and* a port. Rewriting the port back to the
+    /// primary one probes an endpoint that usually is not listening.
+    #[tokio::test]
+    async fn other_address_port_is_probed_as_advertised() {
+        let (report, mock) = probe_against(MockReply::AdvertiseOther).await;
+        assert!(
+            mock.alt_hits.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "the advertised OTHER-ADDRESS port must be probed verbatim"
+        );
+        assert_eq!(report.mapping, NatMappingBehavior::EndpointIndependent);
     }
 }

@@ -40,11 +40,16 @@ primary one is cited.
 > "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
 > up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
-## [Unreleased] — 0.11.0-local.1 (local validation build, 2026-11-12)
+## [Unreleased] — 0.11.0-local.1 (local validation build, republished 2026-11-13)
 
-Published to **mavenLocal only**. crates.io, Maven Central, npm, the git tag and
-`origin/main` are all untouched; the public registries remain at 0.10.0 until
-downstream products finish validation.
+Published to **mavenLocal only** under one unchanged local coordinate. crates.io,
+Maven Central, npm, the git tag and `origin/main` are all untouched; the public
+registries remain at 0.10.0 until downstream products finish validation. The
+local artifact was **republished on 2026-11-13** after the WAN stability fixes,
+resumable transfers, USB transport and the AIMD window below landed. A consumer
+that resolved `0.11.0-local.1` before that date may still hold the older engine
+in its Gradle cache — refresh dependencies (`--refresh-dependencies`) before
+concluding a fix is absent from the AAR.
 
 ### Added (Rust core tier — local validation only)
 
@@ -78,6 +83,43 @@ downstream products finish validation.
   blind forwarding of opaque encrypted frames.
 - All three binding surfaces regenerated (KMP, Swift, Node) and verified
   byte-identical to a fresh bindgen run.
+- **Progressive WAN connection with hot migration** (`wan::adaptive`): a
+  zero-wait relay stream starts immediately over the signalling WebSocket
+  while candidates are gathered and punched in the background;
+  `migrate_propose` / `migrate_ack` cut the authenticated stream over to the
+  direct UDP path, and `SecureStream::channel_type` tracks the active plane
+  through an `AtomicU8`. `luciola-cli transfer send` / `recv --progressive`
+  drive it. A dead direct path fails the stream rather than silently falling
+  back to a relay nobody drains (see `docs/DECISIONS.md`).
+- **RFC 5780 NAT behaviour discovery**: `stun::probe_nat_behavior` handles
+  CHANGE-REQUEST, RESPONSE-ORIGIN and OTHER-ADDRESS across multiple servers;
+  `NatClassification` and `decide_traversal_strategy` pick the route, and two
+  symmetric-NAT peers bypass punching entirely instead of waiting out a
+  doomed timeout. `luciola-cli stun --probe-nat` (alias
+  `--probe-nat-behavior`) exposes the diagnostic.
+- **Resumable transfers**: `TransferMeta` (`LUCMETA1` header, CRC-32, SHA-256,
+  chunk bitmap) plus `<file>.luciola-meta` / `<file>.luciola-part` sidecars in
+  `luciola-transfer`. The receiver advertises its contiguous resume offset,
+  the sender fast-forwards on the resume `FileAck`, and the CLI derives a
+  stable transfer ID from file mtime and length. Bitmap writes are batched
+  and only follow `sync_data` of the bytes they describe.
+- **USB ADB direct transport**: `ChannelType::UsbAdbDirect` and
+  `--adb-device <serial>` on `transfer send` / `recv`. The sender runs
+  `adb forward tcp:P tcp:P` and removes it on exit; the receiver sets up
+  nothing. It is a physical-bus path, still over the same `SecureStream`
+  handshake.
+- **AIMD congestion window** (`wan::arq`): `AimdWindow` is shared by both UDP
+  ARQ drivers. The in-flight budget starts small, grows with acknowledged
+  bytes and halves on a loss signal, enforced through the bridge's flow
+  credit cap so the writer and the driver obey the same ceiling.
+- **Signalling Worker**: pre-join frames are buffered opaquely in Durable
+  Object storage (bounded at 32 frames) and replayed when the second peer
+  joins, so an initiator is no longer stranded without the peer's candidates;
+  relay writes are paced by `RelayPacer` against a 256 messages/second budget.
+- `luciola-proto`: `ChannelType::from_u8` replaces a hardcoded byte
+  discriminator. `docs/DECISIONS.md` gains five entries covering migration
+  failure, checkpoint ordering, ADB setup, post-migration EOF and quota
+  admission.
 
 ### Fixed
 
@@ -96,6 +138,41 @@ downstream products finish validation.
   so official registries always resolve first and can never be shadowed in a
   published build; `AGENTS.md` documents the constrained-network flag and
   `node_modules/` is gitignored.
+- **One UDP socket for the whole traversal session.** STUN, hole punching and
+  the data plane now share a single socket and the advertised srflx candidate
+  keeps its reflexive port; the earlier path gathered candidates three times
+  and advertised a mapping it had already dropped.
+- **Migration is barrier-aligned and terminates.** Both peers stop writing the
+  relay at the same point; a closed signalling WebSocket no longer leaves the
+  connection loop spinning; post-migration `KIND_CLOSE` datagrams set
+  `peer_eof` and are retransmitted like data, so a successful migration no
+  longer leaks a driver task. Regression tests cover both the close path and
+  a direct path that dies.
+- **STUN no longer invents a verdict on failure.** Timeouts and ignored
+  CHANGE-REQUESTs report `Unknown` instead of `EndpointIndependent`,
+  OTHER-ADDRESS is preserved verbatim, and a classification is issued only
+  when both mapping and filtering dimensions are known.
+- **UDP ARQ**: duplicate DATA always produces an ACK, retransmits use
+  exponential RTO backoff, and relay half-close splits inbound/outbound so an
+  EOF cannot kill the write side.
+- **Checkpoint integrity**: only fully covered chunks are marked, the bitmap
+  is written in batches (~64 per transfer) and never before `sync_data` of the
+  bytes it describes, so a power loss cannot leave an unchecksummed hole on
+  resume.
+- **Relay quota admission waits for the routing verdict**, not a fixed 1.5 s
+  window: `punching_done` is raised on every `discover_and_punch` return path
+  and `SecureStream::wait_channel_settle` releases the wait. A slow but
+  successful punch of a large file is admitted on its merits; a relay-bound
+  connection is still refused promptly.
+- **ADB setup fails loudly**: a failed `adb forward` is fatal, the receiving
+  side no longer runs a conflicting `adb reverse`, and the forward is removed
+  on exit (including via a Drop guard).
+- Worker Durable Object forwarding is guarded against closed sockets, and the
+  CLI/transfer suites no longer share a temp directory between parallel
+  tests. Two pre-existing transfer flakes (a shared quota directory and a
+  post-completion final-ACK write error) are fixed.
+- `ChannelType::from_u8` replaces hardcoded byte discrimination and `to_hex`
+  no longer allocates.
 
 ### Changed
 
@@ -106,22 +183,40 @@ downstream products finish validation.
 - `SECURITY.md` now documents the implemented signalling/data planes, the
   cloud-side observer, encrypted frame guarantees, Worker abuse controls and
   the extended pre-audit review checklist.
+- Both UDP ARQ drivers now share one `AimdWindow` policy, and the bridge flow
+  credit cap is the enforcement point instead of a second driver queue.
 
 ### Verification layer and remaining limits
 
-Verified locally: full gate (`cargo fmt --all -- --check`, `cargo clippy
---all-targets --all-features -- -D warnings`, `cargo test --all-targets
---all-features`), KMP compile, Node build/tests, Worker `npm test`; loopback
-integration tests for a 64 KiB encrypted relay transfer over a local
-blind-forwarding WebSocket, a real secure handshake over the UDP ARQ stream,
-ARQ loss/reorder recovery, and STUN CLI process tests.
+Verified locally on **2026-11-13**, after the fixes above: `cargo fmt --all
+-- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test --all-targets --all-features` (25 test binaries, 0 failures), KMP
+compiles for Android / JVM / iosArm64 / iosSimulatorArm64, `cargo build -p
+luciola-node` plus `bindings/luciola-node/test.js`,
+`bindings/luciola-node/test/forward.test.mjs` and
+`bindings/luciola-node/test/contract.test.mjs`, and the Worker
+`node --test test/*.test.js` suite (9/9). KMP (five source sets) and Swift
+(two files) bindings were regenerated from the current Rust core and are
+byte-identical to the checked-in copies — this batch leaves the uniffi
+surface unchanged. The mavenLocal AAR in this coordinate is rebuilt with a
+fresh arm64 `.so`; compare its sha256 against the freshly built jniLibs copy
+before treating the package as current.
+
+Earlier loopback integration tests still cover a 64 KiB encrypted relay
+transfer over a local blind-forwarding WebSocket, a real secure handshake
+over the UDP ARQ stream, ARQ loss/reorder recovery, and STUN CLI process
+tests. The new work — RFC 5780 classification, progressive migration,
+resumable checkpoints, the AIMD window and the ADB path — is covered at the
+**unit / process-test layer only**, not on a real NAT or a physical device in
+this gate.
 
 **Not** verified: no real-NAT / carrier-grade-NAT field test, no deployed
 public Worker, no mobile background presence (iOS needs a push wake for an
 always-on signalling socket), no WAN surface in the KMP/Swift/Node bindings,
-no epoch-skew tolerance, and no external audit of the new ARQ, signalling
-frame composition or Worker auth path. WAN remains unvalidated on real
-networks — this is why the build is mavenLocal-only.
+no epoch-skew tolerance, and no external audit of the ARQ, signalling frame
+composition, migration protocol, checkpoint format or Worker auth path.
+WAN remains unvalidated on real networks — this is why the build is
+mavenLocal-only.
 
 ## [0.10.0] — 2026-11-05
 
