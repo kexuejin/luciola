@@ -212,6 +212,13 @@ concluding a fix is absent from the AAR.
   `uniffi_luciola_uniffi_checksum_*_connect_wan` symbols. The xcframework is a
   gitignored build artifact; `bindings/luciola-swift/build-xcframework.sh`
   reproduces it and the demo now builds against it.
+- **`docs/audit-scope.md` — the audit package.** What an external reviewer
+  should read, in order, with the twelve invariants the code claims, the test
+  that asserts each one, the questions worth answering explicitly (ARQ re-seal
+  behaviour, unbounded-memory paths, the migration barrier when a side dies
+  mid-handshake, epoch-header spoofing) and an explicit list of the evidence
+  that does **not** exist. It states plainly that it is a package, not evidence
+  that a review happened.
 - **Field-test tooling for the real-NAT matrix.** `luciola-cli stun
   --probe-nat --json` emits one JSON object (stdout is then nothing but JSON),
   with the readable mapping/filtering labels, the IPv6 candidates, the current
