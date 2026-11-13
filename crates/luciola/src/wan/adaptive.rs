@@ -316,6 +316,7 @@ async fn run_progressive(
         epoch,
         mut send_seq,
         mut recv_seq,
+        server_epoch: _,
     } = signal;
     let role = role_for(&config.my_public_key, &config.peer_public_key);
 
@@ -788,6 +789,7 @@ mod tests {
             epoch: EPOCH,
             send_seq: 0,
             recv_seq: 0,
+            server_epoch: None,
         }
     }
 

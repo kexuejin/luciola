@@ -205,6 +205,13 @@ pub(crate) struct SignalingClient {
     pub(crate) epoch: u64,
     pub(crate) send_seq: u64,
     pub(crate) recv_seq: u64,
+    /// Epoch reported by the Worker in the WebSocket handshake response.
+    ///
+    /// Room ids are derived from the epoch, so a peer whose local clock sits on
+    /// the other side of a boundary would otherwise wait in a different room
+    /// forever. `connect_wan` realigns to this value when the caller did not
+    /// pin an epoch. `None` for an older Worker that does not send the header.
+    pub(crate) server_epoch: Option<u64>,
 }
 
 /// Parameters for opening a rendezvous connection.
@@ -277,10 +284,18 @@ impl SignalingClient {
             &to_hex(&signature.to_bytes()),
         );
 
-        let (ws, _) = tokio::time::timeout(p.timeout, connect_async(url))
+        let (ws, response) = tokio::time::timeout(p.timeout, connect_async(url))
             .await
             .map_err(|_| WanError::Signaling("rendezvous connect timed out".into()))?
             .map_err(|e| WanError::Signaling(format!("websocket handshake: {e}")))?;
+        // The Worker reports the epoch it is actually serving. The header is
+        // advisory: an older Worker omits it and the caller keeps the local
+        // epoch, which is the pre-alignment behaviour.
+        let server_epoch = response
+            .headers()
+            .get("x-luciola-epoch")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
         let (sink, stream) = ws.split();
         Ok(Self {
             sink,
@@ -290,6 +305,7 @@ impl SignalingClient {
             epoch: p.epoch,
             send_seq: 0,
             recv_seq: 0,
+            server_epoch,
         })
     }
 
@@ -362,6 +378,7 @@ impl SignalingClient {
             epoch,
             mut send_seq,
             mut recv_seq,
+            server_epoch: _,
         } = self;
         // Pulled apart so the inbound sender can be dropped on its own: that
         // drop *is* the EOF the reader sees, and it must not take the write
@@ -652,6 +669,7 @@ mod tests {
                 epoch: EPOCH,
                 send_seq: 0,
                 recv_seq: 0,
+                server_epoch: None,
             }
         };
         let mut a = connect(port).await.into_relay();
@@ -677,6 +695,48 @@ mod tests {
         assert_eq!(&back, b"pong");
 
         forwarder.abort();
+    }
+
+    /// The Worker reports its epoch in the handshake response so a client on
+    /// the other side of a 10-minute boundary can realign its room.
+    #[tokio::test]
+    async fn connect_reads_the_worker_epoch_header() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_hdr_async;
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ws = accept_hdr_async(stream, |_req: &Request, mut resp: Response| {
+                resp.headers_mut()
+                    .append("x-luciola-epoch", "424242".parse().unwrap());
+                Ok(resp)
+            })
+            .await
+            .unwrap();
+            // Keep the socket open until the client has read the response.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let seed = [1u8; 32];
+        let my_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        let endpoint = format!("ws://127.0.0.1:{port}/ws");
+        let client = SignalingClient::connect(SignalParams {
+            endpoint: &endpoint,
+            room: "00112233445566778899aabbccddeeff",
+            epoch: 7,
+            identity_seed: &seed,
+            my_pk: &my_pk,
+            peer_pk: &[2u8; 32],
+            psk: b"psk",
+            timeout: Duration::from_secs(2),
+        })
+        .await
+        .unwrap();
+        assert_eq!(client.server_epoch, Some(424_242));
+        server.abort();
     }
 
     #[test]

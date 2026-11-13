@@ -44,6 +44,14 @@ This directory ships **source and config, not a deployed public endpoint**.
   bounded-abuse posture; client pacing is the contract, not server headroom.
 - **Strict 2-peer limit** — one room accepts two distinct peers, rejects
   duplicates, and emits `peer_online` / `peer_offline` control notices.
+- **The `101` upgrade reports the epoch being served** — the Durable Object
+  returns `x-luciola-epoch: <unix_seconds / 600>`. Because the room id embeds
+  the epoch, two peers on opposite sides of a 10-minute boundary would wait in
+  unrelated rooms; a Rust client that left `WanConfig::epoch` at `0` re-derives
+  its room at this value and redials once. The header is public metadata (the
+  request URL already carries the client's epoch) and carries no key material.
+  It does **not** widen authentication: `validateParams` still rejects any
+  signature more than one window from the Worker's clock.
 - **Hibernation API** — idle WebSockets do not incur duration charges. This is
   an *idle* property only: sustained relay traffic is still a billed
   third-party path (see `SECURITY.md`).

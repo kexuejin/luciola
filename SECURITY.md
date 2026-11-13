@@ -116,8 +116,17 @@ threat model, which is materially different from the LAN-only one.
   The PSK travels in the v3 pairing URI / QR code as plaintext secret
   material: treat that channel as secret, never log it, and do not display it
   as ordinary metadata. Derived keys and the normalized PSK are `Zeroizing`.
-  Both peers must be in the same 10-minute epoch; clock skew beyond that
-  window is a hard failure, not a retry-with-adjacent-epoch fallback.
+  Both peers must rendezvous in the same 10-minute epoch. The room id embeds
+  the epoch, so a peer on the far side of a boundary lands in an **unrelated
+  room** rather than arriving early or late. The Durable Object returns the
+  epoch it is serving in the `x-luciola-epoch` upgrade header, and a client
+  that did not pin an epoch re-derives its room at that value and redials
+  **once**. This is room selection, not a widened authentication window: the
+  Worker still rejects any signature whose epoch is more than one window from
+  its own clock, and a client that pinned `WanConfig::epoch` (or supplied a
+  hand-written room) is never moved. The header carries no key material — the
+  request URL already states the client's own epoch — so it adds nothing to
+  what the signalling service observes.
 - **USB ADB is a physical-bus path, not a new trust boundary.**
   `ChannelType::UsbAdbDirect` still runs the same pinned `SecureStream`
   handshake; the transport is an `adb forward` created on the sending side
@@ -150,16 +159,20 @@ threat model, which is materially different from the LAN-only one.
   local blind-forwarding WebSocket, a real `SecureStream` handshake over the
   UDP ARQ byte stream, and ARQ recovery under a lossy/reordering proxy. The
   progressive migration, RFC 5780 classification, checkpoint resume, AIMD
-  window and ADB path have unit / process-test coverage only. What is
+  window, ADB path and epoch realignment have unit / process-test / loopback
+  coverage only. What is
   **not** proven: no real-NAT / carrier-grade-NAT field test, no deployed
-  Worker, no cross-platform WAN smoke, no physical-device ADB transfer, no
+  Worker (so the `x-luciola-epoch` header on a `101` upgrade is exercised
+  against a local tungstenite server, not the Cloudflare runtime), no
+  cross-platform WAN smoke, no physical-device ADB transfer, no
   mobile background presence (iOS cannot hold an always-on signalling socket
   without a push wake), and no external audit. Treat WAN as unvalidated on
   real networks until those runs happen.
 
 The handshake, cipher suites, pinning defaults and secure-channel frame size
 limit are **unchanged**. The ARQ protocol, signalling frame composition,
-migration protocol, checkpoint format, AIMD window and Worker auth path are
+migration protocol, checkpoint format, AIMD window, epoch realignment and
+Worker auth path are
 **additional custom, unaudited code** — see the extended review checklist
 below.
 

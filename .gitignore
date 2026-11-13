@@ -19,4 +19,5 @@ release.env
 
 # Local agent working state (memory, plans) — never part of the source tree
 .workbuddy-ai/
+.workbuddy/
 .zcode/

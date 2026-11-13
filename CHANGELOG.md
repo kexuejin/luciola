@@ -117,9 +117,9 @@ concluding a fix is absent from the AAR.
   joins, so an initiator is no longer stranded without the peer's candidates;
   relay writes are paced by `RelayPacer` against a 256 messages/second budget.
 - `luciola-proto`: `ChannelType::from_u8` replaces a hardcoded byte
-  discriminator. `docs/DECISIONS.md` gains five entries covering migration
-  failure, checkpoint ordering, ADB setup, post-migration EOF and quota
-  admission.
+  discriminator. `docs/DECISIONS.md` gains six entries covering migration
+  failure, checkpoint ordering, ADB setup, post-migration EOF, quota
+  admission and server-epoch alignment.
 
 ### Fixed
 
@@ -177,6 +177,17 @@ concluding a fix is absent from the AAR.
   JVM, accepts `LUCIOLA_USE_ALIYUN_MIRRORS=1` and
   `LUCIOLA_SKIP_LINT_ANNOTATIONS=1` for constrained networks, and verifies
   the AAR's arm64 `.so` sha256 against the freshly built jniLibs copy.
+- **Epoch drift no longer strands two peers in different rooms.** The room id
+  is HKDF-derived from the PSK, both public keys *and* the epoch, so peers on
+  opposite sides of a 10-minute boundary were not merely early/late — they were
+  in unrelated rooms and could never meet, and the Worker's `epoch ± 1`
+  admission window did not help because each side is routed by its own epoch.
+  The Durable Object now returns `x-luciola-epoch` on the `101` upgrade and
+  `connect_wan` re-derives the room at the server's epoch and redials once, but
+  only when the caller left `WanConfig::epoch` at `0` and the supplied room is
+  the one the local epoch would derive. A pinned epoch or a hand-written room
+  is left alone. Regression tests cover both the realignment and the
+  pinned-epoch guard.
 
 ### Changed
 
@@ -200,27 +211,30 @@ luciola-node` plus `bindings/luciola-node/test.js`,
 `bindings/luciola-node/test/forward.test.mjs` and
 `bindings/luciola-node/test/contract.test.mjs`, and the Worker
 `node --test test/*.test.js` suite (9/9). KMP (five source sets) and Swift
-(two files) bindings were regenerated from the current Rust core and are
-byte-identical to the checked-in copies — this batch leaves the uniffi
-surface unchanged. The mavenLocal AAR in this coordinate is rebuilt with a
-fresh arm64 `.so`; compare its sha256 against the freshly built jniLibs copy
-before treating the package as current.
+(two files) bindings were regenerated from the current Rust core — this batch
+**does** extend the uniffi surface with the WAN types (`WanConfig`,
+`WanChannel`, `connectWan`, `wanCurrentEpoch`, `wanDeriveRoomId`), and the
+regenerated sources are byte-identical to the checked-in copies. The mavenLocal
+AAR in this coordinate is rebuilt with a fresh arm64 `.so`; compare its sha256
+against the freshly built jniLibs copy before treating the package as current.
 
 Earlier loopback integration tests still cover a 64 KiB encrypted relay
 transfer over a local blind-forwarding WebSocket, a real secure handshake
 over the UDP ARQ stream, ARQ loss/reorder recovery, and STUN CLI process
 tests. The new work — RFC 5780 classification, progressive migration,
-resumable checkpoints, the AIMD window and the ADB path — is covered at the
-**unit / process-test layer only**, not on a real NAT or a physical device in
-this gate.
+resumable checkpoints, the AIMD window, the ADB path and epoch realignment —
+is covered at the **unit / process-test / loopback layer only**, not on a real
+NAT or a physical device in this gate. The epoch tests use a room-keyed local
+forwarder that advertises a server epoch one window behind the clients, so the
+redial path is exercised without a deployed Worker.
 
 **Not** verified: no real-NAT / carrier-grade-NAT field test, no deployed
-public Worker, no mobile background presence (iOS needs a push wake for an
-always-on signalling socket), no WAN surface in the KMP/Swift/Node bindings,
-no epoch-skew tolerance, and no external audit of the ARQ, signalling frame
-composition, migration protocol, checkpoint format or Worker auth path.
-WAN remains unvalidated on real networks — this is why the build is
-mavenLocal-only.
+public Worker (so the `x-luciola-epoch` header on a `101` upgrade has only been
+exercised against a local tungstenite server, not the Cloudflare runtime), no
+mobile background presence (iOS needs a push wake for an always-on signalling
+socket), and no external audit of the ARQ, signalling frame composition,
+migration protocol, checkpoint format or Worker auth path. WAN remains
+unvalidated on real networks — this is why the build is mavenLocal-only.
 
 ## [0.10.0] — 2026-11-05
 

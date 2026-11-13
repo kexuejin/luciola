@@ -154,6 +154,29 @@ struct RouteDecision {
     relay: bool,
 }
 
+/// Open one authenticated rendezvous connection.
+///
+/// Extracted so the epoch realignment path below can reconnect with the same
+/// parameters after re-deriving the room, without duplicating the timeout and
+/// identity wiring.
+async fn open_signaling(
+    config: &WanConfig,
+    room: &str,
+    epoch: u64,
+) -> Result<SignalingClient, WanError> {
+    SignalingClient::connect(SignalParams {
+        endpoint: &config.signaling_endpoint,
+        room,
+        epoch,
+        identity_seed: &config.identity_seed,
+        my_pk: &config.my_public_key,
+        peer_pk: &config.peer_public_key,
+        psk: &config.psk,
+        timeout: Duration::from_millis(config.relay.connection_timeout_ms.max(500)),
+    })
+    .await
+}
+
 /// Establish a WAN secure channel.
 ///
 /// Order of attempts: encrypted candidate exchange over WSS → simultaneous UDP
@@ -168,25 +191,62 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
             "allow_wan_signaling is false; WAN signalling is opt-in".into(),
         ));
     }
-    let epoch = if config.epoch == 0 {
-        current_epoch()
-    } else {
+    let mut config = config;
+    let epoch_pinned = config.epoch != 0;
+    let mut epoch = if epoch_pinned {
         config.epoch
+    } else {
+        current_epoch()
     };
+    let mut room = config.room.clone();
 
     // Validate and authenticate first: an invalid endpoint or missing PSK
     // must not cause a public STUN query (or any third-party contact).
-    let mut signal = SignalingClient::connect(SignalParams {
-        endpoint: &config.signaling_endpoint,
-        room: &config.room,
-        epoch,
-        identity_seed: &config.identity_seed,
-        my_pk: &config.my_public_key,
-        peer_pk: &config.peer_public_key,
-        psk: &config.psk,
-        timeout: Duration::from_millis(config.relay.connection_timeout_ms.max(500)),
-    })
-    .await?;
+    let mut signal = open_signaling(&config, &room, epoch).await?;
+
+    // Room ids are derived from the epoch, so two peers on opposite sides of a
+    // 10-minute boundary would wait in different rooms and never meet. When the
+    // caller left the epoch to us, adopt the Worker's epoch and re-derive the
+    // room once, so both sides land in the room the server is actually serving.
+    //
+    // Two cases deliberately keep the local epoch:
+    //   * the caller pinned an epoch — the boundary decision is theirs;
+    //   * the caller hand-wrote the room (it does not match what the local
+    //     epoch derives) — re-deriving would move us somewhere the peer is not
+    //     listening.
+    // An older Worker sends no header at all, which is the pre-alignment
+    // behaviour.
+    if !epoch_pinned {
+        if let Some(server_epoch) = signal.server_epoch {
+            if server_epoch != epoch {
+                let derive = |at: u64| {
+                    crate::pairing::derive_rendezvous_room_id_flexible(
+                        &config.my_public_key,
+                        &config.peer_public_key,
+                        Some(config.psk.as_slice()),
+                        Some(at),
+                    )
+                };
+                let aligned = if room == derive(epoch) {
+                    derive(server_epoch)
+                } else {
+                    String::new()
+                };
+                if !aligned.is_empty() {
+                    tracing::debug!(
+                        local_epoch = epoch,
+                        server_epoch,
+                        "realigning rendezvous room to the signalling server's epoch"
+                    );
+                    room = aligned;
+                    epoch = server_epoch;
+                    signal = open_signaling(&config, &room, epoch).await?;
+                    config.room = room.clone();
+                    config.epoch = epoch;
+                }
+            }
+        }
+    }
 
     if config.progressive && config.relay.allow_relay {
         let role = role_for(&config.my_public_key, &config.peer_public_key);
@@ -598,5 +658,243 @@ mod tests {
         assert_eq!(got, payload);
 
         forwarder.abort();
+    }
+
+    /// Room-keyed blind forwarder shaped like the Cloudflare Durable Object: a
+    /// connection only ever sees peers that joined the same room, and every
+    /// handshake response advertises `server_epoch`.
+    ///
+    /// Returns the task handle plus a log of the room each handshake asked for,
+    /// so a test can see whether a peer redialled in a different room.
+    fn epoch_advertising_worker(
+        listener: tokio::net::TcpListener,
+        server_epoch: u64,
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        use futures_util::{SinkExt, StreamExt};
+        use std::collections::HashMap;
+        use tokio_tungstenite::accept_hdr_async;
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let handle = tokio::spawn(async move {
+            let mut waiting: HashMap<
+                String,
+                tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+            > = HashMap::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                let mut room = String::new();
+                let ws = match accept_hdr_async(stream, |req: &Request, mut resp: Response| {
+                    room = req
+                        .uri()
+                        .query()
+                        .unwrap_or_default()
+                        .split('&')
+                        .find_map(|kv| kv.strip_prefix("room="))
+                        .unwrap_or_default()
+                        .to_string();
+                    resp.headers_mut()
+                        .append("x-luciola-epoch", server_epoch.to_string().parse().unwrap());
+                    Ok(resp)
+                })
+                .await
+                {
+                    Ok(ws) => ws,
+                    Err(_) => continue,
+                };
+                log.lock().unwrap().push(room.clone());
+                match waiting.remove(&room) {
+                    Some(other) => {
+                        tokio::spawn(async move {
+                            let (mut w1, mut r1) = ws.split();
+                            let (mut w2, mut r2) = other.split();
+                            let a = tokio::spawn(async move {
+                                while let Some(Ok(msg)) = r1.next().await {
+                                    if w2.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                            let b = tokio::spawn(async move {
+                                while let Some(Ok(msg)) = r2.next().await {
+                                    if w1.send(msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                            let _ = tokio::join!(a, b);
+                        });
+                    }
+                    None => {
+                        waiting.insert(room, ws);
+                    }
+                }
+            }
+        });
+        (handle, seen)
+    }
+
+    /// Two peers straddling a 10-minute boundary must still meet.
+    ///
+    /// The room id embeds the epoch, so without realignment each peer waits in
+    /// a room the other never joins. The Worker advertises its own epoch; a
+    /// client that left the window to the engine re-derives the room at the
+    /// server's epoch and redials once, so both sides land where the server is
+    /// actually serving.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn epoch_realignment_lands_both_peers_in_the_server_room() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let local_epoch = current_epoch();
+        // One window behind: exactly the case a peer that just crossed the
+        // boundary would hit.
+        let server_epoch = local_epoch.saturating_sub(1);
+        let (worker, seen) = epoch_advertising_worker(listener, server_epoch);
+
+        let id_a = crate::trust::generate_identity();
+        let id_b = crate::trust::generate_identity();
+        let seed_a: [u8; 32] = id_a.seed.clone().try_into().unwrap();
+        let seed_b: [u8; 32] = id_b.seed.clone().try_into().unwrap();
+        let pk_a: [u8; 32] = id_a.public_key.clone().try_into().unwrap();
+        let pk_b: [u8; 32] = id_b.public_key.clone().try_into().unwrap();
+        let psk = Zeroizing::new(b"epoch-realign-psk".to_vec());
+
+        let room_at = |epoch: u64| {
+            crate::pairing::derive_rendezvous_room_id_flexible(
+                &pk_a,
+                &pk_b,
+                Some(psk.as_slice()),
+                Some(epoch),
+            )
+        };
+        let local_room = room_at(local_epoch);
+        let server_room = room_at(server_epoch);
+        assert_ne!(
+            local_room, server_room,
+            "the epoch must actually change the room for this test to mean anything"
+        );
+
+        let endpoint = format!("ws://127.0.0.1:{port}/ws");
+        let base = || WanConfig {
+            signaling_endpoint: endpoint.clone(),
+            room: local_room.clone(),
+            // The caller did not pin a window, so the engine may realign.
+            epoch: 0,
+            psk: psk.clone(),
+            relay: RelayConfig {
+                allow_wan_signaling: true,
+                allow_relay: true,
+                connection_timeout_ms: 3000,
+                ..RelayConfig::default()
+            },
+            punch_timeout: Duration::from_secs(5),
+            enable_hole_punching: false,
+            ..WanConfig::default()
+        };
+        let mut cfg_a = base();
+        cfg_a.identity_seed = seed_a;
+        cfg_a.my_public_key = pk_a;
+        cfg_a.peer_public_key = pk_b;
+        let mut cfg_b = base();
+        cfg_b.identity_seed = seed_b;
+        cfg_b.my_public_key = pk_b;
+        cfg_b.peer_public_key = pk_a;
+
+        let (a, b) = tokio::try_join!(
+            tokio::time::timeout(Duration::from_secs(10), connect_wan(cfg_a)),
+            tokio::time::timeout(Duration::from_secs(10), connect_wan(cfg_b)),
+        )
+        .unwrap();
+        let (mut a, mut b) = (a.unwrap(), b.unwrap());
+        assert_eq!(a.channel_type(), ChannelType::RelayForwarded);
+        assert_eq!(b.channel_type(), ChannelType::RelayForwarded);
+        a.send(b"across the boundary").await.unwrap();
+        let mut got = Vec::new();
+        b.recv(&mut got).await.unwrap();
+        assert_eq!(got, b"across the boundary");
+
+        let rooms = seen.lock().unwrap().clone();
+        assert!(
+            rooms.contains(&local_room),
+            "the first dial must use the local epoch: {rooms:?}"
+        );
+        assert!(
+            rooms.contains(&server_room),
+            "the realigned dial must use the server epoch: {rooms:?}"
+        );
+        worker.abort();
+    }
+
+    /// A caller that pins the epoch owns the boundary decision: the engine must
+    /// not silently move it into the server's window.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pinned_epoch_is_not_realigned() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let pinned_epoch = current_epoch().saturating_sub(1);
+        // The server advertises a *different* window, so any realignment would
+        // be visible in the handshake log.
+        let (worker, seen) = epoch_advertising_worker(listener, pinned_epoch.saturating_sub(1));
+
+        let id_a = crate::trust::generate_identity();
+        let id_b = crate::trust::generate_identity();
+        let seed_a: [u8; 32] = id_a.seed.clone().try_into().unwrap();
+        let seed_b: [u8; 32] = id_b.seed.clone().try_into().unwrap();
+        let pk_a: [u8; 32] = id_a.public_key.clone().try_into().unwrap();
+        let pk_b: [u8; 32] = id_b.public_key.clone().try_into().unwrap();
+        let psk = Zeroizing::new(b"pinned-epoch-psk".to_vec());
+        let pinned_room = crate::pairing::derive_rendezvous_room_id_flexible(
+            &pk_a,
+            &pk_b,
+            Some(psk.as_slice()),
+            Some(pinned_epoch),
+        );
+
+        let endpoint = format!("ws://127.0.0.1:{port}/ws");
+        let base = || WanConfig {
+            signaling_endpoint: endpoint.clone(),
+            room: pinned_room.clone(),
+            epoch: pinned_epoch,
+            psk: psk.clone(),
+            relay: RelayConfig {
+                allow_wan_signaling: true,
+                allow_relay: true,
+                connection_timeout_ms: 3000,
+                ..RelayConfig::default()
+            },
+            punch_timeout: Duration::from_secs(5),
+            enable_hole_punching: false,
+            ..WanConfig::default()
+        };
+        let mut cfg_a = base();
+        cfg_a.identity_seed = seed_a;
+        cfg_a.my_public_key = pk_a;
+        cfg_a.peer_public_key = pk_b;
+        let mut cfg_b = base();
+        cfg_b.identity_seed = seed_b;
+        cfg_b.my_public_key = pk_b;
+        cfg_b.peer_public_key = pk_a;
+
+        let (a, b) = tokio::try_join!(
+            tokio::time::timeout(Duration::from_secs(10), connect_wan(cfg_a)),
+            tokio::time::timeout(Duration::from_secs(10), connect_wan(cfg_b)),
+        )
+        .unwrap();
+        assert!(a.is_ok() && b.is_ok());
+
+        let rooms = seen.lock().unwrap().clone();
+        assert_eq!(
+            rooms.len(),
+            2,
+            "a pinned epoch must dial exactly once per peer: {rooms:?}"
+        );
+        assert!(
+            rooms.iter().all(|r| *r == pinned_room),
+            "a pinned epoch must not be moved to the server window: {rooms:?}"
+        );
+        worker.abort();
     }
 }

@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   authPayload,
+  currentEpoch,
   frameSize,
   MAX_MESSAGE_BYTES,
   nextJoinBudget,
@@ -179,7 +180,16 @@ export class RendezvousRoom extends DurableObject {
     // Bound room lifetime: expired rooms and their replay/rate state are wiped.
     await this.ctx.storage.setAlarm(now + ROOM_TTL_MS);
 
-    return new Response(null, { status: 101, webSocket: client });
+    // Tell the client which epoch this deployment is serving. Room ids embed
+    // the epoch, so a peer whose clock sits on the other side of a boundary
+    // would otherwise wait in a room nobody else joins. The value is public
+    // metadata (the request URL already carries the client's own epoch) and
+    // carries no key material.
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: { "x-luciola-epoch": String(currentEpoch(now)) },
+    });
   }
 
   async webSocketMessage(ws, message) {

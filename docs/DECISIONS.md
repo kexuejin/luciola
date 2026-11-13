@@ -109,3 +109,36 @@ while and hope" into "wait exactly until the answer is known", so a
 relay-bound connection is still refused promptly (the guard in
 `discover_and_punch` raises the flag on every return path) while a slow
 success is admitted on its merits. The remaining timeout is a safety net only.
+
+## The client adopts the Worker's epoch instead of widening the window
+
+`connect_wan` re-derives its rendezvous room at the epoch the Worker reports in
+the `x-luciola-epoch` handshake header, and redials once, when the caller left
+`WanConfig::epoch` at `0`.
+
+**Done this way, deliberately.** The room id is HKDF-derived from the PSK, the
+two public keys *and* the epoch, so two peers on opposite sides of a 10-minute
+boundary are not merely in the same room at different times — they are in
+completely different rooms, and no amount of retrying inside one room can fix
+that. Three alternatives were considered and rejected:
+
+* *Widen the accepted window to ±1 epoch.* The Worker already admits `epoch ± 1`
+  for signature validation, but admission does not help: each client still
+  derives its room from its own epoch, so the two peers are routed to different
+  Durable Objects. Widening changes nothing.
+* *Drop the epoch from the room id.* This makes the room constant for the life
+  of a pairing, which removes the 10-minute rotation the design relies on to
+  bound how long a captured room id stays useful, and it removes the replay
+  window the Worker enforces.
+* *Client-side retry across two epochs.* Correct but doubles every connection's
+  traffic and still needs the two peers to pick the same one of the two windows.
+
+Aligning on the server's epoch keeps the rotation, keeps the replay window, and
+costs one extra handshake only in the rare case where the clocks disagree. The
+header is public metadata — the request URL already carries the client's own
+epoch — and carries no key material.
+
+Realignment is skipped when the caller pinned `WanConfig::epoch`, and when the
+supplied room does not match what the local epoch would derive (a hand-written
+room). In both cases the caller owns the boundary decision, and silently moving
+them would send the connection to a room the peer is not listening in.
