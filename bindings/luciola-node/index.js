@@ -37,19 +37,32 @@ function loadNative() {
     ...cargoCandidateDirs(),
   ];
 
-  for (const c of candidates) {
-    if (fs.existsSync(c)) {
-      try {
-        if (c.endsWith('.node')) {
-          return require(c);
-        } else {
-          const mod = { exports: {} };
-          process.dlopen(mod, c);
-          return mod.exports;
-        }
-      } catch (_e) {
-        // try next candidate
+  // A stale `luciola.node` left in the package directory used to win over the
+  // dylib cargo had just built, so `cargo build -p luciola-node && node test.js`
+  // — the documented gate — silently exercised a day-old binary with no WAN
+  // exports. Prefer the freshest candidate that exists: a packaged install ships
+  // exactly one file, so this changes nothing there.
+  const existing = [];
+  for (const candidate of candidates) {
+    try {
+      existing.push({ candidate, mtime: fs.statSync(candidate).mtimeMs });
+    } catch (_e) {
+      // not present; skip
+    }
+  }
+  existing.sort((a, b) => b.mtime - a.mtime);
+
+  for (const { candidate: c } of existing) {
+    try {
+      if (c.endsWith('.node')) {
+        return require(c);
+      } else {
+        const mod = { exports: {} };
+        process.dlopen(mod, c);
+        return mod.exports;
       }
+    } catch (_e) {
+      // try next candidate
     }
   }
   throw new Error('Failed to load @luciola/core native binary from candidate paths.');
