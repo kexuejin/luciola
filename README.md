@@ -94,19 +94,22 @@ luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
 > (`luciola::wan::connect_wan`: encrypted WSS rendezvous, UDP hole punching
 > with a reliable ordered ARQ, and an opt-in encrypted relay fallback), plus
 > progressive relay→direct migration, RFC 5780 NAT diagnostics, resumable
-> checkpoints, an AIMD congestion window and an optional USB ADB path. All of
-> it is **Rust-core + CLI only** — the KMP/Swift/Node surfaces do not expose
-> it — and is verified at the unit / loopback layer, not on real NATs, a
-> deployed signaling service or mobile background presence. No external audit
-> either. See the Unreleased section of [CHANGELOG.md](CHANGELOG.md) and the
-> WAN section of [SECURITY.md](SECURITY.md).
+> checkpoints, an AIMD congestion window and an optional USB ADB path. Those
+> data-plane features are **Rust-core + CLI only**: the uniffi (KMP/Swift) and
+> Node surfaces expose `connectWan` / `WanChannel` (establishment, channel
+> type, shutdown) but not the WAN data plane or file transfer. Verified at the
+> unit / loopback layer plus the deployed **staging** signalling Worker — not
+> on real NATs, in production, or with mobile background presence. No external
+> audit either. See the Unreleased section of [CHANGELOG.md](CHANGELOG.md) and
+> the WAN section of [SECURITY.md](SECURITY.md).
 > Only in a dedicated validation consumer, put `mavenLocal()` first and pin
 > `io.github.kexuejin:luciola:0.11.0-local.1`; the distinct version means this
 > cannot shadow the published `0.10.0` artifact. **This coordinate was
-> republished on 2026-11-13** with the fixes above — a consumer that resolved
-> it earlier must refresh with `--refresh-dependencies`, or a cached AAR
-> silently keeps the old engine. Remove the local repo and the override when
-> validation is done.
+> republished twice on 2026-11-13** (latest at 11:34, after the WAN channel
+> API reached the binding surfaces) — a consumer that resolved it earlier
+> must refresh with `--refresh-dependencies`, or a cached AAR silently keeps
+> the old engine. Remove the local repo and the override when validation is
+> done.
 
 > **Released 0.10.0** (2026-11-05), checked against the registries rather than
 > assumed: crates.io answers `0.10.0` for all seven crates; the Maven Central
@@ -236,7 +239,7 @@ luciola/
 │   ├── luciola-proto/    # wire protocol: versioned envelopes, jitter/dedup state machine
 │   ├── luciola/          # tokio engine: dual-stack discovery, link racing,
 │   │                     #   secure channels, trust & pairing primitives,
-│   │                     #   stun / traversal / wan (Rust-core-only WAN)
+│   │                     #   stun / traversal / wan (channel API on bindings)
 │   ├── luciola-transfer/ # chunked file transfer: offset writes, ACK prefix, retransmit
 │   ├── luciola-tunnel/   # mux v2: TCP/UDP multiplexing, port forwarding (ssh -L/-R), WINDOW flow control
 │   └── luciola-cli/      # ip / scan / beacon / agent / forward / transfer / stun
@@ -245,7 +248,7 @@ luciola/
 │   ├── luciola-swift/    # Swift bindings + xcframework
 │   └── luciola-node/     # @luciola/core (N-API)
 └── deploy/
-    └── cloudflare-signaling/  # WSS rendezvous Worker + Durable Object (source, not deployed)
+    └── cloudflare-signaling/  # WSS rendezvous Worker + Durable Object (source; staging deployed separately)
 ```
 
 ## Project Goals

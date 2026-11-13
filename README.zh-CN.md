@@ -92,14 +92,17 @@ luciola-tunnel = "0.10.0" # mux v2 转发(见下文隧道小节)
 > WAN 数据面现已在 **Rust 核心**实现(`luciola::wan::connect_wan`:加密 WSS 会合、
 > UDP 打洞 + 可靠有序 ARQ、显式开启的加密中继兜底),并加了渐进式中继→直连热迁移、
 > RFC 5780 NAT 诊断、断点续传 checkpoint、AIMD 拥塞窗口与可选的 USB ADB 通路。
-> 这些**仅在 Rust 核心 + CLI 层可用**——KMP/Swift/Node 绑定面均未暴露;验证层级是
-> 单元测试 / 回环集成测试(本地 WebSocket 中继 E2E、UDP ARQ 测试),**不是**真实网络。
-> 真实 NAT 现场测试、已部署的公共信令服务、移动端后台常驻、外部审计**均未完成**。
+> 上述数据面能力**仅在 Rust 核心 + CLI 层可用**:uniffi(KMP/Swift)与 Node 绑定面
+> 只暴露 `connectWan` / `WanChannel`(建连、通道类型、关闭),不含 WAN 数据面与文件传输。
+> 验证层级是单元测试 / 回环集成测试,加上已部署的 **staging** 信令 Worker,
+> **不是**真实网络。真实 NAT 现场测试、production 部署、移动端后台常驻、外部审计
+> **均未完成**。
 > 见 [CHANGELOG.md](CHANGELOG.md) 的 Unreleased 小节与 [SECURITY.md](SECURITY.md) 的 WAN 小节。
 > 仅在专门的验证工程里把 `mavenLocal()` 放在最前,并锁定
 > `io.github.kexuejin:luciola:0.11.0-local.1`;这个独立版本号不会遮蔽已发布的
-> `0.10.0`。**该坐标已于 2026-11-13 用同一版本号重新发布**,早前解析过的验证工程
-> 需要加 `--refresh-dependencies` 刷新,否则 Gradle 缓存里的旧 AAR 会静默保留旧引擎。
+> `0.10.0`。**该坐标已于 2026-11-13 用同一版本号重新发布两次**(最近一次 11:34,
+> 在 WAN 通道 API 进入绑定层之后),早前解析过的验证工程需要加
+> `--refresh-dependencies` 刷新,否则 Gradle 缓存里的旧 AAR 会静默保留旧引擎。
 > 验证结束后移除本地仓库与该覆盖。
 
 > **0.10.0**(2026-11-05 发布),以下状态均对注册表核对过而非假设:crates.io 七个 crate 均回答 `0.10.0`;Maven Central 的 `0.10.0` 部署已 PUBLISHED,repo1 上根 Gradle module 元数据、`luciola-android` AAR、`luciola-jvm` 与两个 iOS klib 全部 200;iOS `LuciolaUniFFI-0.10.0.zip`(28,882,594 B,sha256 `3b95e3f6…cebf75`)挂在本 tag 的 release 资产上。本版带结构化错误码(`ErrorCode`/`ErrorInfo`)与 transfer CLI;破坏性变更(全部公开错误枚举 `#[non_exhaustive]`、Node discovery error 事件字段拆分)**必须重生成绑定**,见 [docs/UPGRADING.md](docs/UPGRADING.md)。
@@ -212,7 +215,7 @@ luciola/
 │   ├── luciola-proto/    # 线协议:版本化信封、抖动/去重状态机
 │   ├── luciola/          # tokio 引擎:双栈发现、路径竞速、
 │   │                     #   安全信道、信任与配对原语、
-│   │                     #   stun / traversal / wan(仅 Rust 核心的 WAN)
+│   │                     #   stun / traversal / wan(绑定面提供通道 API)
 │   ├── luciola-transfer/ # 分块文件传输:偏移落盘、ACK 前缀、重传
 │   ├── luciola-tunnel/   # mux v2:TCP/UDP 多路复用、端口转发 (ssh -L/-R)、WINDOW 流控
 │   └── luciola-cli/      # ip / scan / beacon / agent / forward / transfer / stun
@@ -221,7 +224,7 @@ luciola/
 │   ├── luciola-swift/    # Swift 绑定 + xcframework
 │   └── luciola-node/     # @luciola/core (N-API)
 └── deploy/
-    └── cloudflare-signaling/  # WSS 会合 Worker + Durable Object(源码,未部署)
+    └── cloudflare-signaling/  # WSS 会合 Worker + Durable Object(源码;staging 另行部署)
 ```
 
 ## 项目目标

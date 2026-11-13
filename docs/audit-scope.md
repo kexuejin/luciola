@@ -5,7 +5,9 @@ code claims to hold. Written so an auditor can start without a conversation.
 
 Status: **not yet audited.** `SECURITY.md` and `CHANGELOG.md` list the WAN path
 as "additional custom, unaudited code"; this document is the package that
-changes that, and it is not evidence that a review happened.
+changes that, and it is not evidence that a review happened. A **staging**
+Worker was deployed and exercised on 2026-11-13; production has not been
+deployed. Deployment is not review, and it is not a real-NAT field test.
 
 ## Out of scope
 
@@ -97,16 +99,26 @@ the claim rather than take it on faith.
   relay, UDP ARQ loss/reorder, migration, epoch realignment.
 - `crates/luciola/tests/wan_local_worker.rs` — the real Worker and Durable
   Object under `wrangler dev` (signed upgrade, edge verification, pre-join
-  buffer, 96 KiB relay transfer).
+  buffer, 96 KiB relay transfer), and on 2026-11-13 against the **deployed
+  staging** Cloudflare runtime through `scripts/wan-proxy-tunnel.py`.
+- `scripts/probe-signaling.py` — a signed `101` upgrade on the deployed
+  runtime carrying `x-luciola-epoch` matching `/health`
+  (`0.11.0-local.1-staging`). The bridge logged ~198 KiB to and ~199 KiB from
+  the Worker during the two-peer relay run.
 - `deploy/cloudflare-signaling` — `node --test` for the pure auth helpers.
 
 ## Evidence that does **not** exist
 
-- No real NAT / CGNAT field run. See `docs/field-test-record.md`.
-- No deployed Worker: the `101` epoch header has only been exercised against
-  workerd locally, never the Cloudflare runtime.
+- No real NAT / CGNAT field run. See `docs/field-test-record.md` — the harness
+  has one `local-smoke` record from the dev host and no paired two-network
+  rows. The deployed staging run is relay-only on one host and says nothing
+  about hole punching.
+- No production deployment or test. Staging is deployed and verified; the
+  `101` epoch header has been exercised against the Cloudflare runtime there,
+  but never under production configuration or traffic.
 - No real-device background run on either mobile platform.
 - No fuzzing of the STUN parser or the ARQ codec.
+- No external review of the paths in the table above.
 
 ## How to report findings
 

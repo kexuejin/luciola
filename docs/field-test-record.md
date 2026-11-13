@@ -1,9 +1,11 @@
 # Field test record — real NAT / CGNAT matrix
 
-The one thing this repository cannot do for you. Every WAN claim in
-`CHANGELOG.md` and `SECURITY.md` is qualified with "unit / loopback layer only"
-until the runs below exist, because hole punching either works through a real
-carrier NAT or it does not, and no amount of loopback testing answers that.
+The one thing this repository cannot do for you. Hole-punching claims in
+`CHANGELOG.md` and `SECURITY.md` stay qualified with "unit / loopback layer
+only" until the runs below exist, because hole punching either works through a
+real carrier NAT or it does not, and no amount of loopback testing — nor a
+relay-only run against a deployed signalling Worker — answers that. The
+deployed staging verification is recorded separately by layer in those files.
 
 ## What to collect
 
@@ -71,7 +73,11 @@ it must not be read as "cone".
 ## Filling in the summary
 
 After the runs, summarise in `docs/field-test-results.md` (create it when you
-have real data — do not pre-fill it with guesses):
+have real data — do not pre-fill it with guesses). A `local-smoke` record taken
+on the development host is useful for checking the harness, but it is **not** a
+matrix row: it has one side, no paired second peer on another access network,
+and `transfer` is `null`. Do not put it in the summary table or use it to lift
+the real-NAT caveat.
 
 | Profile | mapping | filtering | classification | punch outcome | relay used | notes |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- |

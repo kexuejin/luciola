@@ -45,11 +45,15 @@ primary one is cited.
 Published to **mavenLocal only** under one unchanged local coordinate. crates.io,
 Maven Central, npm, the git tag and `origin/main` are all untouched; the public
 registries remain at 0.10.0 until downstream products finish validation. The
-local artifact was **republished on 2026-11-13** after the WAN stability fixes,
-resumable transfers, USB transport and the AIMD window below landed. A consumer
-that resolved `0.11.0-local.1` before that date may still hold the older engine
-in its Gradle cache — refresh dependencies (`--refresh-dependencies`) before
-concluding a fix is absent from the AAR.
+local artifact was **republished twice on 2026-11-13**: first after the WAN
+stability fixes, resumable transfers, USB transport and the AIMD window, then
+again at 11:34 after the WAN channel API reached the uniffi/Node surfaces and
+the epoch realignment, mobile background and deployed-Worker verification work
+landed. The coordinate is deliberately unchanged, so a consumer that resolved
+`0.11.0-local.1` before either republish may still hold an older engine in its
+Gradle cache — refresh dependencies (`--refresh-dependencies`) before
+concluding a fix is absent from the AAR. The current AAR embeds an arm64 `.so`
+with sha256 `0f5888987613453ad5d7483162e346858e6b812ee357b4e0278f59f482801680`.
 
 ### Added (Rust core tier — local validation only)
 
@@ -143,6 +147,11 @@ concluding a fix is absent from the AAR.
   before the first intro frame, so the relay byte cap is actually enforced.
 - `SECURITY.md`, `RelayConfig` docs and the Worker README no longer describe
   the WAN data plane as absent/unwired.
+- Verification claims now name their layer: `SECURITY.md`, `CHANGELOG.md`,
+  `docs/audit-scope.md` and both READMEs distinguish the deployed **staging**
+  Worker from an undeployed production, and no longer say the WAN channel API
+  is absent from the uniffi/Node surfaces. The real-NAT, real-device and audit
+  caveats stay in place.
 - Aliyun Gradle mirrors are opt-in **fallbacks**
   (`-PluciolaUseAliyunMirrors=true`), placed after `mavenCentral()` / `google()`
   so official registries always resolve first and can never be shadowed in a
@@ -308,12 +317,22 @@ The Worker itself is exercised for real against `wrangler dev` (workerd + a
 local Durable Object): `crates/luciola/tests/wan_local_worker.rs` drives two
 Rust clients through the signed upgrade, edge Ed25519 verification, pre-join
 buffering, the encrypted handshake and a 96 KiB relay transfer, and asserts
-`/health` reports an epoch within one window. That is still not a *deployed*
-Cloudflare account.
+`/health` reports an epoch within one window.
 
-**Not** verified: no real-NAT / carrier-grade-NAT field test, no deployed
-public Worker (so the `x-luciola-epoch` header on a `101` upgrade has only been
-exercised against a local tungstenite server, not the Cloudflare runtime), no
+On the **deployed staging** Cloudflare runtime (2026-11-13): `/health` reported
+`0.11.0-local.1-staging` with an epoch matching the client's,
+`scripts/probe-signaling.py` observed a signed `101` upgrade carrying
+`x-luciola-epoch`, and `wan_local_worker.rs` ran two Rust peers through the
+deployed Durable Object via `scripts/wan-proxy-tunnel.py` (edge Ed25519
+verification, pre-join buffering, 96 KiB relay transfer). The bridge recorded
+~198 KiB to and ~199 KiB from the Worker. That run was relay-only, single-host
+and proxied because this host's `*.workers.dev` DNS is hijacked — it exercises
+the deployed signalling path, **not** hole punching or a real NAT. Production
+is not deployed.
+
+**Not** verified: no real-NAT / carrier-grade-NAT field test (the field harness
+has only a `local-smoke` record from this host, no paired two-network rows), no
+production deployment or test, no
 real-device background verification on either mobile platform (Android: Doze,
 OEM battery managers, the notification permission prompt; iOS:
 `BGAppRefreshTask` scheduling and silent-push delivery, which need a signed
