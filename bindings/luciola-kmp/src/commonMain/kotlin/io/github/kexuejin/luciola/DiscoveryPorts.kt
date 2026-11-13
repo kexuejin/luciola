@@ -25,7 +25,10 @@ sealed interface DiscoveryEventUi {
     data class Found(val peer: PeerUiModel) : DiscoveryEventUi
     data class Updated(val peer: PeerUiModel) : DiscoveryEventUi
     data class Lost(val nodeId: String) : DiscoveryEventUi
-    /** Fatal setup problems, e.g. discovery port occupied by another product. */
+    /** Engine setup problems, e.g. the discovery port occupied by another
+     *  product. [code] is stable (`bind_failed`, …) and hosts surface it in
+     *  UI. **Not terminal**: [DiscoveryController] retries `bind_failed` on its
+     *  own, so a host must not tear the session down on this event. */
     data class Error(val code: String, val message: String) : DiscoveryEventUi
 }
 
@@ -92,6 +95,21 @@ data class ControllerConfig(
     /** Stop auto-rebuilding after this many consecutive watchdog restarts so a
      *  genuinely dead network does not spin. */
     val watchdogMaxConsecutive: Int = 3,
+    /**
+     * First delay before retrying an engine that could not bind its discovery
+     * port. Doubles per consecutive failure, capped at [bindRetryMaxMs].
+     *
+     * Bind failures are retried **outside** the [watchdogMaxConsecutive]
+     * budget. A failed bind is not a dead network: the port is held by some
+     * other process (a sibling product on the same device defaults to the same
+     * well-known port) and can be released at any moment. An engine that gave
+     * up permanently after 3 ticks would need an app restart to recover. The
+     * backoff only stops a permanently occupied port from churning a 5 s bind
+     * attempt on every watchdog tick.
+     */
+    val bindRetryBaseMs: Long = 15_000L,
+    /** Ceiling for the bind retry backoff. */
+    val bindRetryMaxMs: Long = 60_000L,
 )
 
 /** Per-channel dial outcome of a Happy Eyeballs race (common, UI-friendly). */

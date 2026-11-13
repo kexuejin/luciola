@@ -100,7 +100,16 @@ class LuciolaPresenceService : Service() {
                 },
                 onEngineError = { code, message ->
                     Log.w(TAG, "engine error $code: $message")
+                    // The engine failed *after* start() returned, so the
+                    // "online" state set below is now a lie. Clear it: the
+                    // notification and the header both read this flag, and a
+                    // dead engine that renders as online is worse than no
+                    // status at all. The controller retries a bind failure on
+                    // its own, so the service stays up — only the claim
+                    // changes.
+                    PresenceBus.engineOn.value = false
                     PresenceBus.status.value = "error: $code"
+                    refreshNotification()
                 },
             )
             c.start()

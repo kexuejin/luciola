@@ -189,6 +189,18 @@ is a simulator runtime result for launch and engine bind, not a device run. See
   value. `WanChannel` exposes `channelType()` / `remoteAddr()` / `shutdown()`
   and **no read/write**, so this proves establishment and route agreement, not
   that bytes moved.
+- **KMP: a failed engine bind retries on its own backoff track.** Found on a
+  physical Pixel 6: a co-resident app held UDP 17878, the engine failed to
+  bind, and the session stayed dead forever — the watchdog spent its
+  3-restart budget on a failure it could not fix. `DiscoveryController` now
+  retries `bind_failed` at 15 s → 30 s → 60 s (`ControllerConfig.bindRetryBaseMs`
+  / `bindRetryMaxMs`), **outside** the watchdog budget, resetting when a peer
+  arrives. `DiscoveryEventUi.Error` is documented as not terminal: hosts must
+  keep the session up on `bind_failed`, and the Android demo now clears its
+  online claim on engine errors instead of implying a bound engine.
+  `DiscoveryControllerTest` (hand-driven scheduler, no real clock) covers the
+  backoff, the budget separation, debouncing and the stopped case; iOS targets
+  are compile-verified only, the controller logic is runtime-verified on JVM.
 
 ### Fixed
 
