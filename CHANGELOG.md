@@ -57,9 +57,12 @@ still hold an older engine in its Gradle cache — refresh dependencies
 (`--refresh-dependencies`) before concluding a fix is absent from the AAR. The
 current AAR embeds an arm64 `.so` with sha256
 `ea41c96867534a2f8e062b11a4340a07109fa8f57b88570c264a47b6e357aed2`. The
-Android arm64 native library was rebuilt for this republish; the iOS
-xcframework was not rebuilt, so that layer remains unverified with the new
-`ring` dependency.
+Android arm64 native library was rebuilt for this republish. The iOS
+`LuciolaUniFFI.xcframework` was subsequently rebuilt for `aarch64-apple-ios`
+and `aarch64-apple-ios-sim` with the new `ring` dependency and now links into
+`examples/ios-demo` for the arm64 simulator. That is a **compile/link** result,
+not a device or simulator runtime run — see *Verification layer and remaining
+limits*.
 
 ### Added (Rust core tier — local validation only)
 
@@ -152,6 +155,14 @@ xcframework was not rebuilt, so that layer remains unverified with the new
   discriminator. `docs/DECISIONS.md` gains six entries covering migration
   failure, checkpoint ordering, ADB setup, post-migration EOF, quota
   admission and server-epoch alignment.
+- **Real-NAT operator runbook.** `docs/field-test-record.md` now spells out how
+  to produce one matrix row: two machines on two access networks, an offline
+  preflight, the shared 32-hex room / PSK / seed / pin values, receiver-first
+  ordering, the 600-second epoch constraint, why proxy environment variables
+  must be cleared on field machines (otherwise relay bytes egress through the
+  proxy instead of the NAT under test), and what to capture that the JSON
+  record cannot (`channel_type`, relay usage, `NoRoute`). It contains no
+  results — the matrix is still empty.
 
 ### Fixed
 
@@ -292,6 +303,26 @@ xcframework was not rebuilt, so that layer remains unverified with the new
   handshake and a 96 KiB relay transfer all run against the actual
   implementation. It skips itself unless `LUCIOLA_WAN_WORKER` is set, so CI
   needs no Worker.
+- **`scripts/field-nat-matrix.sh` no longer reports a healthy Worker as
+  unreachable.** `--send` requires `--worker` to be the `wss://…/ws` signalling
+  URL, but the `/health` probe fed that value straight to `curl`, which has no
+  `ws://` / `wss://` support and was also pointed at `/ws/health` instead of
+  the root. The harness now normalises the endpoint to `https://…/health` for
+  liveness while passing the original URL to `--signaling`. Verified against
+  the deployed staging Worker: a `wss://` `--worker` now records
+  `worker.ok = true` with the live epoch and version.
+- **The field harness is self-testable and its peer pin is checked.**
+  `--self-test` asserts the URL conversion, scheme rejection and loopback
+  `ws://` handling offline — no build, no network call, no field log.
+  `--peer-seed` used to be required but ignored; it is now optional and, when
+  supplied, derives the peer public key with `luciola-cli transfer pin` and
+  aborts early on a `--pin` mismatch instead of failing opaquely
+  mid-handshake. `-h` no longer depends on a fixed line range. On macOS bash
+  3.2, expanding the empty `"${EXTRA[@]}"` used for the optional
+  `--progressive` flag made `set -u` abort every non-progressive `--send` run
+  before the transfer even started; the expansion is now guarded, and both the
+  plain and `--progressive` send paths were exercised end to end against an
+  unreachable loopback endpoint.
 
 ### Changed
 
@@ -329,6 +360,30 @@ the three background permissions plus
 `examples/ios-demo` for the iPhone 17 Pro simulator with zero errors against a
 freshly rebuilt `LuciolaUniFFI.xcframework`.
 
+The `ring` crypto-provider fix needed a fresh iOS binary, so on 2026-11-13
+`bindings/luciola-swift/build-xcframework.sh` rebuilt both slices from the
+current core (`aarch64-apple-ios` and `aarch64-apple-ios-sim`, each now
+compiling `ring v0.17.14` / `rustls v0.23.46`). Static-lib sha256: device
+`9f4a7965730ca0e5f4a716cf2e997524549be3266967c206a67b9679531bbb98`, simulator
+`b58701c760d771b7fbafdf90504ddd9e8ceb9e2847f2e74a4306ebbd5d32d23f`;
+ring/rustls object members went from 22 to 38 per slice. Disassembling the
+rebuilt library shows `uniffi_luciola_uniffi_checksum_func_connect_wan`
+returning `30765` (`mov w0, #0x782d; ret`), exactly the value the checked-in
+`bindings/luciola-swift/luciola_uniffi.swift` asserts — a static ABI check, not
+a runtime contract run. `xcodebuild` links `examples/ios-demo` against it for
+the arm64 iPhone 17 Pro simulator (**BUILD SUCCEEDED**); a generic `iOS Simulator`
+destination fails because the framework deliberately ships no x86_64 slice.
+The linker emits 22 warnings that `ring` assembly objects were built for
+iOS-simulator 26.2 while the demo targets 16.0. All of this is **compile/link
+only** — no app was launched on a simulator or device, so the iOS runtime
+layer remains unverified.
+
+The field harness was exercised against the deployed staging Worker with a
+`wss://` `--worker` URL: `/health` returned `ok=true`,
+`version=0.11.0-local.1-staging`, epoch `2990907`, and the offline
+`--self-test` plus the `--peer-seed` mismatch path both behaved as specified.
+That is a harness check, **not** a field row.
+
 Earlier loopback integration tests still cover a 64 KiB encrypted relay
 transfer over a local blind-forwarding WebSocket, a real secure handshake
 over the UDP ARQ stream, ARQ loss/reorder recovery, and STUN CLI process
@@ -357,7 +412,9 @@ the deployed signalling path, **not** hole punching or a real NAT. Production
 is not deployed.
 
 **Not** verified: no real-NAT / carrier-grade-NAT field test (the field harness
-has only a `local-smoke` record from this host, no paired two-network rows), no
+has only a `local-smoke` record from this host, no paired two-network rows;
+`docs/field-test-record.md` now has an operator runbook and the harness has an
+offline `--self-test`, but neither is a run), no
 production deployment or test, no
 real-device background verification on either mobile platform (Android: Doze,
 OEM battery managers, the notification permission prompt; iOS:

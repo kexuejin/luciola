@@ -98,7 +98,8 @@ luciola-tunnel = "0.10.0" # mux v2 转发(见下文隧道小节)
 > 只暴露 `connectWan` / `WanChannel`(建连、通道类型、关闭),不含 WAN 数据面与文件传输。
 > 验证层级是单元测试 / 回环集成测试,加上已部署的 **staging** 信令 Worker
 > (现已通过原生代理直连 `wss://`),**不是**真实网络。真实 NAT 现场测试、production 部署、移动端后台常驻、外部审计
-> **均未完成**。
+> **均未完成**。真实 NAT 矩阵已备好[现场操作清单](docs/field-test-record.md),但尚无任何
+> 跨网络的成对记录。
 > 见 [CHANGELOG.md](CHANGELOG.md) 的 Unreleased 小节与 [SECURITY.md](SECURITY.md) 的 WAN 小节。
 > 仅在专门的验证工程里把 `mavenLocal()` 放在最前,并锁定
 > `io.github.kexuejin:luciola:0.11.0-local.1`;这个独立版本号不会遮蔽已发布的

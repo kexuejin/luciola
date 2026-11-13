@@ -102,8 +102,10 @@ luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
 > type, shutdown) but not the WAN data plane or file transfer. Verified at the
 > unit / loopback layer plus the deployed **staging** signalling Worker, now
 > reached directly over `wss://` through the native proxy — not on real NATs,
-> in production, or with mobile background presence. No external audit either. See the Unreleased section of [CHANGELOG.md](CHANGELOG.md) and
-> the WAN section of [SECURITY.md](SECURITY.md).
+> in production, or with mobile background presence. No external audit either.
+> The real-NAT matrix now has an [operator runbook](docs/field-test-record.md),
+> but no paired two-network rows exist yet. See the Unreleased section of
+> [CHANGELOG.md](CHANGELOG.md) and the WAN section of [SECURITY.md](SECURITY.md).
 > Only in a dedicated validation consumer, put `mavenLocal()` first and pin
 > `io.github.kexuejin:luciola:0.11.0-local.1`; the distinct version means this
 > cannot shadow the published `0.10.0` artifact. **This coordinate was

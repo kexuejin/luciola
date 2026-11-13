@@ -132,8 +132,9 @@ the claim rather than take it on faith.
 
 - No real NAT / CGNAT field run. See `docs/field-test-record.md` — the harness
   has one `local-smoke` record from the dev host and no paired two-network
-  rows. The deployed staging run is relay-only on one host and says nothing
-  about hole punching.
+  rows. That document now carries an operator runbook and the harness has an
+  offline `--self-test`, but neither is a run. The deployed staging run is
+  relay-only on one host and says nothing about hole punching.
 - No production deployment or test. Staging is deployed and verified; the
   `101` epoch header has been exercised against the Cloudflare runtime there,
   but never under production configuration or traffic.

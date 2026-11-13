@@ -210,8 +210,13 @@ the LAN-only one.
   a `NO_PROXY=<worker-host>` control on the same host still failed with
   `rendezvous connect timed out`, confirming the proxied path is what made the
   run work. Both are relay-only, single-host runs — no hole punching and no real
-  NAT were involved. What is **not** proven: no real-NAT / carrier-grade-NAT
-  field test, no production
+  NAT were involved. The iOS static libraries were rebuilt from the current core
+  for `aarch64-apple-ios` and `aarch64-apple-ios-sim` with the `ring` provider,
+  and `examples/ios-demo` links against them for the arm64 simulator; this is a
+  compile/link result only, with no simulator or device runtime run. The field
+  harness now has an offline `--self-test` and a two-machine operator runbook in
+  `docs/field-test-record.md`; neither is a field run. What is **not** proven:
+  no real-NAT / carrier-grade-NAT field test, no production
   deployment or test, no cross-platform WAN smoke, no physical-device ADB
   transfer, no real-device background run on either mobile platform (Android's
   foreground service has only been compiled and linted; iOS `BGAppRefreshTask`
