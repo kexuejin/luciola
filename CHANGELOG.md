@@ -60,9 +60,10 @@ current AAR embeds an arm64 `.so` with sha256
 Android arm64 native library was rebuilt for this republish. The iOS
 `LuciolaUniFFI.xcframework` was subsequently rebuilt for `aarch64-apple-ios`
 and `aarch64-apple-ios-sim` with the new `ring` dependency and now links into
-`examples/ios-demo` for the arm64 simulator. That is a **compile/link** result,
-not a device or simulator runtime run — see *Verification layer and remaining
-limits*.
+`examples/ios-demo` for the arm64 simulator, and was then installed and
+launched on that simulator — the app runs with its Rust engine bound, so this
+is a simulator runtime result for launch and engine bind, not a device run. See
+*Verification layer and remaining limits*.
 
 ### Added (Rust core tier — local validation only)
 
@@ -407,9 +408,19 @@ a runtime contract run. `xcodebuild` links `examples/ios-demo` against it for
 the arm64 iPhone 17 Pro simulator (**BUILD SUCCEEDED**); a generic `iOS Simulator`
 destination fails because the framework deliberately ships no x86_64 slice.
 The linker emits 22 warnings that `ring` assembly objects were built for
-iOS-simulator 26.2 while the demo targets 16.0. All of this is **compile/link
-only** — no app was launched on a simulator or device, so the iOS runtime
-layer remains unverified.
+iOS-simulator 26.2 while the demo targets 16.0.
+
+The demo was then **launched**, not just linked: `xcrun simctl install` plus
+`launch` on the booted iPhone 17 Pro simulator, with the process staying up and
+holding `UDP *:17880`. The running app shows `引擎在线`, which
+`DiscoveryModel` derives from `session.isBound()` after a 2.5 s settle, together
+with 7 candidate addresses and the subnet broadcast `192.168.2.255` — values
+computed by the Rust core (`luciola-net`) inside the simulator process. That
+turns the iOS layer from compile/link into a **runtime** result for launch,
+engine bind and interface enumeration. Still unverified on iOS: peer discovery
+inside the simulator (Mac broadcast frames are not looped back, and two engines
+cannot share a host because the discovery socket binds exclusively),
+`BGAppRefreshTask` firing and silent-push delivery.
 
 The field harness was exercised against the deployed staging Worker with a
 `wss://` `--worker` URL: `/health` returned `ok=true`,

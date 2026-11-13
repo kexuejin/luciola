@@ -212,8 +212,11 @@ the LAN-only one.
   run work. Both are relay-only, single-host runs — no hole punching and no real
   NAT were involved. The iOS static libraries were rebuilt from the current core
   for `aarch64-apple-ios` and `aarch64-apple-ios-sim` with the `ring` provider,
-  and `examples/ios-demo` links against them for the arm64 simulator; this is a
-  compile/link result only, with no simulator or device runtime run. The field
+  and `examples/ios-demo` links against them for the arm64 simulator and was
+  then launched there: the app runs with the Rust engine bound (`isBound()`)
+  and enumerates interfaces, so launch and engine bind are simulator-runtime
+  results. Nothing was run on a physical device, and peer discovery in the
+  simulator is not covered. The field
   harness now has an offline `--self-test` and a two-machine operator runbook in
   `docs/field-test-record.md`; neither is a field run. A production deployment
   plan in `deploy/cloudflare-signaling/README.md` and offline `--self-test` /

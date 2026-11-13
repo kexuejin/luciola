@@ -95,12 +95,21 @@ without an APNs entitlement it always fails and must not take the demo down.
 The APNs device token is written to `UserDefaults` under `luciola.apns.token`
 so a server can address the device.
 
-**Verified in this environment**: the app builds for the iPhone 17 Pro
-simulator with the freshly rebuilt `LuciolaUniFFI.xcframework`. **Not**
-verified: `BGAppRefreshTask` firing (the simulator does not schedule
-background app refresh on demand — use the `_simulateLaunchForTaskWithIdentifier`
-debugger trick on a device) and silent-push delivery (needs a signed build with
-the `aps-environment` entitlement plus a server holding the APNs key).
+**Verified in this environment** (2026-11-13): the app builds for the iPhone
+17 Pro simulator against the freshly rebuilt `LuciolaUniFFI.xcframework`,
+installs, and **launches**. Once running it reports `引擎在线`, which
+`DiscoveryModel` sets from `session.isBound()` after a 2.5 s settle, so the
+badge is a real bind result rather than an optimistic claim; the same screen
+shows 7 candidate addresses and the subnet broadcast `192.168.2.255`, both
+computed by the Rust core (`luciola-net`) inside the simulator process. The
+process held `UDP *:17880` throughout. **Not** verified: peer discovery in the
+simulator (broadcast frames from the Mac are not looped back — see the caveat
+below, and two engines cannot share one host anyway because the discovery
+socket binds exclusively), `BGAppRefreshTask` firing (the simulator does not
+schedule background app refresh on demand — use the
+`_simulateLaunchForTaskWithIdentifier` debugger trick on a device) and
+silent-push delivery (needs a signed build with the `aps-environment`
+entitlement plus a server holding the APNs key).
 
 ## Notes
 
