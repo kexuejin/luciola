@@ -1263,7 +1263,7 @@ mod tests {
             start_progressive_relay(client_from(ws_side(port).await, key), Arc::new(cfg_b));
 
         let (mut stream_a, mut stream_b): (SecureStream, SecureStream) = tokio::try_join!(
-            secure_handshake_client(prog_a.bridge, &seed_a, &pk_b),
+            secure_handshake_client(prog_a.bridge, &seed_a, Some(&pk_b)),
             secure_handshake_server(prog_b.bridge, &seed_b, Some(&pk_a)),
         )
         .unwrap();

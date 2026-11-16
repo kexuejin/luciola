@@ -266,7 +266,7 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
         let prog = adaptive::start_progressive_relay(signal, Arc::new(config.clone()));
         let mut stream = match role {
             WanRole::Initiator => {
-                secure_handshake_client(prog.bridge, &config.identity_seed, &config.peer_public_key)
+                secure_handshake_client(prog.bridge, &config.identity_seed, Some(&config.peer_public_key))
                     .await
             }
             WanRole::Responder => {
@@ -396,7 +396,7 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
                     transport,
                     peer_addr,
                     &config.identity_seed,
-                    &config.peer_public_key,
+                    Some(&config.peer_public_key),
                 )
                 .await
             }
@@ -427,7 +427,7 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
     let transport = signal.into_relay();
     let mut stream = match role {
         WanRole::Initiator => {
-            secure_handshake_client(transport, &config.identity_seed, &config.peer_public_key).await
+            secure_handshake_client(transport, &config.identity_seed, Some(&config.peer_public_key)).await
         }
         WanRole::Responder => {
             secure_handshake_server(

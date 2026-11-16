@@ -1257,6 +1257,10 @@ internal typealias UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByVal
 
 
 
+
+
+
+
 @Synchronized
 private fun findLibraryName(componentName: String): String {
     val libOverride = System.getProperty("uniffi.component.$componentName.libraryOverride")
@@ -1431,7 +1435,10 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
-        if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 20557.toShort()) {
+        if (uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel() != 43852.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 30869.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint() != 35699.toShort()) {
@@ -1456,6 +1463,9 @@ internal object IntegrityCheckingUniffiLib : Library {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 14622.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_peerpublickey() != 47645.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703.toShort()) {
@@ -1687,6 +1697,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_discoverysession_stop(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_connect(
     ): Short
     @JvmStatic
@@ -1712,6 +1725,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_listen(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_peerpublickey(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_send(
@@ -1906,6 +1922,11 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Pointer?
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_connect(
         `ptr`: Pointer?,
         `addresses`: RustBufferByValue,
@@ -1960,6 +1981,11 @@ internal object UniffiLib : Library {
         `listener`: Long,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_peerpublickey(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_send(
         `ptr`: Pointer?,
@@ -3288,20 +3314,38 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
 
     
     /**
+     * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
+     *
+     * 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
+     * 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
+     * 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+     */
+    public actual override fun `closeCurrentChannel`() {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
      * Race-dial every candidate address (Happy Eyeballs) and run the
      * authenticated handshake on the winning socket, with a PINNED peer key.
      *
      * With `auto_reconnect` the session re-dials with exponential backoff
      * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-    public actual override fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener) {
+    public actual override fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray?, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener) {
         callWithPointer {
             uniffiRustCall { uniffiRustCallStatus ->
                 UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_connect(
                     it,
                     FfiConverterSequenceString.lower(`addresses`),
                     FfiConverterUShort.lower(`port`),
-                    FfiConverterByteArray.lower(`pinnedPeerPublicKey`),
+                    FfiConverterOptionalByteArray.lower(`pinnedPeerPublicKey`),
                     FfiConverterBoolean.lower(`autoReconnect`),
                     FfiConverterTypeSecureSessionListener.lower(`listener`),
                     uniffiRustCallStatus,
@@ -3435,6 +3479,21 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
                 )
             }
         }
+    }
+
+    /**
+     * 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
+     * **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+     */
+    public actual override fun `peerPublicKey`(): kotlin.ByteArray? {
+        return FfiConverterOptionalByteArray.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_peerpublickey(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
     }
 
     /**

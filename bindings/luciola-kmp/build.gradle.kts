@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.github.kexuejin"
-version = "0.11.0-local.1"
+version = "0.11.0-local.3"
 
 repositories {
     // Official registries are always authoritative and always resolved first:

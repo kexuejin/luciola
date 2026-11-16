@@ -43,12 +43,28 @@ pub(crate) async fn establish(
             let attempt = tokio::select! {
                 r = tokio::time::timeout(
                     Duration::from_secs(10),
-                    luciola::link::secure::connect_secure_raced(
-                        addresses.clone(),
-                        tunnel_port,
-                        &shared.identity_seed,
-                        pinned_peer_public_key,
-                    ),
+                    async {
+                        match pinned_peer_public_key {
+                            Some(k) => {
+                                luciola::link::secure::connect_secure_raced(
+                                    addresses.clone(),
+                                    tunnel_port,
+                                    &shared.identity_seed,
+                                    &k,
+                                )
+                                .await
+                            }
+                            // TOFU：不钉对端，从消息 2 学公钥（首连中间人防不住是 TOFU 的定义）。
+                            None => {
+                                luciola::link::secure::connect_secure_raced_tofu(
+                                    addresses.clone(),
+                                    tunnel_port,
+                                    &shared.identity_seed,
+                                )
+                                .await
+                            }
+                        }
+                    },
                 ) => r,
                 _ = stop.recv() => return EstablishOutcome::Shutdown,
                 _ = shared.wake.notified() => return EstablishOutcome::Restart,

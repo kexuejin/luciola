@@ -759,7 +759,8 @@ pub struct JsForwardStatus {
 
 #[derive(Clone)]
 enum ChannelRole {
-    Dial(Vec<String>, u16, Vec<u8>, bool),
+    /// `pinned = None` → 发起侧 TOFU（`connect_secure_raced_tofu`）。
+    Dial(Vec<String>, u16, Option<Vec<u8>>, bool),
     Listen(u16, Option<Vec<u8>>),
 }
 
@@ -882,7 +883,7 @@ impl SecureChannel {
         &self,
         addresses: Vec<String>,
         port: u16,
-        pinned_peer_public_key: Buffer,
+        pinned_peer_public_key: Option<Buffer>,
         auto_reconnect: bool,
         on_event: JsFunction,
     ) -> Result<()> {
@@ -890,7 +891,7 @@ impl SecureChannel {
             ChannelRole::Dial(
                 addresses,
                 port,
-                pinned_peer_public_key.to_vec(),
+                pinned_peer_public_key.map(|b| b.to_vec()),
                 auto_reconnect,
             ),
             on_event,
@@ -1184,7 +1185,7 @@ impl SecureChannel {
         std::thread::Builder::new()
             .name("luciola-node-secure-link".to_string())
             .spawn(move || {
-                use luciola::link::secure::{accept_secure, connect_secure_raced};
+                use luciola::link::secure::{accept_secure, connect_secure_raced, connect_secure_raced_tofu};
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -1203,7 +1204,11 @@ impl SecureChannel {
                     'outer: loop {
                         let stream = match role.clone() {
                             ChannelRole::Dial(addresses, port, pinned, auto) => {
-                                match connect_secure_raced(addresses, port, &seed, &pinned).await {
+                                let attempt = match pinned.as_deref() {
+                                    Some(k) => connect_secure_raced(addresses.clone(), port, &seed, k).await,
+                                    None => connect_secure_raced_tofu(addresses.clone(), port, &seed).await,
+                                };
+                                match attempt {
                                     Ok(s) => {
                                         backoff = min;
                                         s

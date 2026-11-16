@@ -306,13 +306,22 @@ public expect open class DiscoverySession: Disposable, DiscoverySessionInterface
 public interface SecureSessionInterface {
     
     /**
+     * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
+     *
+     * 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
+     * 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
+     * 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+     */
+    public fun `closeCurrentChannel`()
+    
+    /**
      * Race-dial every candidate address (Happy Eyeballs) and run the
      * authenticated handshake on the winning socket, with a PINNED peer key.
      *
      * With `auto_reconnect` the session re-dials with exponential backoff
      * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-    public fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
+    public fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray?, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
     
     /**
      * 关闭转发端点（幂等）。
@@ -363,6 +372,12 @@ public interface SecureSessionInterface {
      * fingerprint). The listener re-arms after each channel closes.
      */
     public fun `listen`(`port`: kotlin.UShort, `expectedPeer`: kotlin.ByteArray?, `listener`: SecureSessionListener)
+    
+    /**
+     * 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
+     * **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+     */
+    public fun `peerPublicKey`(): kotlin.ByteArray?
     
     /**
      * Queue an encrypted frame. False when not connected OR the outbound
@@ -470,13 +485,22 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
 
     
     /**
+     * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
+     *
+     * 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
+     * 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
+     * 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+     */
+    public override fun `closeCurrentChannel`()
+    
+    /**
      * Race-dial every candidate address (Happy Eyeballs) and run the
      * authenticated handshake on the winning socket, with a PINNED peer key.
      *
      * With `auto_reconnect` the session re-dials with exponential backoff
      * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-    public override fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
+    public override fun `connect`(`addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray?, `autoReconnect`: kotlin.Boolean, `listener`: SecureSessionListener)
     
     /**
      * 关闭转发端点（幂等）。
@@ -527,6 +551,12 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
      * fingerprint). The listener re-arms after each channel closes.
      */
     public override fun `listen`(`port`: kotlin.UShort, `expectedPeer`: kotlin.ByteArray?, `listener`: SecureSessionListener)
+    
+    /**
+     * 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
+     * **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+     */
+    public override fun `peerPublicKey`(): kotlin.ByteArray?
     
     /**
      * Queue an encrypted frame. False when not connected OR the outbound

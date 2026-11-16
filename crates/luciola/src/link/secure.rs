@@ -584,10 +584,39 @@ pub async fn connect_secure(
     handshake_client_timed(
         socket,
         identity_seed,
-        pinned_peer_public_key,
+        Some(pinned_peer_public_key),
         DEFAULT_DIAL_HANDSHAKE_TIMEOUT,
     )
     .await
+}
+
+/// 发起侧 TOFU：不钉对端公钥，从握手消息 2 里**学习**它（`pub_r`），照常验签。
+///
+/// 安全语义与监听侧的 `expected_peer = None` 相同：首连学到什么信什么 —— 首连路径上的
+/// 中间人防不住（TOFU 的定义），但签名仍绑定整个 transcript，路径上的篡改会当场失败。
+/// 「手填地址、什么码都没有」的配对走这里；学到 key 后由调用方落盘钉存。
+pub async fn connect_secure_tofu(
+    address: &str,
+    port: u16,
+    identity_seed: &[u8],
+) -> Result<SecureStream, LinkError> {
+    let socket = crate::link::dial(address, port).await?;
+    handshake_client_timed(socket, identity_seed, None, DEFAULT_DIAL_HANDSHAKE_TIMEOUT).await
+}
+
+/// [`connect_secure_raced`] 的 TOFU 变体：多个候选地址竞速，胜者握手时不带钉住 key。
+pub async fn connect_secure_raced_tofu(
+    addresses: Vec<String>,
+    port: u16,
+    identity_seed: &[u8],
+) -> Result<SecureStream, LinkError> {
+    use crate::link::race_stream;
+    let Some((socket, _addr, _rtt)) = race_stream(addresses, port, Default::default()).await else {
+        return Err(LinkError::Handshake(
+            "no candidate address reachable".into(),
+        ));
+    };
+    handshake_client_timed(socket, identity_seed, None, DEFAULT_DIAL_HANDSHAKE_TIMEOUT).await
 }
 
 /// Race-dial every candidate address (Happy Eyeballs) and run the client
@@ -607,7 +636,7 @@ pub async fn connect_secure_raced(
     handshake_client_timed(
         socket,
         identity_seed,
-        pinned_peer_public_key,
+        Some(pinned_peer_public_key),
         DEFAULT_DIAL_HANDSHAKE_TIMEOUT,
     )
     .await
@@ -619,7 +648,7 @@ pub async fn connect_secure_raced(
 pub async fn handshake_client_timed(
     socket: TcpStream,
     identity_seed: &[u8],
-    pinned_peer_public_key: &[u8],
+    pinned_peer_public_key: Option<&[u8]>,
     handshake_timeout: std::time::Duration,
 ) -> Result<SecureStream, LinkError> {
     // 关掉 Nagle。`send` 是「4 字节长度 + 密文」两次 write_all：第一段是个小包，
@@ -652,7 +681,7 @@ pub async fn handshake_client_timed(
 pub async fn secure_handshake_client<S>(
     socket: S,
     identity_seed: &[u8],
-    pinned_peer_public_key: &[u8],
+    pinned_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError>
 where
     S: ByteStream + 'static,
@@ -671,7 +700,7 @@ pub async fn secure_handshake_client_with_remote<S>(
     socket: S,
     remote: SocketAddr,
     identity_seed: &[u8],
-    pinned_peer_public_key: &[u8],
+    pinned_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError>
 where
     S: ByteStream + 'static,
@@ -687,16 +716,13 @@ where
 async fn handshake_client_inner(
     mut socket: ErasedStream,
     identity_seed: &[u8],
-    pinned_peer_public_key: &[u8],
+    pinned_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError> {
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
             .map_err(|_| LinkError::Handshake("seed must be 32 bytes".into()))?,
     );
-    let peer_key: [u8; PUB_LEN] = pinned_peer_public_key
-        .try_into()
-        .map_err(|_| LinkError::Handshake("peer key must be 32 bytes".into()))?;
 
     // I -> R
     let eph_i_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
@@ -707,13 +733,32 @@ async fn handshake_client_inner(
     socket.write_all(&nonce_i).await?;
     socket.write_all(signing.verifying_key().as_bytes()).await?;
 
-    // R -> I
+    // R -> I：`eph_r || nonce_r || pub_r || sig_r`。pub_r 在消息 2 里（见服务端注释），
+    // 发起侧要么**核对**它（钉住过），要么**学习**它（TOFU，`None`）。
     let mut eph_r = [0u8; PUB_LEN];
     socket.read_exact(&mut eph_r).await?;
     let mut nonce_r = [0u8; NONCE_LEN];
     socket.read_exact(&mut nonce_r).await?;
+    let mut pub_r = [0u8; PUB_LEN];
+    socket.read_exact(&mut pub_r).await?;
     let mut sig_r = [0u8; SIG_LEN];
     socket.read_exact(&mut sig_r).await?;
+
+    let peer_key: [u8; PUB_LEN] = match pinned_peer_public_key {
+        Some(pinned) => {
+            let pinned: [u8; PUB_LEN] = pinned
+                .try_into()
+                .map_err(|_| LinkError::Handshake("peer key must be 32 bytes".into()))?;
+            // 钉住过的对端必须报出同一把 key：pub_r 与钉住值不一致 = 冒名，立刻断。
+            if pub_r != pinned {
+                return Err(LinkError::UntrustedPeer);
+            }
+            pinned
+        }
+        // TOFU：首连学到什么信什么（中间人防不住是 TOFU 的定义）；签名仍照常验，
+        // transcript 绑定保证了这条 key 确实握有对应私钥。
+        None => pub_r,
+    };
 
     let fp_i = trust::fingerprint(signing.verifying_key().as_bytes());
     let fp_r = trust::fingerprint(&peer_key);
@@ -880,6 +925,11 @@ async fn handshake_server_inner(
     let sig_r = signing.sign(&ts);
     socket.write_all(&eph_r).await?;
     socket.write_all(&nonce_r).await?;
+    // **消息 2 携带身份公钥**：发起侧没有钉住对端时（TOFU 首连），它没有第二条途径
+    // 拿到 pub_r —— 旧格式 `eph_r || nonce_r || sig_r` 里 sig_r 只能对着「预先钉住的
+    // key」验，这正是「手填地址、什么码都没有」被挡住的根因。多出的 32 字节对旧客户端
+    // 是干净的失败（把它读成 sig_r 的一部分，签名验证不过），两端同版发布，可接受。
+    socket.write_all(signing.verifying_key().as_bytes()).await?;
     socket.write_all(&sig_r.to_bytes()).await?;
 
     // I -> R (signature over the same transcript, proving key possession)
@@ -937,6 +987,55 @@ mod tests {
         server.send(b"clipboard: ack").await.unwrap();
         client.recv(&mut buf).await.unwrap();
         assert_eq!(buf, b"clipboard: ack");
+    }
+
+    /// TOFU：发起侧不带 pinned key，从消息 2 学到对端身份公钥并完成互信握手。
+    /// 「手填地址、什么码都没有」正是这条路（对应的监听侧形态是 `expected_peer = None`）。
+    #[tokio::test]
+    async fn tofu_connect_learns_peer_key() {
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seed_b = b.seed.clone();
+        let server = tokio::spawn(async move {
+            accept_secure(&listener, &seed_b, None).await // 监听侧同样不钉：TOFU 捕获发起方
+        });
+        let mut client = connect_secure_tofu("127.0.0.1", port, &a.seed)
+            .await
+            .expect("tofu client handshake");
+        let mut server = server.await.unwrap().expect("tofu server handshake");
+
+        // 发起方学到的是响应方的真实身份 key
+        assert_eq!(client.peer_public_key, b.public_key);
+        assert_eq!(server.peer_public_key, a.public_key);
+
+        client.send(b"tofu: hello").await.unwrap();
+        let mut buf = Vec::new();
+        server.recv(&mut buf).await.unwrap();
+        assert_eq!(buf, b"tofu: hello");
+    }
+
+    /// 钉住过的对端报出**另一把**身份 key：pub_r 与钉住值不一致必须当场断（冒名）。
+    /// 这是消息 2 携带 pub_r 换来的新校验 —— 旧格式里发起方无从发现对端换 key。
+    #[tokio::test]
+    async fn pinned_mismatch_detected_from_message2() {
+        let a = trust::generate_identity();
+        let b = trust::generate_identity();
+        let attacker = trust::generate_identity();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // 冒名者顶在服务端：它的签名对它自己的 fp 有效，但消息 2 里报出的 pub_r
+        // 与客户端钉住的 b 不一致 —— 新格式让发起方在验签前就能当场识破。
+        let seed_attacker = attacker.seed.clone();
+        let server = tokio::spawn(async move { accept_secure(&listener, &seed_attacker, None).await });
+        let client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key).await;
+        assert!(
+            matches!(client, Err(LinkError::UntrustedPeer)),
+            "对端报出的 pub_r 与钉住 key 不一致必须失败：{:?}",
+            client.map(|_| ()).map_err(|e| e.to_string()),
+        );
+        let _ = server.await;
     }
 
     /// `wait_channel_settle` must return as soon as the tracker moves, and
@@ -1238,7 +1337,7 @@ mod tests {
         let result = handshake_client_timed(
             socket,
             &a.seed,
-            &b.public_key,
+            Some(&b.public_key),
             std::time::Duration::from_millis(200),
         )
         .await;

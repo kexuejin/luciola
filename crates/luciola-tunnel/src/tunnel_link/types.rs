@@ -37,8 +37,9 @@ pub enum TunnelBase {
         addresses: Vec<String>,
         /// 消息链路 secure 端口；隧道端口默认 `secure_port + 1`。
         secure_port: u16,
-        /// 钉扎的对端 Ed25519 公钥。
-        pinned_peer_public_key: Vec<u8>,
+        /// 钉扎的对端 Ed25519 公钥；`None` = 发起侧 TOFU（从握手消息 2 学习，见
+        /// `connect_secure_tofu`）——「手填地址、什么码都没有」的配对走这一档。
+        pinned_peer_public_key: Option<Vec<u8>>,
     },
     /// 服务端（消息链路 Listen 侧）：隧道监听 `secure_port + 1`。
     Listen {

@@ -221,6 +221,8 @@ void uniffi_luciola_uniffi_fn_free_securesession(void * ptr, UniffiRustCallStatu
 );
 void * uniffi_luciola_uniffi_fn_constructor_securesession_new(RustBuffer identitySeed, UniffiRustCallStatus *_Nonnull out_status
 );
+void uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
 void uniffi_luciola_uniffi_fn_method_securesession_connect(void * ptr, RustBuffer addresses, int16_t port, RustBuffer pinnedPeerPublicKey, int8_t autoReconnect, int64_t listener, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_disable_forward_endpoint(void * ptr, UniffiRustCallStatus *_Nonnull out_status
@@ -238,6 +240,8 @@ RustBuffer uniffi_luciola_uniffi_fn_method_securesession_forward_stats(void * pt
 int8_t uniffi_luciola_uniffi_fn_method_securesession_is_connected(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 void uniffi_luciola_uniffi_fn_method_securesession_listen(void * ptr, int16_t port, RustBuffer expectedPeer, int64_t listener, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_securesession_peerpublickey(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_send(void * ptr, RustBuffer message, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -625,6 +629,9 @@ int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_start(void
 int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_stop(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_connect(void
     
 );
@@ -650,6 +657,9 @@ int16_t uniffi_luciola_uniffi_checksum_method_securesession_is_connected(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_listen(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_peerpublickey(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_send(void

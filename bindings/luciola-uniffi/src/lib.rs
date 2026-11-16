@@ -996,7 +996,7 @@ pub fn relay_hkdf_sha256(ikm: Vec<u8>, salt: Vec<u8>, info: Vec<u8>, out_len: u3
 // Secure link session exports
 // ---------------------------------------------------------------------------
 
-use luciola::link::secure::{accept_secure, connect_secure_raced};
+use luciola::link::secure::{accept_secure, connect_secure_raced, connect_secure_raced_tofu};
 use luciola_tunnel::tunnel_link::{TunnelBase, TunnelLink, TunnelReporter};
 use luciola_tunnel::{ForwardRule, TunnelError};
 use tokio::sync::mpsc;
@@ -1016,7 +1016,8 @@ pub trait SecureSessionListener: Send + Sync {
 
 #[derive(Clone)]
 enum LinkRole {
-    Dial(Vec<String>, u16, Vec<u8>, bool),
+    /// `pinned = None` → 发起侧 TOFU（学习对端公钥，`connect_secure_raced_tofu`）。
+    Dial(Vec<String>, u16, Option<Vec<u8>>, bool),
     Listen(u16, Option<Vec<u8>>),
 }
 
@@ -1091,6 +1092,16 @@ pub struct SecureSession {
     tunnel: std::sync::Arc<TunnelLink>,
     /// 最近一次 spawn 的 listener —— 隧道事件（error/retrying）转发到它。
     tunnel_listener: Mutex<Option<std::sync::Arc<dyn SecureSessionListener>>>,
+    /// 最近一次连接学到的对端身份公钥。发起侧 TOFU（`pinned = None`）时这是
+    /// **从握手里学来的**原始 key —— 调用方（如「手填地址」配对）拿它落盘钉存，
+    /// 之后才能用 pinned 模式拨号。`None` = 尚未连上过。
+    peer_public_key: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// 「只断**当前这条连接**」的信号槽。Listen 角色的关键区分：[`Self::disconnect`]
+    /// 拆的是**整条链路**（含 accept 循环与监听端口），而入站清理（陌生会话超时、
+    /// 拒绝、等批准超时）只想丢掉**这一条**连接、让 accept 循环继续接下一个 ——
+    /// 否则第一条陌生连接的清理会把宿主的监听器整个带死（真机实测：一条超期的
+    /// 配对申请让桌面从此 TCP 连不上，直到重启）。
+    drop_channel_tx: std::sync::Arc<std::sync::Mutex<Option<mpsc::Sender<()>>>>,
 }
 
 /// Retry/keepalive timings, adjustable before/after connect.
@@ -1147,6 +1158,8 @@ impl SecureSession {
             outbound_tx: Mutex::new(None),
             shutdown_tx: Mutex::new(None),
             connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            peer_public_key: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            drop_channel_tx: std::sync::Arc::new(std::sync::Mutex::new(None)),
             stats: std::sync::Arc::new(LinkStatsCounters::default()),
             timings: std::sync::Arc::new(LinkTimings::default()),
             tunnel,
@@ -1200,7 +1213,7 @@ impl SecureSession {
         self: std::sync::Arc<Self>,
         addresses: Vec<String>,
         port: u16,
-        pinned_peer_public_key: Vec<u8>,
+        pinned_peer_public_key: Option<Vec<u8>>,
         auto_reconnect: bool,
         listener: Box<dyn SecureSessionListener>,
     ) {
@@ -1220,6 +1233,23 @@ impl SecureSession {
         listener: Box<dyn SecureSessionListener>,
     ) {
         self.spawn_link(LinkRole::Listen(port, expected_peer), listener);
+    }
+
+    /// 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
+    /// **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+    pub fn peerPublicKey(&self) -> Option<Vec<u8>> {
+        self.peer_public_key.lock().unwrap().clone()
+    }
+
+    /// 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
+    ///
+    /// 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
+    /// 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
+    /// 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+    pub fn closeCurrentChannel(&self) {
+        if let Some(tx) = self.drop_channel_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
     }
 
     /// Queue an encrypted frame. False when not connected OR the outbound
@@ -1442,6 +1472,8 @@ impl SecureSession {
         let seed = self.identity_seed.clone();
         let stats = self.stats.clone();
         let timings = self.timings.clone();
+        let peer_public_key = self.peer_public_key.clone();
+        let drop_slot = self.drop_channel_tx.clone();
 
         std::thread::Builder::new()
             .name("luciola-secure-link".to_string())
@@ -1491,7 +1523,11 @@ impl SecureSession {
                         // Establish the channel.
                         let stream: SecureStream = match role.clone() {
                             LinkRole::Dial(addresses, port, pinned, auto) => {
-                                match connect_secure_raced(addresses, port, &seed, &pinned).await {
+                                let attempt = match pinned.as_deref() {
+                                    Some(k) => connect_secure_raced(addresses.clone(), port, &seed, k).await,
+                                    None => connect_secure_raced_tofu(addresses.clone(), port, &seed).await,
+                                };
+                                match attempt {
                                     Ok(s) => {
                                         backoff = min;
                                         s
@@ -1551,6 +1587,11 @@ impl SecureSession {
                         let mut stream = stream;
                         stats.connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         connected.store(true, std::sync::atomic::Ordering::SeqCst);
+                        *peer_public_key.lock().unwrap() = Some(stream.peer_public_key.clone());
+                        // 本轮连接的「只断这条」信号：closeCurrentChannel() 触发 pump
+                        // break，外循环重臂（Listen 继续接、Dial+auto 重拨）。
+                        let (drop_tx, mut drop_rx) = mpsc::channel::<()>(1);
+                        *drop_slot.lock().unwrap() = Some(drop_tx);
                         listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
 
                         // Pump both directions; keepalive pings when idle.
@@ -1580,6 +1621,12 @@ impl SecureSession {
                                 _ = &mut shutdown => {
                                     let _ = stream.shutdown().await;
                                     break 'outer;
+                                }
+                                _ = drop_rx.recv() => {
+                                    // 只断这条连接：外循环按角色重臂（accept 下一个 /
+                                    // 重拨），监听端口与 accept 循环原样保留。
+                                    let _ = stream.shutdown().await;
+                                    break;
                                 }
                                 _ = keepalive.tick() => {
                                     if awaiting_pong {
