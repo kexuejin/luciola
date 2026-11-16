@@ -25,9 +25,10 @@ primary one is cited.
 >   metadata (`io.github.kexuejin:luciola:0.11.0`), the `luciola-android` AAR,
 >   `luciola-jvm`, and the `luciola-iosarm64` / `luciola-iossimulatorarm64`
 >   klibs.
-> - **iOS — 0.11.0 published.** `LuciolaUniFFI-0.11.0.zip` (xcframework for
->   device and simulator, `luciola_uniffi.swift`, FFI headers) plus its
->   `.sha256` are release assets on tag `v0.11.0`.
+> - **iOS — 0.11.0 published.** `LuciolaUniFFI-0.11.0.zip` (33,722,527 bytes;
+>   xcframework for device and simulator plus `luciola_uniffi.swift`) with
+>   sha256 `1d75c9e8221aa0a38057dd4b8cfdd2910047acfcd4782434fbc8abf77e457f83`
+>   and its `.sha256` are release assets on tag `v0.11.0`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
@@ -53,6 +54,21 @@ the staging Worker was exercised on 2026-11-13, and production went live on
 upgrade and two-peer rendezvous layers — single-host and relay-only). The
 verification statements below describe the state at the time each was
 written; see *Verification layer and remaining limits* for the final scope.
+
+### Release verification (2026-11-16)
+
+- All seven crates answer `0.11.0` from the crates.io API, including the
+  optional `luciola-transfer` dependency that `luciola` resolves at publish
+  time.
+- Central Portal deployment `4d642df9-82df-4547-97d5-9e7085f62655` reached
+  `PUBLISHED`; repo1 metadata reports `0.11.0` as both `latest` and `release`,
+  and the root Gradle module, Android AAR, JVM jar and both iOS klibs all
+  return HTTP 200. The AAR's embedded arm64 `.so` sha256 is
+  `59be5c45efa2f715c02eac1b0923a99fc7a52c3107dbcc802e51286d25ab7656`,
+  matching the library rebuilt from this release's source.
+- The GitHub release carries both iOS assets; the downloaded zip's sha256
+  matches the published `.sha256`. `@luciola/core` still returns 404 on npm,
+  as documented.
 
 ### Added (Rust core tier)
 

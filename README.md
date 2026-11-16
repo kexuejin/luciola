@@ -87,9 +87,9 @@ luciola-tunnel = "0.11.0" # mux v2 forwarding (the tunnel section below)
 
 - **Node.js** — `@luciola/core` is not on npm; build `bindings/luciola-node` from source (see [Node.js](#nodejs--electron)).
 
-> **Released 0.11.0 (2026-11-16).** The WAN/STUN work is now published on
-> crates.io and Maven Central, with the Swift xcframework attached to tag
-> `v0.11.0`. The WAN data plane is implemented in the **Rust core**
+> **Released 0.11.0 (2026-11-16).** The WAN/STUN work is published and
+> registry-verified on crates.io and Maven Central, with the Swift xcframework
+> attached to tag `v0.11.0`. The WAN data plane is implemented in the **Rust core**
 > (`luciola::wan::connect_wan`: encrypted WSS rendezvous, UDP hole punching
 > with a reliable ordered ARQ, and an opt-in encrypted relay fallback), plus
 > progressive relay→direct migration, RFC 5780 NAT diagnostics, resumable
