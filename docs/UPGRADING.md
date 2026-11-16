@@ -3,6 +3,30 @@
 Breaking changes and behavioural shifts between published versions, from the
 consumer's point of view. For what each release added, see [CHANGELOG.md](../CHANGELOG.md).
 
+## 0.11.0
+
+1. **WAN is a new, opt-in path, not a LAN replacement.** `connect_wan` refuses
+   to touch DNS or sockets until both `allow_wan_signaling` and (for punching)
+   `allow_relay` are enabled in `RelayConfig`; the defaults are `false`. The
+   signalling Worker observes public keys, public IPs, room IDs and online
+   times, so review [SECURITY.md](../SECURITY.md) before enabling it.
+2. **The secure handshake wire format changed (breaking).** Handshake message 2
+   now carries the responder's Ed25519 identity key so an initiator can learn
+   and pin it (TOFU). A 0.10.x peer against a 0.11.x peer fails signature
+   verification rather than connecting; upgrade both ends together.
+3. **`SecureSession.connect` now takes an optional pinned key.** Passing no key
+   performs TOFU; `SecureSession.peerPublicKey()` returns the learned raw key
+   for pinning on later dials, and `closeCurrentChannel()` drops one inbound
+   connection without tearing down the listener. The uniffi, KMP, Swift and
+   Node surfaces all gained these methods, so **regenerate the bindings** —
+   an old binding paired with the 0.11.0 native library fails on the embedded
+   metadata checksum.
+4. **`SecureStream` no longer exposes `socket_mut()`.** It is replaced by
+   `shutdown()` / `remote_addr()`, and `into_split()` now splits the erased
+   transport, so the same handshake runs over TCP, the ordered UDP ARQ or the
+   signalling relay. Existing LAN TCP callers are source-compatible apart
+   from direct socket access.
+
 ## 0.10.0
 
 1. **Every public error enum is `#[non_exhaustive]`.** `ProtoError`,

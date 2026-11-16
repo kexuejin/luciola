@@ -1,6 +1,6 @@
 {
   "name": "luciola-signaling",
-  "version": "0.11.0-local.1",
+  "version": "0.11.0",
   "description": "Cloudflare Worker Durable Object signaling service for luciola WAN rendezvous",
   "main": "src/index.js",
   "type": "module",

@@ -60,7 +60,7 @@ Before shipping products that carry secrets:
 - Ephemeral X25519 secrets and HKDF output are zeroized on drop; signing keys
   zeroize via ed25519-dalek's `zeroize` feature.
 
-## WAN signalling and traversal (0.11.0-local.1, local validation only)
+## WAN signalling and traversal (0.11.0, released 2026-11-16)
 
 The 0.11.0 line adds STUN candidate discovery, a third-party rendezvous
 Worker (`deploy/cloudflare-signaling`) and a `luciola::wan::connect_wan`
@@ -178,14 +178,16 @@ the LAN-only one.
   the connection. Only the signalling WebSocket's TCP hop is proxied; STUN
   queries and UDP hole punching still use the host's own UDP path, so proxy
   support does not change the NAT-traversal threat model.
-- **No deployed service ships with this build.** `deploy/cloudflare-signaling`
-  ships source + `wrangler.toml`; a deployment is a separate, explicit step.
-  The **staging** environment was deployed to the Cloudflare runtime on
-  2026-11-13 and is the only deployed environment exercised so far;
-  **production is not deployed**. Sustained relay traffic is a billed
-  third-party path (Worker/Durable Object messages and duration); "zero idle
-  cost" covers idle hibernated WebSockets and STUN signalling, **not** bulk
-  relay throughput. There is no public TURN relay.
+- **Signalling is deployed, but it is still a third party.** Staging went live
+  on 2026-11-13; production went live on 2026-11-14 as deployment
+  `0.11.0-wan.1` (version `e6b64994-16c0-4b55-a41a-1ee086014e21`), verified by
+  `/health`, a signed `101` upgrade with a matching `x-luciola-epoch`, and
+  two-peer rendezvous from both the Rust core and Node — all single-host,
+  relay-only runs. `deploy/cloudflare-signaling` still ships source +
+  `wrangler.toml`; a deployment is a separate, explicit step. Sustained relay
+  traffic is a billed third-party path (Worker/Durable Object messages and
+  duration); "zero idle cost" covers idle hibernated WebSockets and STUN
+  signalling, **not** bulk relay throughput. There is no public TURN relay.
 - **Verification layer (AGENTS.md §12).** Proven at the unit / loopback
   layer: the full local gate on 2026-11-13 (Rust fmt / clippy / 26 test
   binaries, KMP compiles for four targets, Node build plus three test files,
@@ -218,15 +220,15 @@ the LAN-only one.
   results. Nothing was run on a physical device, and peer discovery in the
   simulator is not covered. The field
   harness now has an offline `--self-test` and a two-machine operator runbook in
-  `docs/field-test-record.md`; neither is a field run. A production deployment
-  plan in `deploy/cloudflare-signaling/README.md` and offline `--self-test` /
-  `--dry-run` in the deploy script are likewise not a deploy. What is **not**
-  proven: no real-NAT / carrier-grade-NAT field test, no production
-  deployment or test, no cross-platform WAN smoke, no physical-device ADB
-  transfer, no real-device background run on either mobile platform (Android's
-  foreground service has only been compiled and linted; iOS `BGAppRefreshTask`
-  and silent push need a signed build and a server), and no external audit.
-  Treat WAN as unvalidated on real networks until those runs happen.
+  `docs/field-test-record.md`; neither is a field run. The production deploy on
+  2026-11-14 was verified at the `/health`, signed-upgrade and two-peer
+  rendezvous layers, but remains single-host and relay-only. What is **not**
+  proven: no real-NAT / carrier-grade-NAT field test, no cross-platform WAN
+  smoke, no physical-device ADB transfer, no real-device background run on
+  either mobile platform (Android's foreground service has only been compiled
+  and linted; iOS `BGAppRefreshTask` and silent push need a signed build and a
+  server), and no external audit. Treat WAN as unvalidated on real networks
+  until those runs happen.
 
 The handshake, cipher suites, pinning defaults and secure-channel frame size
 limit are **unchanged**. The ARQ protocol, signalling frame composition,

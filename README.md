@@ -75,22 +75,21 @@ node server.js       # then open http://localhost:3000
 // Gradle — KMP (Android / JVM / iOS). Never add mavenLocal() here:
 // a stale local build silently shadows the published artifact (AGENTS.md §3).
 repositories { google(); mavenCentral() }
-implementation("io.github.kexuejin:luciola:0.10.0") // root coordinate; the android variant resolves to the luciola-android AAR (ships the arm64 .so)
+implementation("io.github.kexuejin:luciola:0.11.0") // root coordinate; the android variant resolves to the luciola-android AAR (ships the arm64 .so)
 ```
 
 ```toml
-# Rust — crates.io (all seven crates at 0.10.0)
-luciola = "0.10.0"        # engine, secure channels, trust primitives
-luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
+# Rust — crates.io (all seven crates at 0.11.0)
+luciola = "0.11.0"        # engine, secure channels, trust primitives
+luciola-tunnel = "0.11.0" # mux v2 forwarding (the tunnel section below)
 # CLI: cargo install luciola-cli
 ```
 
 - **Node.js** — `@luciola/core` is not on npm; build `bindings/luciola-node` from source (see [Node.js](#nodejs--electron)).
 
-> **Local validation build (NOT published).** `0.11.0-local.1` carries the
-> WAN/STUN work and exists **only** in `~/.m2`, produced by
-> `scripts/publish-maven-local.sh`. It is on neither Maven Central nor
-> crates.io. The WAN data plane is implemented in the **Rust core**
+> **Released 0.11.0 (2026-11-16).** The WAN/STUN work is now published on
+> crates.io and Maven Central, with the Swift xcframework attached to tag
+> `v0.11.0`. The WAN data plane is implemented in the **Rust core**
 > (`luciola::wan::connect_wan`: encrypted WSS rendezvous, UDP hole punching
 > with a reliable ordered ARQ, and an opt-in encrypted relay fallback), plus
 > progressive relay→direct migration, RFC 5780 NAT diagnostics, resumable
@@ -105,28 +104,18 @@ luciola-tunnel = "0.10.0" # mux v2 forwarding (the tunnel section below)
 > in production, or with mobile background presence. No external audit either.
 > The real-NAT matrix now has an [operator runbook](docs/field-test-record.md),
 > but no paired two-network rows exist yet. A production deployment plan lives
-> in the [signalling Worker README](deploy/cloudflare-signaling/README.md);
-> production is still **not** deployed. See the Unreleased section of
-> [CHANGELOG.md](CHANGELOG.md) and the WAN section of [SECURITY.md](SECURITY.md).
-> Only in a dedicated validation consumer, put `mavenLocal()` first and pin
-> `io.github.kexuejin:luciola:0.11.0-local.1`; the distinct version means this
-> cannot shadow the published `0.10.0` artifact. **This coordinate was
-> republished four times on 2026-11-13** (latest at 12:21, after native
-> CONNECT proxy support and the rustls provider fix) — a consumer that resolved
-> it earlier
-> must refresh with `--refresh-dependencies`, or a cached AAR silently keeps
-> the old engine. Remove the local repo and the override when validation is
-> done.
+> in the [signalling Worker README](deploy/cloudflare-signaling/README.md).
+> Production went live on 2026-11-14 as deployment `0.11.0-wan.1` (verified by
+> `/health`, a signed upgrade and two-peer rendezvous, all single-host and
+> relay-only). See the 0.11.0 section of [CHANGELOG.md](CHANGELOG.md) and the
+> WAN section of [SECURITY.md](SECURITY.md). The published coordinate is
+> `io.github.kexuejin:luciola:0.11.0`; do **not** add `mavenLocal()` to a
+> normal consumer — a stale local build can silently shadow the artifact.
 
-> **Released 0.10.0** (2026-11-05), checked against the registries rather than
-> assumed: crates.io answers `0.10.0` for all seven crates; the Maven Central
-> `0.10.0` deployment reached PUBLISHED with the root Gradle module metadata,
-> the `luciola-android` AAR, `luciola-jvm` and both iOS klibs on repo1; and
-> the iOS `LuciolaUniFFI-0.10.0.zip` xcframework (28,882,594 B, sha256
-> `3b95e3f6…cebf75`) is attached to tag `v0.10.0` with its `.sha256`. This
-> bundle carries the structured error taxonomy and the transfer CLI.
-> Breaking changes (`#[non_exhaustive]` enums, the Node discovery `error` event
-> shape, mandatory binding regeneration): [docs/UPGRADING.md](docs/UPGRADING.md).
+> **Previous release 0.10.0** (2026-11-05) carried the structured error
+> taxonomy and the transfer CLI. Breaking changes in 0.11.0 (WAN handshake,
+> TOFU-capable `SecureSession.connect`, new binding methods):
+> [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### CLI (diagnose your LAN in one command)
 

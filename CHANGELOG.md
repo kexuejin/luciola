@@ -12,60 +12,49 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Published-versus-repo version note.** The repository is at **0.11.0-local.1**,
-> a **local-only validation build** (workspace `Cargo.toml`, path-dep
-> requirements, KMP `version`, npm `version`). That version is on **no registry**:
-> it exists only in `~/.m2` via `scripts/publish-maven-local.sh` so downstream
-> products can validate the WAN API before a public release. The install
-> snippets in the README still name 0.10.0, the last verified public release;
-> do not copy `0.11.0-local.1` into a consumer that cannot see `mavenLocal()`.
-> Release state, checked 2026-11-05 against the registries rather than assumed:
+> **Release state.** The repository and all four version homes are at
+> **0.11.0** (workspace `Cargo.toml`, path-dep requirements, KMP `version`,
+> npm `version`). Release state, checked 2026-11-16 against the registries
+> rather than assumed:
 >
-> - **crates.io — 0.10.0 published and verified.** `luciola`, `luciola-ip`,
+> - **crates.io — 0.11.0 published and verified.** `luciola`, `luciola-ip`,
 >   `luciola-proto`, `luciola-net`, `luciola-transfer`, `luciola-tunnel`,
->   `luciola-cli` all answer `0.10.0` from the registry API.
-> - **Maven Central — 0.10.0 published and verified.** The deployment reached
+>   `luciola-cli` all answer `0.11.0` from the registry API.
+> - **Maven Central — 0.11.0 published and verified.** The deployment reached
 >   `PUBLISHED` on the Central Portal; repo1 serves the root Gradle module
->   metadata (`io.github.kexuejin:luciola:0.10.0`), the `luciola-android` AAR,
+>   metadata (`io.github.kexuejin:luciola:0.11.0`), the `luciola-android` AAR,
 >   `luciola-jvm`, and the `luciola-iosarm64` / `luciola-iossimulatorarm64`
 >   klibs.
-> - **iOS — 0.10.0 published.** `LuciolaUniFFI-0.10.0.zip` (28,882,594 bytes,
->   xcframework for device and simulator, `luciola_uniffi.swift`, FFI headers)
->   plus its `.sha256` (`3b95e3f6…cebf75`) are release assets on tag `v0.10.0`.
+> - **iOS — 0.11.0 published.** `LuciolaUniFFI-0.11.0.zip` (xcframework for
+>   device and simulator, `luciola_uniffi.swift`, FFI headers) plus its
+>   `.sha256` are release assets on tag `v0.11.0`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
-> A consumer that needs an engine change that is not released yet must pin the **git
-> commit**, not a version number: `{ git = "https://github.com/kexuejin/luciola", rev =
-> "<sha>" }`. Naming an unpublished version in a dependency is how a consumer repo ends
-> up with `path = "../../luciola/..."` and stops being buildable from a clean clone.
+> The `0.11.0-local.*` coordinates remain in `~/.m2` from the validation
+> cycle; they are superseded and must not be used by normal consumers. A
+> consumer that needs an engine change that is not released yet must pin the
+> **git commit**, not a version number: `{ git =
+> "https://github.com/kexuejin/luciola", rev = "<sha>" }`. Naming an
+> unpublished version in a dependency is how a consumer repo ends up with
+> `path = "../../luciola/..."` and stops being buildable from a clean clone.
 
-## [Unreleased] — 0.11.0-local.1 (local validation build, republished 2026-11-13)
+## [0.11.0] — 2026-11-16
 
-Published to **mavenLocal only** under one unchanged local coordinate. crates.io,
-Maven Central, npm, the git tag and `origin/main` are all untouched; the public
-registries remain at 0.10.0 until downstream products finish validation. The
-local artifact was **republished four times on 2026-11-13**: first after the
-WAN stability fixes, resumable transfers, USB transport and the AIMD window;
-at 11:34 after the WAN channel API reached the uniffi/Node surfaces and the
-epoch realignment, mobile background and deployed-Worker verification work
-landed; at 12:16 after native HTTP CONNECT proxy support and the rustls
-crypto-provider fix; and at 12:21, the final republish, after the unit-level
-TLS-provider regression guard. The coordinate is deliberately unchanged, so a
-consumer that resolved `0.11.0-local.1` before any of those republishes may
-still hold an older engine in its Gradle cache — refresh dependencies
-(`--refresh-dependencies`) before concluding a fix is absent from the AAR. The
-current AAR embeds an arm64 `.so` with sha256
-`ea41c96867534a2f8e062b11a4340a07109fa8f57b88570c264a47b6e357aed2`. The
-Android arm64 native library was rebuilt for this republish. The iOS
-`LuciolaUniFFI.xcframework` was subsequently rebuilt for `aarch64-apple-ios`
-and `aarch64-apple-ios-sim` with the new `ring` dependency and now links into
-`examples/ios-demo` for the arm64 simulator, and was then installed and
-launched on that simulator — the app runs with its Rust engine bound, so this
-is a simulator runtime result for launch and engine bind, not a device run. See
-*Verification layer and remaining limits*.
+Public release of the WAN line. crates.io, Maven Central, the `v0.11.0` tag and
+the iOS xcframework asset all carry this version; `@luciola/core` remains
+source-only. The earlier `0.11.0-local.*` mavenLocal coordinates were the
+validation builds, last republished on 2026-11-16 to include the TOFU
+handshake change; a consumer that resolved one of them earlier must refresh
+dependencies (`--refresh-dependencies`) before concluding a fix is absent.
+This section also records the validation cycle that preceded the public cut:
+the staging Worker was exercised on 2026-11-13, and production went live on
+2026-11-14 as deployment `0.11.0-wan.1` (verified at the `/health`, signed
+upgrade and two-peer rendezvous layers — single-host and relay-only). The
+verification statements below describe the state at the time each was
+written; see *Verification layer and remaining limits* for the final scope.
 
-### Added (Rust core tier — local validation only)
+### Added (Rust core tier)
 
 - `luciola::wan`: `connect_wan`, `WanConfig`, `WanError` and `current_epoch`.
   Encrypted WSS rendezvous, candidate exchange, UDP hole punching, a reliable
@@ -207,10 +196,20 @@ is a simulator runtime result for launch and engine bind, not a device run. See
   `/health`, a signed `101` upgrade whose `x-luciola-epoch` matches `/health`,
   and two-peer rendezvous against the production DO from both the Rust core
   (96 KiB relay loop) and the Node `wan.test.mjs` case. Still a single-host,
-  relay-only run: the real-NAT matrix remains empty and the public registries
-  stay at `0.10.0`.
+  relay-only run: the real-NAT matrix remains empty; the public registries were
+  still at `0.10.0` at the time of that deploy.
 
 ### Fixed
+
+- **Release-gate fixes in the TOFU commit.** `closeCurrentChannel()` dropped
+  the future returned by the async `mpsc::Sender::send()`, so the "drop this
+  one connection" signal was never delivered; it now uses `try_send()` on the
+  capacity-1 channel. The camelCase FFI method names carry an explicit
+  `#[allow(non_snake_case)]` so `-D warnings` stays clean, the tunnel dial loop
+  no longer double-borrows the pinned key, and the three uniffi integration
+  tests pass `Some(key)` to the new optional `connect` argument. Rustfmt and
+  the Swift bindings were regenerated from the current FFI metadata — the
+  committed Swift surface had not included the TOFU methods.
 
 - `SecureStream`'s AES-GCM strictly-increasing counter nonce is no longer
   exposed to UDP reordering: the ARQ layer delivers ordered bytes. UDP
@@ -489,8 +488,10 @@ The production deploy work was checked **offline only**, on macOS bash 3.2:
 `bash -n scripts/deploy-signaling.sh`, `--self-test` (4 assertions),
 `--dry-run --production` and `--dry-run --staging` printing the exact wrangler
 commands, `-h`, and `--check` against an unreachable loopback endpoint.
-No Cloudflare call, no deploy, no configuration change on any live service and
-no push/tag/public publish was made. Production remains undeployed.
+That offline check preceded the actual production deploy: on 2026-11-14 the
+Worker was deployed as `0.11.0-wan.1` with explicit approval and verified at
+three layers (`/health`, a signed upgrade and two-peer rendezvous from both the
+Rust core and Node), all single-host and relay-only.
 
 Earlier loopback integration tests still cover a 64 KiB encrypted relay
 transfer over a local blind-forwarding WebSocket, a real secure handshake
@@ -516,22 +517,22 @@ deployed Durable Object via `scripts/wan-proxy-tunnel.py` (edge Ed25519
 verification, pre-join buffering, 96 KiB relay transfer). The bridge recorded
 ~198 KiB to and ~199 KiB from the Worker. That run was relay-only, single-host
 and proxied because this host's `*.workers.dev` DNS is hijacked — it exercises
-the deployed signalling path, **not** hole punching or a real NAT. Production
-is not deployed.
+the deployed signalling path, **not** hole punching or a real NAT. The same
+checks were repeated against production on 2026-11-14.
 
 **Not** verified: no real-NAT / carrier-grade-NAT field test (the field harness
 has only a `local-smoke` record from this host, no paired two-network rows;
 `docs/field-test-record.md` now has an operator runbook and the harness has an
-offline `--self-test`, but neither is a run), no
-production deployment or test (the Worker README has a deployment plan and the
-deploy script has offline `--self-test` / `--dry-run`, but neither is a
-deploy), no real-device background verification on either mobile platform (Android: Doze,
+offline `--self-test`, but neither is a run), no real-NAT production test (the
+Worker was deployed and smoke-tested on 2026-11-14, but only single-host and
+relay-only), no real-device background verification on either mobile platform (Android: Doze,
 OEM battery managers, the notification permission prompt; iOS:
 `BGAppRefreshTask` scheduling and silent-push delivery, which need a signed
 build with an `aps-environment` entitlement and a server holding the APNs key),
 and no external audit of the ARQ, signalling frame composition, migration
 protocol, checkpoint format or Worker auth path. WAN remains
-unvalidated on real networks — this is why the build is mavenLocal-only.
+unvalidated on real networks; the public release carries the same caveat as
+the validation build.
 
 ## [0.10.0] — 2026-11-05
 
