@@ -509,7 +509,12 @@ mod tests {
         });
         let mut client = tokio::time::timeout(
             Duration::from_secs(10),
-            secure_handshake_client_with_remote(a_stream, b_addr, &id_a.seed, Some(&id_b.public_key)),
+            secure_handshake_client_with_remote(
+                a_stream,
+                b_addr,
+                &id_a.seed,
+                Some(&id_b.public_key),
+            ),
         )
         .await
         .expect("handshake over UDP must not hang")

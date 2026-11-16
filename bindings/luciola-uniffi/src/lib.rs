@@ -1237,6 +1237,8 @@ impl SecureSession {
 
     /// 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
     /// **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+    // The camelCase name is the FFI symbol the consumers already bind to.
+    #[allow(non_snake_case)]
     pub fn peerPublicKey(&self) -> Option<Vec<u8>> {
         self.peer_public_key.lock().unwrap().clone()
     }
@@ -1246,9 +1248,12 @@ impl SecureSession {
     /// 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
     /// 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
     /// 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+    // The camelCase name is the FFI symbol the consumers already bind to.
+    #[allow(non_snake_case)]
     pub fn closeCurrentChannel(&self) {
         if let Some(tx) = self.drop_channel_tx.lock().unwrap().take() {
-            let _ = tx.send(());
+            // `send()` is async; dropping its future would never signal the pump.
+            let _ = tx.try_send(());
         }
     }
 

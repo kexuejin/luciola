@@ -398,6 +398,11 @@ void uniffi_luciola_uniffi_fn_free_securesession(void*_Nonnull ptr, RustCallStat
 void*_Nonnull uniffi_luciola_uniffi_fn_constructor_securesession_new(RustBuffer identity_seed, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_CLOSECURRENTCHANNEL
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_CLOSECURRENTCHANNEL
+void uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_CONNECT
 void uniffi_luciola_uniffi_fn_method_securesession_connect(void*_Nonnull ptr, RustBuffer addresses, uint16_t port, RustBuffer pinned_peer_public_key, int8_t auto_reconnect, uint64_t listener, RustCallStatus *_Nonnull out_status
@@ -441,6 +446,11 @@ int8_t uniffi_luciola_uniffi_fn_method_securesession_is_connected(void*_Nonnull 
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_LISTEN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_LISTEN
 void uniffi_luciola_uniffi_fn_method_securesession_listen(void*_Nonnull ptr, uint16_t port, RustBuffer expected_peer, uint64_t listener, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_PEERPUBLICKEY
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_PEERPUBLICKEY
+RustBuffer uniffi_luciola_uniffi_fn_method_securesession_peerpublickey(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_FN_METHOD_SECURESESSION_SEND
@@ -1327,6 +1337,12 @@ uint16_t uniffi_luciola_uniffi_checksum_method_discoverysession_stop(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_CLOSECURRENTCHANNEL
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_CLOSECURRENTCHANNEL
+uint16_t uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_CONNECT
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_CONNECT
 uint16_t uniffi_luciola_uniffi_checksum_method_securesession_connect(void
@@ -1378,6 +1394,12 @@ uint16_t uniffi_luciola_uniffi_checksum_method_securesession_is_connected(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_LISTEN
 #define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_LISTEN
 uint16_t uniffi_luciola_uniffi_checksum_method_securesession_listen(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_PEERPUBLICKEY
+#define UNIFFI_FFIDEF_UNIFFI_LUCIOLA_UNIFFI_CHECKSUM_METHOD_SECURESESSION_PEERPUBLICKEY
+uint16_t uniffi_luciola_uniffi_checksum_method_securesession_peerpublickey(void
     
 );
 #endif

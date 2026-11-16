@@ -38,7 +38,7 @@ async fn listen_port_rebindable_after_stop() {
     client.clone().connect(
         vec!["127.0.0.1".to_string()],
         port,
-        server_id.public_key.clone(),
+        Some(server_id.public_key.clone()),
         false,
         Box::new(NopListener),
     );

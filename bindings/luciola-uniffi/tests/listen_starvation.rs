@@ -87,7 +87,7 @@ fn silent_foreign_client_does_not_starve_the_legitimate_peer() {
     dialer.clone().connect(
         vec!["127.0.0.1".to_string()],
         port,
-        b.public_key.clone(),
+        Some(b.public_key.clone()),
         true,
         Box::new(dial_events.clone()),
     );

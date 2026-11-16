@@ -50,7 +50,7 @@ pub(crate) async fn establish(
                                     addresses.clone(),
                                     tunnel_port,
                                     &shared.identity_seed,
-                                    &k,
+                                    k,
                                 )
                                 .await
                             }

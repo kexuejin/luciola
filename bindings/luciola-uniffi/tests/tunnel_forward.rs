@@ -147,7 +147,7 @@ fn setup_pair() -> Pair {
     dial_session.clone().connect(
         vec!["127.0.0.1".into()],
         secure_port,
-        listen_identity.public_key,
+        Some(listen_identity.public_key),
         true,
         dial_ev.box_clone(),
     );

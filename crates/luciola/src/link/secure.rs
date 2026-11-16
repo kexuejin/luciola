@@ -1028,7 +1028,8 @@ mod tests {
         // 冒名者顶在服务端：它的签名对它自己的 fp 有效，但消息 2 里报出的 pub_r
         // 与客户端钉住的 b 不一致 —— 新格式让发起方在验签前就能当场识破。
         let seed_attacker = attacker.seed.clone();
-        let server = tokio::spawn(async move { accept_secure(&listener, &seed_attacker, None).await });
+        let server =
+            tokio::spawn(async move { accept_secure(&listener, &seed_attacker, None).await });
         let client = connect_secure("127.0.0.1", port, &a.seed, &b.public_key).await;
         assert!(
             matches!(client, Err(LinkError::UntrustedPeer)),

@@ -875,13 +875,22 @@ public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) ->
 public protocol SecureSessionProtocol: AnyObject, Sendable {
     
     /**
+     * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
+     *
+     * 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
+     * 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
+     * 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+     */
+    func closeCurrentChannel() 
+    
+    /**
      * Race-dial every candidate address (Happy Eyeballs) and run the
      * authenticated handshake on the winning socket, with a PINNED peer key.
      *
      * With `auto_reconnect` the session re-dials with exponential backoff
      * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-    func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener) 
+    func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data?, autoReconnect: Bool, listener: SecureSessionListener) 
     
     /**
      * 关闭转发端点（幂等）。
@@ -932,6 +941,12 @@ public protocol SecureSessionProtocol: AnyObject, Sendable {
      * fingerprint). The listener re-arms after each channel closes.
      */
     func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListener) 
+    
+    /**
+     * 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
+     * **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+     */
+    func peerPublicKey()  -> Data?
     
     /**
      * Queue an encrypted frame. False when not connected OR the outbound
@@ -1078,17 +1093,30 @@ public convenience init(identitySeed: Data) {
 
     
     /**
+     * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
+     *
+     * 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
+     * 超时、拒绝配对、等批准超时）必须用这里 —— 用 [`Self::disconnect`] 会把监听
+     * 端口一起拆掉，宿主从此 TCP 连不上（真机实测过，见字段注释）。
+     */
+open func closeCurrentChannel()  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
      * Race-dial every candidate address (Happy Eyeballs) and run the
      * authenticated handshake on the winning socket, with a PINNED peer key.
      *
      * With `auto_reconnect` the session re-dials with exponential backoff
      * (1s..30s) whenever the channel drops, until `disconnect()`.
      */
-open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, autoReconnect: Bool, listener: SecureSessionListener)  {try! rustCall() {
+open func connect(addresses: [String], port: UInt16, pinnedPeerPublicKey: Data?, autoReconnect: Bool, listener: SecureSessionListener)  {try! rustCall() {
     uniffi_luciola_uniffi_fn_method_securesession_connect(self.uniffiClonePointer(),
         FfiConverterSequenceString.lower(addresses),
         FfiConverterUInt16.lower(port),
-        FfiConverterData.lower(pinnedPeerPublicKey),
+        FfiConverterOptionData.lower(pinnedPeerPublicKey),
         FfiConverterBool.lower(autoReconnect),
         FfiConverterCallbackInterfaceSecureSessionListener_lower(listener),$0
     )
@@ -1186,6 +1214,17 @@ open func listen(port: UInt16, expectedPeer: Data?, listener: SecureSessionListe
         FfiConverterCallbackInterfaceSecureSessionListener_lower(listener),$0
     )
 }
+}
+    
+    /**
+     * 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
+     * **学来的**：调用方必须在首次连接后取走并钉存，否则重连走不了 pinned 模式。
+     */
+open func peerPublicKey() -> Data?  {
+    return try!  FfiConverterOptionData.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securesession_peerpublickey(self.uniffiClonePointer(),$0
+    )
+})
 }
     
     /**
@@ -6144,7 +6183,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 20557) {
+    if (uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel() != 43852) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_connect() != 30869) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_disable_forward_endpoint() != 35699) {
@@ -6169,6 +6211,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_listen() != 14622) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_peerpublickey() != 47645) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_send() != 21703) {
