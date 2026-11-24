@@ -73,6 +73,13 @@ release; Maven Central is blocked by the org's monthly release-size quota.
 - Every crate was re-checked with `cargo package --allow-dirty` in isolation
   after the manifest fix; all seven published successfully, and the registry
   API was read back for each version.
+- GitHub CI on the three pushed 0.12.0 commits completed `success` (nine jobs
+  each: Rust on three OSes, MSRV, KMP Android/JVM and iOS klib, Node on two
+  OSes, Swift demo). The tag-triggered N-API prebuild was cancelled twice
+  because `macos-14` runners were retired on 2026-11-02; after switching the
+  matrix to `macos-15` in `afaccff`, a `workflow_dispatch` run on `main`
+  completed all five prebuild jobs successfully. The tag's own prebuild run
+  stays cancelled — changing it would require rewriting the public tag.
 - mavenLocal publication rebuilt the arm64 `.so` and compared its sha256 with
   the copy embedded in the published AAR (value recorded above). Compilation,
   packaging and unit/integration tests are what was proven; no real
