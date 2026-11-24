@@ -879,11 +879,53 @@ where
     .await
 }
 
+/// Same as [`secure_handshake_server_with_remote`], evaluating `allow_peer`
+/// against the initiator's 32-byte Ed25519 public key **before** signing
+/// message 2 so untrusted peers never receive a server signature or identity key.
+pub async fn secure_handshake_server_with_policy<S, F>(
+    socket: S,
+    remote: SocketAddr,
+    identity_seed: &[u8],
+    allow_peer: F,
+) -> Result<SecureStream, LinkError>
+where
+    S: ByteStream + 'static,
+    F: FnOnce(&[u8]) -> bool,
+{
+    handshake_server_inner_with_policy(
+        ErasedStream::new(socket, Some(remote)),
+        identity_seed,
+        allow_peer,
+    )
+    .await
+}
+
 async fn handshake_server_inner(
-    mut socket: ErasedStream,
+    socket: ErasedStream,
     identity_seed: &[u8],
     expected_peer_public_key: Option<&[u8]>,
 ) -> Result<SecureStream, LinkError> {
+    let pinned = expected_peer_public_key
+        .map(|k| {
+            <[u8; PUB_LEN]>::try_from(k)
+                .map_err(|_| LinkError::Handshake("peer key must be 32 bytes".into()))
+        })
+        .transpose()?;
+    handshake_server_inner_with_policy(socket, identity_seed, move |pub_i| match pinned {
+        Some(p) => p == pub_i,
+        None => true,
+    })
+    .await
+}
+
+async fn handshake_server_inner_with_policy<F>(
+    mut socket: ErasedStream,
+    identity_seed: &[u8],
+    allow_peer: F,
+) -> Result<SecureStream, LinkError>
+where
+    F: FnOnce(&[u8]) -> bool,
+{
     let signing = SigningKey::from_bytes(
         identity_seed
             .try_into()
@@ -898,25 +940,17 @@ async fn handshake_server_inner(
     let mut pub_i = [0u8; PUB_LEN];
     socket.read_exact(&mut pub_i).await?;
 
+    // Pin/policy check BEFORE signing anything: an unexpected initiator gets
+    // the connection dropped without ever learning our public key or signature.
+    if !allow_peer(&pub_i) {
+        return Err(LinkError::UntrustedPeer);
+    }
+
     // R -> I
     let eph_r_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
     let eph_r = XPublicKey::from(&eph_r_secret).as_bytes().to_vec();
     let mut nonce_r = [0u8; NONCE_LEN];
     rand::thread_rng().fill_bytes(&mut nonce_r);
-
-    // Pin check BEFORE signing anything: an unexpected initiator gets the
-    // connection dropped without ever learning our signature.
-    let pinned = expected_peer_public_key
-        .map(|k| {
-            <[u8; PUB_LEN]>::try_from(k)
-                .map_err(|_| LinkError::Handshake("peer key must be 32 bytes".into()))
-        })
-        .transpose()?;
-    if let Some(p) = pinned {
-        if p != pub_i {
-            return Err(LinkError::UntrustedPeer);
-        }
-    }
     let peer_key = pub_i;
 
     let fp_r = trust::fingerprint(signing.verifying_key().as_bytes());

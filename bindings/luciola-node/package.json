@@ -1,6 +1,6 @@
 {
   "name": "@luciola/core",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Lightweight, resilient LAN peer discovery and interface intelligence for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
@@ -8,9 +8,12 @@
     "name": "luciola"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux",
+    "win32"
   ],
   "cpu": [
+    "x64",
     "arm64"
   ],
   "engines": {
@@ -18,7 +21,7 @@
   },
   "scripts": {
     "build": "cargo build --release -p luciola-node && cp $(cargo metadata --format-version 1 --no-deps | grep -o '\"target_directory\":\"[^\"]*' | cut -d '\"' -f 4)/release/libluciola_node.dylib ./luciola.node",
-    "test": "node test.js && node test/forward.test.mjs && node test/contract.test.mjs && node --test test/wan.test.mjs",
+    "test": "node test.js && node test/forward.test.mjs && node test/contract.test.mjs && node --test test/wan.test.mjs && node --test test/transfer.test.mjs",
     "typecheck": "npx --yes -p typescript@5 tsc --noEmit --strict --skipLibCheck --target es2020 --module commonjs test/api-consumer.ts"
   },
   "files": [

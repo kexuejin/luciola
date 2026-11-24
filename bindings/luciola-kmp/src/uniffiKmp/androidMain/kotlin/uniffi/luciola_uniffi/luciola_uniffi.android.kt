@@ -889,6 +889,18 @@ internal typealias UniffiForeignFutureStructVoidUniffiByValue = UniffiForeignFut
 internal interface UniffiForeignFutureCompleteVoid: com.sun.jna.Callback {
     public fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoidUniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceHubEventListenerMethod0: com.sun.jna.Callback {
+    public fun callback(`uniffiHandle`: Long,`peer`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceHubEventListenerMethod1: com.sun.jna.Callback {
+    public fun callback(`uniffiHandle`: Long,`fingerprint`: RustBufferByValue,`remoteAddr`: RustBufferByValue,`payload`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceHubEventListenerMethod2: com.sun.jna.Callback {
+    public fun callback(`uniffiHandle`: Long,`fingerprint`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceHubEventListenerMethod3: com.sun.jna.Callback {
+    public fun callback(`uniffiHandle`: Long,`remoteAddr`: RustBufferByValue,`reason`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfaceLogSinkMethod0: com.sun.jna.Callback {
     public fun callback(`uniffiHandle`: Long,`level`: RustBufferByValue,`message`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
@@ -910,6 +922,58 @@ internal interface UniffiCallbackInterfaceSecureSessionListenerMethod0: com.sun.
 internal interface UniffiCallbackInterfaceSecureSessionListenerMethod1: com.sun.jna.Callback {
     public fun callback(`uniffiHandle`: Long,`message`: RustBufferByValue,`peerFingerprint`: RustBufferByValue,`remoteAddr`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+internal interface UniffiCallbackInterfaceTransferListenerMethod0: com.sun.jna.Callback {
+    public fun callback(`uniffiHandle`: Long,`progress`: RustBufferByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("onPeerConnected", "onMessage", "onPeerDisconnected", "onPeerRejected", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceHubEventListenerStruct(
+    @JvmField public var `onPeerConnected`: UniffiCallbackInterfaceHubEventListenerMethod0?,
+    @JvmField public var `onMessage`: UniffiCallbackInterfaceHubEventListenerMethod1?,
+    @JvmField public var `onPeerDisconnected`: UniffiCallbackInterfaceHubEventListenerMethod2?,
+    @JvmField public var `onPeerRejected`: UniffiCallbackInterfaceHubEventListenerMethod3?,
+    @JvmField public var `uniffiFree`: UniffiCallbackInterfaceFree?,
+) : com.sun.jna.Structure() {
+    internal constructor(): this(
+        
+        `onPeerConnected` = null,
+        
+        `onMessage` = null,
+        
+        `onPeerDisconnected` = null,
+        
+        `onPeerRejected` = null,
+        
+        `uniffiFree` = null,
+        
+    )
+
+    internal class UniffiByValue(
+        `onPeerConnected`: UniffiCallbackInterfaceHubEventListenerMethod0?,
+        `onMessage`: UniffiCallbackInterfaceHubEventListenerMethod1?,
+        `onPeerDisconnected`: UniffiCallbackInterfaceHubEventListenerMethod2?,
+        `onPeerRejected`: UniffiCallbackInterfaceHubEventListenerMethod3?,
+        `uniffiFree`: UniffiCallbackInterfaceFree?,
+    ): UniffiVTableCallbackInterfaceHubEventListener(`onPeerConnected`,`onMessage`,`onPeerDisconnected`,`onPeerRejected`,`uniffiFree`,), Structure.ByValue
+}
+
+internal typealias UniffiVTableCallbackInterfaceHubEventListener = UniffiVTableCallbackInterfaceHubEventListenerStruct
+
+internal fun UniffiVTableCallbackInterfaceHubEventListener.uniffiSetValue(other: UniffiVTableCallbackInterfaceHubEventListener) {
+    `onPeerConnected` = other.`onPeerConnected`
+    `onMessage` = other.`onMessage`
+    `onPeerDisconnected` = other.`onPeerDisconnected`
+    `onPeerRejected` = other.`onPeerRejected`
+    `uniffiFree` = other.`uniffiFree`
+}
+internal fun UniffiVTableCallbackInterfaceHubEventListener.uniffiSetValue(other: UniffiVTableCallbackInterfaceHubEventListenerUniffiByValue) {
+    `onPeerConnected` = other.`onPeerConnected`
+    `onMessage` = other.`onMessage`
+    `onPeerDisconnected` = other.`onPeerDisconnected`
+    `onPeerRejected` = other.`onPeerRejected`
+    `uniffiFree` = other.`uniffiFree`
+}
+
+internal typealias UniffiVTableCallbackInterfaceHubEventListenerUniffiByValue = UniffiVTableCallbackInterfaceHubEventListenerStruct.UniffiByValue
 @Structure.FieldOrder("log", "uniffiFree")
 internal open class UniffiVTableCallbackInterfaceLogSinkStruct(
     @JvmField public var `log`: UniffiCallbackInterfaceLogSinkMethod0?,
@@ -1027,6 +1091,110 @@ internal fun UniffiVTableCallbackInterfaceSecureSessionListener.uniffiSetValue(o
 }
 
 internal typealias UniffiVTableCallbackInterfaceSecureSessionListenerUniffiByValue = UniffiVTableCallbackInterfaceSecureSessionListenerStruct.UniffiByValue
+@Structure.FieldOrder("onProgress", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceTransferListenerStruct(
+    @JvmField public var `onProgress`: UniffiCallbackInterfaceTransferListenerMethod0?,
+    @JvmField public var `uniffiFree`: UniffiCallbackInterfaceFree?,
+) : com.sun.jna.Structure() {
+    internal constructor(): this(
+        
+        `onProgress` = null,
+        
+        `uniffiFree` = null,
+        
+    )
+
+    internal class UniffiByValue(
+        `onProgress`: UniffiCallbackInterfaceTransferListenerMethod0?,
+        `uniffiFree`: UniffiCallbackInterfaceFree?,
+    ): UniffiVTableCallbackInterfaceTransferListener(`onProgress`,`uniffiFree`,), Structure.ByValue
+}
+
+internal typealias UniffiVTableCallbackInterfaceTransferListener = UniffiVTableCallbackInterfaceTransferListenerStruct
+
+internal fun UniffiVTableCallbackInterfaceTransferListener.uniffiSetValue(other: UniffiVTableCallbackInterfaceTransferListener) {
+    `onProgress` = other.`onProgress`
+    `uniffiFree` = other.`uniffiFree`
+}
+internal fun UniffiVTableCallbackInterfaceTransferListener.uniffiSetValue(other: UniffiVTableCallbackInterfaceTransferListenerUniffiByValue) {
+    `onProgress` = other.`onProgress`
+    `uniffiFree` = other.`uniffiFree`
+}
+
+internal typealias UniffiVTableCallbackInterfaceTransferListenerUniffiByValue = UniffiVTableCallbackInterfaceTransferListenerStruct.UniffiByValue
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1318,6 +1486,9 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_func_connect_wan() != 30765.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_func_connect_with_policy() != 35820.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
@@ -1402,6 +1573,18 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses() != 6105.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_func_transfer_recv_lan() != 52444.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_func_transfer_recv_wan() != 50333.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_func_transfer_send_lan() != 57051.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_func_transfer_send_wan() != 33149.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_func_verify_message() != 57140.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
@@ -1433,6 +1616,36 @@ internal object IntegrityCheckingUniffiLib : Library {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_add_allowed_peer() != 50106.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_broadcast() != 35669.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_connected_peers() != 16789.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_kick() != 36514.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_local_addr() != 51642.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_local_port() != 17492.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_remove_allowed_peer() != 60786.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_send_to() != 59826.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securehub_stop() != 34084.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_securesession_attach_wan_channel() != 65072.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel() != 43852.toShort()) {
@@ -1504,6 +1717,12 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward() != 19408.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_method_transfercancelhandle_cancel() != 48631.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_transfercancelhandle_is_cancelled() != 28569.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 48483.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
@@ -1528,13 +1747,64 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown() != 26295.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_channel_type() != 15028.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_disable_forward_endpoint() != 38116.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_enable_forward_endpoint() != 21219.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_is_alive() != 25609.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_shutdown() != 44211.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_local_forward() != 25028.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_udp_forward() != 63004.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_stats() != 40911.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_local_forward() != 19788.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_udp_forward() != 16388.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_constructor_securehub_start() != 17026.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 15751.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_constructor_transfercancelhandle_new() != 59042.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
         if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 36036.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_constructor_wantunnelsession_from_wan_channel() != 43571.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_connected() != 8661.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_message() != 52361.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_disconnected() != 58039.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
+        if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_rejected() != 47150.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
         if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 26187.toShort()) {
@@ -1558,6 +1828,9 @@ internal object IntegrityCheckingUniffiLib : Library {
         if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 63088.toShort()) {
             throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
         }
+        if (uniffi_luciola_uniffi_checksum_method_transferlistener_on_progress() != 3422.toShort()) {
+            throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+        }
     }
 
     // Integrity check functions only
@@ -1578,6 +1851,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_connect_wan(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_connect_with_policy(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_default_race_candidates(
@@ -1664,6 +1940,18 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_transfer_recv_lan(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_transfer_recv_wan(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_transfer_send_lan(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_func_transfer_send_wan(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_func_verify_message(
     ): Short
     @JvmStatic
@@ -1695,6 +1983,36 @@ internal object IntegrityCheckingUniffiLib : Library {
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_discoverysession_stop(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_add_allowed_peer(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_broadcast(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_connected_peers(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_kick(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_local_addr(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_local_port(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_remove_allowed_peer(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_send_to(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securehub_stop(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_securesession_attach_wan_channel(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel(
@@ -1766,6 +2084,12 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_transfercancelhandle_cancel(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_transfercancelhandle_is_cancelled(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_truststore_entries(
     ): Short
     @JvmStatic
@@ -1790,13 +2114,64 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_channel_type(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_disable_forward_endpoint(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_enable_forward_endpoint(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_is_alive(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_shutdown(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_local_forward(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_udp_forward(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_stats(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_local_forward(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_udp_forward(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_constructor_securehub_start(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_constructor_securesession_new(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_constructor_transfercancelhandle_new(
+    ): Short
+    @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_constructor_truststore_new(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_constructor_wantunnelsession_from_wan_channel(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_connected(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_message(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_disconnected(
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_rejected(
     ): Short
     @JvmStatic
     external fun uniffi_luciola_uniffi_checksum_method_logsink_log(
@@ -1820,6 +2195,9 @@ internal object IntegrityCheckingUniffiLib : Library {
     external fun uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message(
     ): Short
     @JvmStatic
+    external fun uniffi_luciola_uniffi_checksum_method_transferlistener_on_progress(
+    ): Short
+    @JvmStatic
     external fun ffi_luciola_uniffi_uniffi_contract_version(
     ): Int
 }
@@ -1833,9 +2211,11 @@ internal object UniffiLib : Library {
         Native.register(UniffiLib::class.java, findLibraryName("luciola_uniffi"))
         // No need to check the contract version and checksums, since 
         // we already did that with `IntegrityCheckingUniffiLib` above.
+        uniffiCallbackInterfaceHubEventListener.register(this)
         uniffiCallbackInterfaceLogSink.register(this)
         uniffiCallbackInterfaceOnPeerDiscovered.register(this)
         uniffiCallbackInterfaceSecureSessionListener.register(this)
+        uniffiCallbackInterfaceTransferListener.register(this)
     }
     // The Cleaner for the whole library
     internal val CLEANER: UniffiCleaner by lazy {
@@ -1907,6 +2287,75 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_clone_securehub(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_free_securehub(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_constructor_securehub_start(
+        `port`: Short,
+        `identitySeed`: RustBufferByValue,
+        `allowedPeerPublicKeys`: RustBufferByValue,
+        `listener`: Long,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_add_allowed_peer(
+        `ptr`: Pointer?,
+        `publicKey`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_broadcast(
+        `ptr`: Pointer?,
+        `payload`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_connected_peers(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_kick(
+        `ptr`: Pointer?,
+        `fingerprint`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_local_addr(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_local_port(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_remove_allowed_peer(
+        `ptr`: Pointer?,
+        `publicKey`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_send_to(
+        `ptr`: Pointer?,
+        `fingerprint`: RustBufferByValue,
+        `payload`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securehub_stop(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_clone_securesession(
         `ptr`: Pointer?,
         uniffiCallStatus: UniffiRustCallStatus,
@@ -1921,6 +2370,13 @@ internal object UniffiLib : Library {
         `identitySeed`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_securesession_attach_wan_channel(
+        `ptr`: Pointer?,
+        `channel`: Pointer?,
+        `listener`: Long,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(
         `ptr`: Pointer?,
@@ -2068,6 +2524,30 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Byte
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_clone_transfercancelhandle(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_free_transfercancelhandle(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_constructor_transfercancelhandle_new(
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_transfercancelhandle_cancel(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_transfercancelhandle_is_cancelled(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_clone_truststore(
         `ptr`: Pointer?,
         uniffiCallStatus: UniffiRustCallStatus,
@@ -2136,6 +2616,85 @@ internal object UniffiLib : Library {
         uniffiCallStatus: UniffiRustCallStatus,
     ): Unit
     @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_clone_wantunnelsession(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_free_wantunnelsession(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_constructor_wantunnelsession_from_wan_channel(
+        `channel`: Pointer?,
+        `isInitiator`: Byte,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_channel_type(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_disable_forward_endpoint(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_enable_forward_endpoint(
+        `ptr`: Pointer?,
+        `rules`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_is_alive(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_shutdown(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_start_local_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        `host`: RustBufferByValue,
+        `port`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_start_udp_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        `host`: RustBufferByValue,
+        `port`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Short
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_stats(
+        `ptr`: Pointer?,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_local_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_udp_forward(
+        `ptr`: Pointer?,
+        `listenPort`: Short,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Byte
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_init_callback_vtable_hubeventlistener(
+        `vtable`: UniffiVTableCallbackInterfaceHubEventListener,
+    ): Unit
+    @JvmStatic
     external fun uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(
         `vtable`: UniffiVTableCallbackInterfaceLogSink,
     ): Unit
@@ -2146,6 +2705,10 @@ internal object UniffiLib : Library {
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(
         `vtable`: UniffiVTableCallbackInterfaceSecureSessionListener,
+    ): Unit
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_init_callback_vtable_transferlistener(
+        `vtable`: UniffiVTableCallbackInterfaceTransferListener,
     ): Unit
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_func_advertised_addresses(
@@ -2189,6 +2752,14 @@ internal object UniffiLib : Library {
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_func_connect_wan(
         `config`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): Pointer?
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_connect_with_policy(
+        `policy`: RustBufferByValue,
+        `lanBudgetMs`: Long,
+        `lan`: RustBufferByValue,
+        `wan`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
     ): Pointer?
     @JvmStatic
@@ -2347,6 +2918,44 @@ internal object UniffiLib : Library {
     ): RustBufferByValue
     @JvmStatic
     external fun uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_transfer_recv_lan(
+        `identitySeed`: RustBufferByValue,
+        `listenPort`: Short,
+        `acceptPeerPublicKey`: RustBufferByValue,
+        `destDir`: RustBufferByValue,
+        `listener`: RustBufferByValue,
+        `cancel`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_transfer_recv_wan(
+        `channel`: Pointer?,
+        `destDir`: RustBufferByValue,
+        `listener`: RustBufferByValue,
+        `cancel`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_transfer_send_lan(
+        `identitySeed`: RustBufferByValue,
+        `addresses`: RustBufferByValue,
+        `port`: Short,
+        `pinnedPeerPublicKey`: RustBufferByValue,
+        `filePath`: RustBufferByValue,
+        `listener`: RustBufferByValue,
+        `cancel`: RustBufferByValue,
+        uniffiCallStatus: UniffiRustCallStatus,
+    ): RustBufferByValue
+    @JvmStatic
+    external fun uniffi_luciola_uniffi_fn_func_transfer_send_wan(
+        `channel`: Pointer?,
+        `filePath`: RustBufferByValue,
+        `maxRelayBytes`: RustBufferByValue,
+        `listener`: RustBufferByValue,
+        `cancel`: RustBufferByValue,
         uniffiCallStatus: UniffiRustCallStatus,
     ): RustBufferByValue
     @JvmStatic
@@ -3207,6 +3816,300 @@ public object FfiConverterTypeDiscoverySession: FfiConverter<DiscoverySession, P
 
 
 /**
+ * Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+ *
+ * Peer keys are checked against an explicit allowlist **before** the server signs
+ * handshake message 2 (deny by default; untrusted initiators learn neither the hub's
+ * public key nor any signature).
+ */
+public actual open class SecureHub: Disposable, SecureHubInterface {
+
+    public constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    public actual constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed: kotlinx.atomicfu.AtomicBoolean = kotlinx.atomicfu.atomic(false)
+    private val callCounter: kotlinx.atomicfu.AtomicLong = kotlinx.atomicfu.atomic(1L)
+
+    private val lock = kotlinx.atomicfu.locks.ReentrantLock()
+
+    private fun <T> synchronized(block: () -> T): T {
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    actual override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    actual override fun close() {
+        synchronized { this.destroy() }
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.value
+            if (c == 0L) {
+                throw IllegalStateException("${this::class::simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this::class::simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiPointerDestroyer(private val pointer: Pointer?) : Disposable {
+        override fun destroy() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.uniffi_luciola_uniffi_fn_free_securehub(ptr, status)
+                }
+            }
+        }
+    }
+
+    public fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall { status ->
+            UniffiLib.uniffi_luciola_uniffi_fn_clone_securehub(pointer!!, status)
+        }!!
+    }
+
+    
+    /**
+     * Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+     * Returns `true` if newly added, `false` if already present.
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `addAllowedPeer`(`publicKey`: kotlin.ByteArray): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_add_allowed_peer(
+                    it,
+                    FfiConverterByteArray.lower(`publicKey`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Broadcast an encrypted frame to every connected peer.
+     * Returns fingerprints whose outbound queue rejected the frame.
+     */
+    public actual override fun `broadcast`(`payload`: kotlin.ByteArray): List<kotlin.String> {
+        return FfiConverterSequenceString.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_broadcast(
+                    it,
+                    FfiConverterByteArray.lower(`payload`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Snapshot of currently connected peers.
+     */
+    public actual override fun `connectedPeers`(): List<HubPeerInfoDto> {
+        return FfiConverterSequenceTypeHubPeerInfoDto.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_connected_peers(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Disconnect one connected peer by fingerprint and emit `on_peer_disconnected`.
+     */
+    public actual override fun `kick`(`fingerprint`: kotlin.String): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_kick(
+                    it,
+                    FfiConverterString.lower(`fingerprint`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Actual listening socket address (`ip:port`).
+     */
+    public actual override fun `localAddr`(): kotlin.String {
+        return FfiConverterString.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_local_addr(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Actual listening TCP port (useful when started with `port == 0`).
+     */
+    public actual override fun `localPort`(): kotlin.UShort {
+        return FfiConverterUShort.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_local_port(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+     * Does not disconnect an already-connected session; call [`Self::kick`] to drop an active peer.
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `removeAllowedPeer`(`publicKey`: kotlin.ByteArray): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_remove_allowed_peer(
+                    it,
+                    FfiConverterByteArray.lower(`publicKey`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+     */
+    public actual override fun `sendTo`(`fingerprint`: kotlin.String, `payload`: kotlin.ByteArray): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_send_to(
+                    it,
+                    FfiConverterString.lower(`fingerprint`),
+                    FfiConverterByteArray.lower(`payload`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Stop accepting new peers and disconnect every active peer. Idempotent.
+     */
+    public actual override fun `stop`() {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securehub_stop(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+
+    
+    public actual companion object {
+        
+        /**
+         * Bind `port` (`0` = OS ephemeral) and start accepting concurrent peers.
+         *
+         * `allowed_peer_public_keys` seeds the pre-sign allowlist (each entry must be 32 bytes;
+         * an empty list starts in deny-all mode until [`Self::add_allowed_peer`] is called).
+         */
+        @Throws(WanFfiException::class)
+        public actual fun `start`(`port`: kotlin.UShort, `identitySeed`: kotlin.ByteArray, `allowedPeerPublicKeys`: List<kotlin.ByteArray>, `listener`: HubEventListener): SecureHub {
+            return FfiConverterTypeSecureHub.lift(uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_constructor_securehub_start(
+                    FfiConverterUShort.lower(`port`),
+                    FfiConverterByteArray.lower(`identitySeed`),
+                    FfiConverterSequenceByteArray.lower(`allowedPeerPublicKeys`),
+                    FfiConverterTypeHubEventListener.lower(`listener`),
+                    uniffiRustCallStatus,
+                )
+            }!!)
+        }
+
+        
+    }
+    
+}
+
+
+
+
+
+public object FfiConverterTypeSecureHub: FfiConverter<SecureHub, Pointer> {
+
+    override fun lower(value: SecureHub): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): SecureHub {
+        return SecureHub(value)
+    }
+
+    override fun read(buf: ByteBuffer): SecureHub {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(buf.getLong().toPointer())
+    }
+
+    override fun allocationSize(value: SecureHub): ULong = 8UL
+
+    override fun write(value: SecureHub, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(lower(value).toLong())
+    }
+}
+
+
+
+/**
  * One authenticated encrypted channel (see `luciola::link::secure`).
  * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
  * received frames are decrypted and delivered through the listener.
@@ -3313,6 +4216,29 @@ public actual open class SecureSession: Disposable, SecureSessionInterface {
     }
 
     
+    /**
+     * Take ownership of an established [`WanChannel`] and drive its
+     * authenticated [`luciola::link::secure::SecureStream`] through this
+     * session's existing `send` / `on_message` / `stats` / `disconnect` surface.
+     *
+     * Stops any prior LAN link and pauses the LAN dual-port tunnel (`TunnelLink`).
+     * WAN sessions do not auto-reconnect (see `docs/DECISIONS.md`); on drop,
+     * `on_state("closed", None)` is emitted and the caller decides whether to redial.
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `attachWanChannel`(`channel`: WanChannel, `listener`: SecureSessionListener) {
+        callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_securesession_attach_wan_channel(
+                    it,
+                    FfiConverterTypeWanChannel.lower(`channel`),
+                    FfiConverterTypeSecureSessionListener.lower(`listener`),
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
     /**
      * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
      *
@@ -3739,6 +4665,176 @@ public object FfiConverterTypeSecureSession: FfiConverter<SecureSession, Pointer
 
 
 /**
+ * Cooperative cancellation handle shared with any `transfer_*` call.
+ */
+public actual open class TransferCancelHandle: Disposable, TransferCancelHandleInterface {
+
+    public constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    public actual constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
+    }
+    /**
+     * Create a fresh non-cancelled handle.
+     */
+    public actual constructor() : this(
+        uniffiRustCall { uniffiRustCallStatus ->
+            UniffiLib.uniffi_luciola_uniffi_fn_constructor_transfercancelhandle_new(
+                uniffiRustCallStatus,
+            )
+        }!!
+    )
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed: kotlinx.atomicfu.AtomicBoolean = kotlinx.atomicfu.atomic(false)
+    private val callCounter: kotlinx.atomicfu.AtomicLong = kotlinx.atomicfu.atomic(1L)
+
+    private val lock = kotlinx.atomicfu.locks.ReentrantLock()
+
+    private fun <T> synchronized(block: () -> T): T {
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    actual override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    actual override fun close() {
+        synchronized { this.destroy() }
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.value
+            if (c == 0L) {
+                throw IllegalStateException("${this::class::simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this::class::simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiPointerDestroyer(private val pointer: Pointer?) : Disposable {
+        override fun destroy() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.uniffi_luciola_uniffi_fn_free_transfercancelhandle(ptr, status)
+                }
+            }
+        }
+    }
+
+    public fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall { status ->
+            UniffiLib.uniffi_luciola_uniffi_fn_clone_transfercancelhandle(pointer!!, status)
+        }!!
+    }
+
+    
+    /**
+     * Signal cancellation to any transfer observing this handle.
+     */
+    public actual override fun `cancel`() {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_transfercancelhandle_cancel(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
+     * Whether [`Self::cancel`] has been called.
+     */
+    public actual override fun `isCancelled`(): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_transfercancelhandle_is_cancelled(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+
+    
+    
+    public actual companion object
+    
+}
+
+
+
+
+
+public object FfiConverterTypeTransferCancelHandle: FfiConverter<TransferCancelHandle, Pointer> {
+
+    override fun lower(value: TransferCancelHandle): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): TransferCancelHandle {
+        return TransferCancelHandle(value)
+    }
+
+    override fun read(buf: ByteBuffer): TransferCancelHandle {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(buf.getLong().toPointer())
+    }
+
+    override fun allocationSize(value: TransferCancelHandle): ULong = 8UL
+
+    override fun write(value: TransferCancelHandle, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(lower(value).toLong())
+    }
+}
+
+
+
+/**
  * Persisted trust list. Serialize with [TrustStore::to_json] and store the
  * bytes in the product's secret storage; unpaired peers are simply absent
  * (default posture: deny).
@@ -4139,6 +5235,308 @@ public object FfiConverterTypeWanChannel: FfiConverter<WanChannel, Pointer> {
 
 
 
+/**
+ * Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+ * Does not alter the LAN dual-port `SecureSession` tunnel contract.
+ */
+public actual open class WanTunnelSession: Disposable, WanTunnelSessionInterface {
+
+    public constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    public actual constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiPointerDestroyer(null))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed: kotlinx.atomicfu.AtomicBoolean = kotlinx.atomicfu.atomic(false)
+    private val callCounter: kotlinx.atomicfu.AtomicLong = kotlinx.atomicfu.atomic(1L)
+
+    private val lock = kotlinx.atomicfu.locks.ReentrantLock()
+
+    private fun <T> synchronized(block: () -> T): T {
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    actual override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    actual override fun close() {
+        synchronized { this.destroy() }
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.value
+            if (c == 0L) {
+                throw IllegalStateException("${this::class::simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this::class::simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiPointerDestroyer(private val pointer: Pointer?) : Disposable {
+        override fun destroy() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.uniffi_luciola_uniffi_fn_free_wantunnelsession(ptr, status)
+                }
+            }
+        }
+    }
+
+    public fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall { status ->
+            UniffiLib.uniffi_luciola_uniffi_fn_clone_wantunnelsession(pointer!!, status)
+        }!!
+    }
+
+    
+    /**
+     * Transport plane of the underlying channel.
+     */
+    public actual override fun `channelType`(): WanChannelKind {
+        return FfiConverterTypeWanChannelKind.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_channel_type(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Disable the inbound ACL forward endpoint.
+     */
+    public actual override fun `disableForwardEndpoint`() {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_disable_forward_endpoint(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
+     * Enable or replace the inbound ACL forward endpoint (`--allow`).
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>) {
+        callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_enable_forward_endpoint(
+                    it,
+                    FfiConverterSequenceTypeForwardRuleDto.lower(`rules`),
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
+     * Whether the underlying mux session is still alive.
+     */
+    public actual override fun `isAlive`(): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_is_alive(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Stop all forwards and shut down the tunnel. Idempotent.
+     */
+    public actual override fun `shutdown`() {
+        callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_shutdown(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        }
+    }
+
+    /**
+     * Start a local TCP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     * Returns the actual bound local port (helpful when `listen_port == 0`).
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.UShort {
+        return FfiConverterUShort.lift(callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_start_local_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    FfiConverterString.lower(`host`),
+                    FfiConverterUShort.lower(`port`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Start a local UDP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     */
+    @Throws(WanFfiException::class)
+    public actual override fun `startUdpForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.UShort {
+        return FfiConverterUShort.lift(callWithPointer {
+            uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_start_udp_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    FfiConverterString.lower(`host`),
+                    FfiConverterUShort.lower(`port`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Snapshot active forward stats.
+     */
+    public actual override fun `stats`(): List<ForwardStatusDto> {
+        return FfiConverterSequenceTypeForwardStatusDto.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_stats(
+                    it,
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Stop a local TCP forward on `listen_port`.
+     */
+    public actual override fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_local_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+    /**
+     * Stop a local UDP forward on `listen_port`.
+     */
+    public actual override fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean {
+        return FfiConverterBoolean.lift(callWithPointer {
+            uniffiRustCall { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_udp_forward(
+                    it,
+                    FfiConverterUShort.lower(`listenPort`),
+                    uniffiRustCallStatus,
+                )
+            }
+        })
+    }
+
+
+    
+    public actual companion object {
+        
+        /**
+         * Consume `channel` and start a [`luciola_tunnel::DirectTunnelSession`] on `wan_runtime()`.
+         */
+        @Throws(WanFfiException::class)
+        public actual fun `fromWanChannel`(`channel`: WanChannel, `isInitiator`: kotlin.Boolean): WanTunnelSession {
+            return FfiConverterTypeWanTunnelSession.lift(uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+                UniffiLib.uniffi_luciola_uniffi_fn_constructor_wantunnelsession_from_wan_channel(
+                    FfiConverterTypeWanChannel.lower(`channel`),
+                    FfiConverterBoolean.lower(`isInitiator`),
+                    uniffiRustCallStatus,
+                )
+            }!!)
+        }
+
+        
+    }
+    
+}
+
+
+
+
+
+public object FfiConverterTypeWanTunnelSession: FfiConverter<WanTunnelSession, Pointer> {
+
+    override fun lower(value: WanTunnelSession): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): WanTunnelSession {
+        return WanTunnelSession(value)
+    }
+
+    override fun read(buf: ByteBuffer): WanTunnelSession {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(buf.getLong().toPointer())
+    }
+
+    override fun allocationSize(value: WanTunnelSession): ULong = 8UL
+
+    override fun write(value: WanTunnelSession, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(lower(value).toLong())
+    }
+}
+
+
+
 
 public object FfiConverterTypeDeviceIdentityInfo: FfiConverterRustBuffer<DeviceIdentityInfo> {
     override fun read(buf: ByteBuffer): DeviceIdentityInfo {
@@ -4360,6 +5758,59 @@ public object FfiConverterTypeForwardStatusDto: FfiConverterRustBuffer<ForwardSt
 
 
 
+public object FfiConverterTypeHubPeerInfoDto: FfiConverterRustBuffer<HubPeerInfoDto> {
+    override fun read(buf: ByteBuffer): HubPeerInfoDto {
+        return HubPeerInfoDto(
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: HubPeerInfoDto): ULong = (
+            FfiConverterString.allocationSize(value.`fingerprint`) +
+            FfiConverterByteArray.allocationSize(value.`publicKey`) +
+            FfiConverterString.allocationSize(value.`remoteAddr`)
+    )
+
+    override fun write(value: HubPeerInfoDto, buf: ByteBuffer) {
+        FfiConverterString.write(value.`fingerprint`, buf)
+        FfiConverterByteArray.write(value.`publicKey`, buf)
+        FfiConverterString.write(value.`remoteAddr`, buf)
+    }
+}
+
+
+
+
+public object FfiConverterTypeLanDialConfigDto: FfiConverterRustBuffer<LanDialConfigDto> {
+    override fun read(buf: ByteBuffer): LanDialConfigDto {
+        return LanDialConfigDto(
+            FfiConverterSequenceString.read(buf),
+            FfiConverterUShort.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LanDialConfigDto): ULong = (
+            FfiConverterSequenceString.allocationSize(value.`addresses`) +
+            FfiConverterUShort.allocationSize(value.`port`) +
+            FfiConverterByteArray.allocationSize(value.`identitySeed`) +
+            FfiConverterByteArray.allocationSize(value.`peerPublicKey`)
+    )
+
+    override fun write(value: LanDialConfigDto, buf: ByteBuffer) {
+        FfiConverterSequenceString.write(value.`addresses`, buf)
+        FfiConverterUShort.write(value.`port`, buf)
+        FfiConverterByteArray.write(value.`identitySeed`, buf)
+        FfiConverterByteArray.write(value.`peerPublicKey`, buf)
+    }
+}
+
+
+
+
 public object FfiConverterTypeLinkStats: FfiConverterRustBuffer<LinkStats> {
     override fun read(buf: ByteBuffer): LinkStats {
         return LinkStats(
@@ -4519,6 +5970,71 @@ public object FfiConverterTypeRelaySessionKeys: FfiConverterRustBuffer<RelaySess
     override fun write(value: RelaySessionKeys, buf: ByteBuffer) {
         FfiConverterByteArray.write(value.`sendKey`, buf)
         FfiConverterByteArray.write(value.`recvKey`, buf)
+    }
+}
+
+
+
+
+public object FfiConverterTypeTransferProgressDto: FfiConverterRustBuffer<TransferProgressDto> {
+    override fun read(buf: ByteBuffer): TransferProgressDto {
+        return TransferProgressDto(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterTypeWanChannelKind.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TransferProgressDto): ULong = (
+            FfiConverterString.allocationSize(value.`transferId`) +
+            FfiConverterULong.allocationSize(value.`bytesDone`) +
+            FfiConverterULong.allocationSize(value.`totalBytes`) +
+            FfiConverterTypeWanChannelKind.allocationSize(value.`channelType`) +
+            FfiConverterBoolean.allocationSize(value.`resumed`)
+    )
+
+    override fun write(value: TransferProgressDto, buf: ByteBuffer) {
+        FfiConverterString.write(value.`transferId`, buf)
+        FfiConverterULong.write(value.`bytesDone`, buf)
+        FfiConverterULong.write(value.`totalBytes`, buf)
+        FfiConverterTypeWanChannelKind.write(value.`channelType`, buf)
+        FfiConverterBoolean.write(value.`resumed`, buf)
+    }
+}
+
+
+
+
+public object FfiConverterTypeTransferReceiptDto: FfiConverterRustBuffer<TransferReceiptDto> {
+    override fun read(buf: ByteBuffer): TransferReceiptDto {
+        return TransferReceiptDto(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterTypeWanChannelKind.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TransferReceiptDto): ULong = (
+            FfiConverterString.allocationSize(value.`transferId`) +
+            FfiConverterString.allocationSize(value.`fileName`) +
+            FfiConverterULong.allocationSize(value.`totalBytes`) +
+            FfiConverterString.allocationSize(value.`sha256Hex`) +
+            FfiConverterOptionalString.allocationSize(value.`savedPath`) +
+            FfiConverterTypeWanChannelKind.allocationSize(value.`channelType`)
+    )
+
+    override fun write(value: TransferReceiptDto, buf: ByteBuffer) {
+        FfiConverterString.write(value.`transferId`, buf)
+        FfiConverterString.write(value.`fileName`, buf)
+        FfiConverterULong.write(value.`totalBytes`, buf)
+        FfiConverterString.write(value.`sha256Hex`, buf)
+        FfiConverterOptionalString.write(value.`savedPath`, buf)
+        FfiConverterTypeWanChannelKind.write(value.`channelType`, buf)
     }
 }
 
@@ -4740,6 +6256,97 @@ public object FfiConverterTypeRelayCryptoError : FfiConverterRustBuffer<RelayCry
 
 
 
+public object FfiConverterTypeRoutePolicyKind: FfiConverterRustBuffer<RoutePolicyKind> {
+    override fun read(buf: ByteBuffer): RoutePolicyKind = try {
+        RoutePolicyKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RoutePolicyKind): ULong = 4UL
+
+    override fun write(value: RoutePolicyKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+public object TransferFfiExceptionErrorHandler : UniffiRustCallStatusErrorHandler<TransferFfiException> {
+    override fun lift(errorBuf: RustBufferByValue): TransferFfiException = FfiConverterTypeTransferFfiError.lift(errorBuf)
+}
+
+public object FfiConverterTypeTransferFfiError : FfiConverterRustBuffer<TransferFfiException> {
+    override fun read(buf: ByteBuffer): TransferFfiException {
+        return when (buf.getInt()) {
+            1 -> TransferFfiException.InvalidConfig(
+                FfiConverterString.read(buf),
+                )
+            2 -> TransferFfiException.QuotaExceeded(
+                FfiConverterString.read(buf),
+                )
+            3 -> TransferFfiException.Cancelled()
+            4 -> TransferFfiException.TransferFailed(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: TransferFfiException): ULong {
+        return when (value) {
+            is TransferFfiException.InvalidConfig -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is TransferFfiException.QuotaExceeded -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+            is TransferFfiException.Cancelled -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is TransferFfiException.TransferFailed -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: TransferFfiException, buf: ByteBuffer) {
+        when (value) {
+            is TransferFfiException.InvalidConfig -> {
+                buf.putInt(1)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is TransferFfiException.QuotaExceeded -> {
+                buf.putInt(2)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is TransferFfiException.Cancelled -> {
+                buf.putInt(3)
+                Unit
+            }
+            is TransferFfiException.TransferFailed -> {
+                buf.putInt(4)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
 public object FfiConverterTypeTrustLevel: FfiConverterRustBuffer<TrustLevel> {
     override fun read(buf: ByteBuffer): TrustLevel = try {
         TrustLevel.values()[buf.getInt() - 1]
@@ -4874,6 +6481,124 @@ public object FfiConverterTypeWanFfiError : FfiConverterRustBuffer<WanFfiExcepti
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 }
+
+
+
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceHubEventListener {
+    internal object `onPeerConnected`: UniffiCallbackInterfaceHubEventListenerMethod0 {
+        override fun callback (
+            `uniffiHandle`: Long,
+            `peer`: RustBufferByValue,
+            `uniffiOutReturn`: Pointer,
+            uniffiCallStatus: UniffiRustCallStatus,
+        ) {
+            val uniffiObj = FfiConverterTypeHubEventListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPeerConnected`(
+                    FfiConverterTypeHubPeerInfoDto.lift(`peer`),
+                )
+            }
+            val writeReturn = { _: Unit ->
+                @Suppress("UNUSED_EXPRESSION")
+                uniffiOutReturn
+                Unit
+            }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onMessage`: UniffiCallbackInterfaceHubEventListenerMethod1 {
+        override fun callback (
+            `uniffiHandle`: Long,
+            `fingerprint`: RustBufferByValue,
+            `remoteAddr`: RustBufferByValue,
+            `payload`: RustBufferByValue,
+            `uniffiOutReturn`: Pointer,
+            uniffiCallStatus: UniffiRustCallStatus,
+        ) {
+            val uniffiObj = FfiConverterTypeHubEventListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onMessage`(
+                    FfiConverterString.lift(`fingerprint`),
+                    FfiConverterString.lift(`remoteAddr`),
+                    FfiConverterByteArray.lift(`payload`),
+                )
+            }
+            val writeReturn = { _: Unit ->
+                @Suppress("UNUSED_EXPRESSION")
+                uniffiOutReturn
+                Unit
+            }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onPeerDisconnected`: UniffiCallbackInterfaceHubEventListenerMethod2 {
+        override fun callback (
+            `uniffiHandle`: Long,
+            `fingerprint`: RustBufferByValue,
+            `uniffiOutReturn`: Pointer,
+            uniffiCallStatus: UniffiRustCallStatus,
+        ) {
+            val uniffiObj = FfiConverterTypeHubEventListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPeerDisconnected`(
+                    FfiConverterString.lift(`fingerprint`),
+                )
+            }
+            val writeReturn = { _: Unit ->
+                @Suppress("UNUSED_EXPRESSION")
+                uniffiOutReturn
+                Unit
+            }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onPeerRejected`: UniffiCallbackInterfaceHubEventListenerMethod3 {
+        override fun callback (
+            `uniffiHandle`: Long,
+            `remoteAddr`: RustBufferByValue,
+            `reason`: RustBufferByValue,
+            `uniffiOutReturn`: Pointer,
+            uniffiCallStatus: UniffiRustCallStatus,
+        ) {
+            val uniffiObj = FfiConverterTypeHubEventListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPeerRejected`(
+                    FfiConverterString.lift(`remoteAddr`),
+                    FfiConverterString.lift(`reason`),
+                )
+            }
+            val writeReturn = { _: Unit ->
+                @Suppress("UNUSED_EXPRESSION")
+                uniffiOutReturn
+                Unit
+            }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeHubEventListener.handleMap.remove(handle)
+        }
+    }
+
+    internal val vtable = UniffiVTableCallbackInterfaceHubEventListener(
+        `onPeerConnected`,
+        `onMessage`,
+        `onPeerDisconnected`,
+        `onPeerRejected`,
+        uniffiFree,
+    )
+
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_luciola_uniffi_fn_init_callback_vtable_hubeventlistener(vtable)
+    }
+}
+
+public object FfiConverterTypeHubEventListener : FfiConverterCallbackInterface<HubEventListener>()
 
 
 
@@ -5114,6 +6839,52 @@ public object FfiConverterTypeSecureSessionListener : FfiConverterCallbackInterf
 
 
 
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceTransferListener {
+    internal object `onProgress`: UniffiCallbackInterfaceTransferListenerMethod0 {
+        override fun callback (
+            `uniffiHandle`: Long,
+            `progress`: RustBufferByValue,
+            `uniffiOutReturn`: Pointer,
+            uniffiCallStatus: UniffiRustCallStatus,
+        ) {
+            val uniffiObj = FfiConverterTypeTransferListener.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterTypeTransferProgressDto.lift(`progress`),
+                )
+            }
+            val writeReturn = { _: Unit ->
+                @Suppress("UNUSED_EXPRESSION")
+                uniffiOutReturn
+                Unit
+            }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeTransferListener.handleMap.remove(handle)
+        }
+    }
+
+    internal val vtable = UniffiVTableCallbackInterfaceTransferListener(
+        `onProgress`,
+        uniffiFree,
+    )
+
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_luciola_uniffi_fn_init_callback_vtable_transferlistener(vtable)
+    }
+}
+
+public object FfiConverterTypeTransferListener : FfiConverterCallbackInterface<TransferListener>()
+
+
+
+
 public object FfiConverterOptionalUShort: FfiConverterRustBuffer<kotlin.UShort?> {
     override fun read(buf: ByteBuffer): kotlin.UShort? {
         if (buf.get().toInt() == 0) {
@@ -5259,6 +7030,35 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
 
 
 
+public object FfiConverterOptionalTypeTransferCancelHandle: FfiConverterRustBuffer<TransferCancelHandle?> {
+    override fun read(buf: ByteBuffer): TransferCancelHandle? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeTransferCancelHandle.read(buf)
+    }
+
+    override fun allocationSize(value: TransferCancelHandle?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeTransferCancelHandle.allocationSize(value)
+        }
+    }
+
+    override fun write(value: TransferCancelHandle?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeTransferCancelHandle.write(value, buf)
+        }
+    }
+}
+
+
+
+
 public object FfiConverterOptionalTypeDeviceMeta: FfiConverterRustBuffer<DeviceMeta?> {
     override fun read(buf: ByteBuffer): DeviceMeta? {
         if (buf.get().toInt() == 0) {
@@ -5288,6 +7088,35 @@ public object FfiConverterOptionalTypeDeviceMeta: FfiConverterRustBuffer<DeviceM
 
 
 
+public object FfiConverterOptionalTypeLanDialConfigDto: FfiConverterRustBuffer<LanDialConfigDto?> {
+    override fun read(buf: ByteBuffer): LanDialConfigDto? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeLanDialConfigDto.read(buf)
+    }
+
+    override fun allocationSize(value: LanDialConfigDto?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeLanDialConfigDto.allocationSize(value)
+        }
+    }
+
+    override fun write(value: LanDialConfigDto?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeLanDialConfigDto.write(value, buf)
+        }
+    }
+}
+
+
+
+
 public object FfiConverterOptionalTypePairingInfo: FfiConverterRustBuffer<PairingInfo?> {
     override fun read(buf: ByteBuffer): PairingInfo? {
         if (buf.get().toInt() == 0) {
@@ -5310,6 +7139,35 @@ public object FfiConverterOptionalTypePairingInfo: FfiConverterRustBuffer<Pairin
         } else {
             buf.put(1)
             FfiConverterTypePairingInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalTypeWanConfig: FfiConverterRustBuffer<WanConfig?> {
+    override fun read(buf: ByteBuffer): WanConfig? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeWanConfig.read(buf)
+    }
+
+    override fun allocationSize(value: WanConfig?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeWanConfig.allocationSize(value)
+        }
+    }
+
+    override fun write(value: WanConfig?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeWanConfig.write(value, buf)
         }
     }
 }
@@ -5368,6 +7226,35 @@ public object FfiConverterOptionalTypeLogSink: FfiConverterRustBuffer<LogSink?> 
         } else {
             buf.put(1)
             FfiConverterTypeLogSink.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalTypeTransferListener: FfiConverterRustBuffer<TransferListener?> {
+    override fun read(buf: ByteBuffer): TransferListener? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeTransferListener.read(buf)
+    }
+
+    override fun allocationSize(value: TransferListener?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeTransferListener.allocationSize(value)
+        }
+    }
+
+    override fun write(value: TransferListener?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeTransferListener.write(value, buf)
         }
     }
 }
@@ -5458,6 +7345,31 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 
 
 
+public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.ByteArray>> {
+    override fun read(buf: ByteBuffer): List<kotlin.ByteArray> {
+        val len = buf.getInt()
+        return List<kotlin.ByteArray>(len) {
+            FfiConverterByteArray.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.ByteArray>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.sumOf { FfiConverterByteArray.allocationSize(it) }
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.ByteArray>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterByteArray.write(it, buf)
+        }
+    }
+}
+
+
+
+
 public object FfiConverterSequenceTypeDialChannel: FfiConverterRustBuffer<List<DialChannel>> {
     override fun read(buf: ByteBuffer): List<DialChannel> {
         val len = buf.getInt()
@@ -5526,6 +7438,31 @@ public object FfiConverterSequenceTypeForwardStatusDto: FfiConverterRustBuffer<L
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeForwardStatusDto.write(it, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterSequenceTypeHubPeerInfoDto: FfiConverterRustBuffer<List<HubPeerInfoDto>> {
+    override fun read(buf: ByteBuffer): List<HubPeerInfoDto> {
+        val len = buf.getInt()
+        return List<HubPeerInfoDto>(len) {
+            FfiConverterTypeHubPeerInfoDto.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<HubPeerInfoDto>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.sumOf { FfiConverterTypeHubPeerInfoDto.allocationSize(it) }
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<HubPeerInfoDto>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeHubPeerInfoDto.write(it, buf)
         }
     }
 }
@@ -5675,6 +7612,26 @@ public actual fun `connectWan`(`config`: WanConfig): WanChannel {
     return FfiConverterTypeWanChannel.lift(uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_connect_wan(
             FfiConverterTypeWanConfig.lower(`config`),
+            uniffiRustCallStatus,
+        )
+    }!!)
+}
+
+/**
+ * Establish an authenticated channel according to `policy` (`LanOnly`, `LanThenWan`, or `WanOnly`).
+ *
+ * When `policy` is [`RoutePolicyKind::LanThenWan`], `lan_budget_ms == 0` uses a 1500 ms default
+ * budget. The returned [`WanChannel`] always reports the honest transport plane (`LanDirect`,
+ * `HolePunchedDirect`, or `RelayForwarded`). Call from a worker thread, never from the UI thread.
+ */
+@Throws(WanFfiException::class)
+public actual fun `connectWithPolicy`(`policy`: RoutePolicyKind, `lanBudgetMs`: kotlin.ULong, `lan`: LanDialConfigDto?, `wan`: WanConfig?): WanChannel {
+    return FfiConverterTypeWanChannel.lift(uniffiRustCallWithError(WanFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_connect_with_policy(
+            FfiConverterTypeRoutePolicyKind.lower(`policy`),
+            FfiConverterULong.lower(`lanBudgetMs`),
+            FfiConverterOptionalTypeLanDialConfigDto.lower(`lan`),
+            FfiConverterOptionalTypeWanConfig.lower(`wan`),
             uniffiRustCallStatus,
         )
     }!!)
@@ -6043,6 +8000,78 @@ public actual fun `signMessage`(`seed`: kotlin.ByteArray, `message`: kotlin.Byte
 public actual fun `subnetBroadcastAddresses`(): List<kotlin.String> {
     return FfiConverterSequenceString.lift(uniffiRustCall { uniffiRustCallStatus ->
         UniffiLib.uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Accept one pin-verified LAN file transfer into `dest_dir` (no TOFU).
+ * Call from a background worker thread.
+ */
+@Throws(TransferFfiException::class)
+public actual fun `transferRecvLan`(`identitySeed`: kotlin.ByteArray, `listenPort`: kotlin.UShort, `acceptPeerPublicKey`: kotlin.ByteArray, `destDir`: kotlin.String, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto {
+    return FfiConverterTypeTransferReceiptDto.lift(uniffiRustCallWithError(TransferFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_transfer_recv_lan(
+            FfiConverterByteArray.lower(`identitySeed`),
+            FfiConverterUShort.lower(`listenPort`),
+            FfiConverterByteArray.lower(`acceptPeerPublicKey`),
+            FfiConverterString.lower(`destDir`),
+            FfiConverterOptionalTypeTransferListener.lower(`listener`),
+            FfiConverterOptionalTypeTransferCancelHandle.lower(`cancel`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Receive one file over an already-established [`WanChannel`] (consumes the channel).
+ */
+@Throws(TransferFfiException::class)
+public actual fun `transferRecvWan`(`channel`: WanChannel, `destDir`: kotlin.String, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto {
+    return FfiConverterTypeTransferReceiptDto.lift(uniffiRustCallWithError(TransferFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_transfer_recv_wan(
+            FfiConverterTypeWanChannel.lower(`channel`),
+            FfiConverterString.lower(`destDir`),
+            FfiConverterOptionalTypeTransferListener.lower(`listener`),
+            FfiConverterOptionalTypeTransferCancelHandle.lower(`cancel`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Send one file over a pin-verified LAN connection (no TOFU).
+ * Call from a background worker thread.
+ */
+@Throws(TransferFfiException::class)
+public actual fun `transferSendLan`(`identitySeed`: kotlin.ByteArray, `addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `filePath`: kotlin.String, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto {
+    return FfiConverterTypeTransferReceiptDto.lift(uniffiRustCallWithError(TransferFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_transfer_send_lan(
+            FfiConverterByteArray.lower(`identitySeed`),
+            FfiConverterSequenceString.lower(`addresses`),
+            FfiConverterUShort.lower(`port`),
+            FfiConverterByteArray.lower(`pinnedPeerPublicKey`),
+            FfiConverterString.lower(`filePath`),
+            FfiConverterOptionalTypeTransferListener.lower(`listener`),
+            FfiConverterOptionalTypeTransferCancelHandle.lower(`cancel`),
+            uniffiRustCallStatus,
+        )
+    })
+}
+
+/**
+ * Send one file over an already-established [`WanChannel`] (consumes the channel).
+ */
+@Throws(TransferFfiException::class)
+public actual fun `transferSendWan`(`channel`: WanChannel, `filePath`: kotlin.String, `maxRelayBytes`: kotlin.ULong?, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto {
+    return FfiConverterTypeTransferReceiptDto.lift(uniffiRustCallWithError(TransferFfiExceptionErrorHandler) { uniffiRustCallStatus ->
+        UniffiLib.uniffi_luciola_uniffi_fn_func_transfer_send_wan(
+            FfiConverterTypeWanChannel.lower(`channel`),
+            FfiConverterString.lower(`filePath`),
+            FfiConverterOptionalULong.lower(`maxRelayBytes`),
+            FfiConverterOptionalTypeTransferListener.lower(`listener`),
+            FfiConverterOptionalTypeTransferCancelHandle.lower(`cancel`),
             uniffiRustCallStatus,
         )
     })

@@ -25,19 +25,9 @@ use luciola_transfer::{FileReceiver, FileSender, ReceiverConfig};
 /// connection that cannot migrate is judged immediately — the quota still
 /// exists, it is just not applied to a hop the data never crosses.
 async fn admit(stream: &mut SecureStream, tx: &FileSender) -> Result<(), String> {
-    let mut channel = stream.channel_type();
-    if tx.check_channel_policy(channel).is_err() && stream.may_migrate() {
-        // Wait for the routing decision, not a fixed deadline. The progressive
-        // driver flips the channel tracker the instant punching succeeds and
-        // raises the migration gate the instant it gives up, so a hard-NAT punch
-        // that takes a few seconds but eventually wins is judged on its real
-        // (free, direct) path rather than its transient relay hop. The timeout
-        // below is only a safety net if the gate is somehow never raised.
-        channel = stream
-            .wait_channel_settle(std::time::Duration::from_secs(30))
-            .await;
-    }
-    tx.check_channel_policy(channel).map_err(|e| e.to_string())
+    luciola_transfer::admit_transfer(stream, tx)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 发送方驱动：intro → 滑窗 → 消费 ACK → 超时重传，直到 done 或通道死亡。
@@ -67,6 +57,23 @@ pub async fn run_send(
     let mut last_reported = 0u64;
     let mut last_channel_type = stream.channel_type();
     eprintln!("[INFO] Active channel: {}", last_channel_type.as_str());
+
+    if total == 0 {
+        // Wait briefly for the receiver's zero-byte ACK (or clean EOF) before
+        // closing the stream so `FileIntro` is never dropped in flight.
+        if let Ok(Ok(())) =
+            tokio::time::timeout(Duration::from_secs(2), stream.recv(&mut buf)).await
+        {
+            if !is_chunk_frame(&buf) {
+                let _ = FileAck::decode(&buf);
+            }
+        }
+        let _ = stream.shutdown().await;
+        return Ok(tx);
+    }
+
+    let mut pending_chunks: std::collections::VecDeque<FileChunk> =
+        std::collections::VecDeque::new();
     loop {
         let current_channel = stream.channel_type();
         if current_channel != last_channel_type {
@@ -79,44 +86,79 @@ pub async fn run_send(
         }
 
         if tx.is_done() {
+            let _ = stream.shutdown().await;
             return Ok(tx);
         }
-        for chunk in tx.fill_window().await.map_err(|e| e.to_string())? {
+        if pending_chunks.is_empty() {
+            for chunk in tx.fill_window().await.map_err(|e| e.to_string())? {
+                pending_chunks.push_back(chunk);
+            }
+        }
+        // Write at most one chunk per loop turn before polling ACKs so a slow
+        // WAN link never deadlocks by filling the send buffer without draining.
+        if let Some(chunk) = pending_chunks.pop_front() {
             stream
                 .send(&chunk.encode())
                 .await
                 .map_err(|e| e.to_string())?;
+            if !pending_chunks.is_empty() {
+                tokio::select! {
+                    biased;
+                    frame = stream.recv(&mut buf) => {
+                        handle_cli_ack(&mut tx, &mut pending_chunks, &buf, frame, total, &mut last_reported)?;
+                    }
+                    _ = tokio::task::yield_now() => {}
+                }
+                continue;
+            }
         }
         tokio::select! {
             // SecureStream::recv 可取消安全（半读帧留在内部缓冲）——E2E 验证过的模式
-            frame = stream.recv(&mut buf) => match frame {
-                Ok(()) if !is_chunk_frame(&buf) => {
-                    let ack = FileAck::decode(&buf).map_err(|e| e.to_string())?;
-                    // The receiver states a checkpoint skip explicitly; by
-                    // value alone it is indistinguishable from a fresh
-                    // transfer's first cumulative ACK.
-                    if ack.resume {
-                        eprintln!(
-                            "[INFO] Remote peer requested resume: skipping {}/{} bytes ({:.1}%)",
-                            ack.acked_up_to,
-                            total,
-                            (ack.acked_up_to as f64 / total.max(1) as f64) * 100.0
-                        );
-                    }
-                    tx.on_ack(ack.acked_up_to);
-                    report_progress(total, tx.acked_up_to(), &mut last_reported);
-                }
-                Ok(()) => {} // 收到 chunk = 对端驱动 bug；忽略等下一帧
-                Err(e) => return Err(format!("channel closed at {} / {} bytes: {e}", tx.acked_up_to(), total)),
-            },
+            frame = stream.recv(&mut buf) => {
+                handle_cli_ack(&mut tx, &mut pending_chunks, &buf, frame, total, &mut last_reported)?;
+            }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
         for chunk in tx.expired_in_flight().await.map_err(|e| e.to_string())? {
-            stream
-                .send(&chunk.encode())
-                .await
-                .map_err(|e| e.to_string())?;
+            pending_chunks.push_back(chunk);
         }
+    }
+}
+
+fn handle_cli_ack(
+    tx: &mut FileSender,
+    pending_chunks: &mut std::collections::VecDeque<FileChunk>,
+    buf: &[u8],
+    frame: Result<(), luciola::link::secure::LinkError>,
+    total: u64,
+    last_reported: &mut u64,
+) -> Result<(), String> {
+    match frame {
+        Ok(()) if !is_chunk_frame(buf) => {
+            let ack = FileAck::decode(buf).map_err(|e| e.to_string())?;
+            if ack.transfer_id != tx.transfer_id() {
+                return Ok(());
+            }
+            if ack.resume {
+                eprintln!(
+                    "[INFO] Remote peer requested resume: skipping {}/{} bytes ({:.1}%)",
+                    ack.acked_up_to,
+                    total,
+                    (ack.acked_up_to as f64 / total.max(1) as f64) * 100.0
+                );
+            }
+            tx.on_ack(ack.acked_up_to);
+            let acked = tx.acked_up_to();
+            pending_chunks.retain(|c| c.offset + c.payload.len() as u64 > acked);
+            report_progress(total, acked, last_reported);
+            Ok(())
+        }
+        Ok(()) => Ok(()),
+        Err(e) => Err(format!(
+            "channel closed at {} / {} bytes: {e}",
+            tx.acked_up_to(),
+            total
+        )),
     }
 }
 
@@ -134,25 +176,27 @@ pub async fn run_recv(
     } else {
         return Err("peer's first message was not a transfer intro".into());
     };
-    // 只取 basename：对端报什么名字都写不进 --out 之外。
-    let safe_name = std::path::Path::new(&intro.file_name)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("received.bin");
+    // Cross-platform basename sanitization: blocks `/`, `\`, NTFS ADS `:`, and
+    // Windows reserved device names (`CON`, `NUL`, etc.).
+    let safe_name = sanitize_name(&intro.file_name);
     let dest = dest_dir.join(safe_name);
 
-    let mut rx = FileReceiver::create(
-        &intro.transfer_id,
-        &dest,
-        intro.total_size,
-        ReceiverConfig::default(),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let cfg = ReceiverConfig::default();
+    let answer_cache_ttl = cfg.answer_cache_ttl;
+    let mut rx = FileReceiver::create(&intro.transfer_id, &dest, intro.total_size, cfg)
+        .await
+        .map_err(|e| e.to_string())?;
     let total = rx.total_size();
     let mut last_reported = 0u64;
 
-    if rx.acked_up_to() > 0 {
+    if total == 0 {
+        let zero_ack = FileAck {
+            transfer_id: rx.transfer_id().to_string(),
+            acked_up_to: 0,
+            resume: false,
+        };
+        let _ = stream.send(&zero_ack.encode()).await;
+    } else if rx.acked_up_to() > 0 {
         eprintln!(
             "[INFO] Resuming transfer from checkpoint: {}/{} bytes ({:.1}%) already on disk",
             rx.acked_up_to(),
@@ -171,10 +215,21 @@ pub async fn run_recv(
         last_reported = rx.acked_up_to();
     }
 
+    let max_drain = quiet.saturating_mul(4).min(answer_cache_ttl);
+    let mut drain_deadline: Option<tokio::time::Instant> = None;
+
     loop {
-        if rx.is_complete() {
-            // 应答缓存模式：对端静默即收工（E2E 同款）。
-            match tokio::time::timeout(quiet, stream.recv(&mut buf)).await {
+        let already_complete = rx.is_complete();
+        if already_complete {
+            let deadline =
+                *drain_deadline.get_or_insert_with(|| tokio::time::Instant::now() + max_drain);
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Ok(rx);
+            }
+            let wait = quiet.min(remaining);
+            // 应答缓存模式：对端静默或达到总上限即收工（E2E 同款）。
+            match tokio::time::timeout(wait, stream.recv(&mut buf)).await {
                 Ok(Ok(())) => { /* 落到下面的分派 */ }
                 _ => return Ok(rx),
             }
@@ -190,8 +245,16 @@ pub async fn run_recv(
         if !is_chunk_frame(&buf) {
             continue;
         }
-        let chunk = FileChunk::decode(&buf).map_err(|e| e.to_string())?;
-        let acked = rx.on_chunk(&chunk).await.map_err(|e| e.to_string())?;
+        let chunk = match FileChunk::decode(&buf) {
+            Ok(c) => c,
+            Err(_) if already_complete => return Ok(rx),
+            Err(e) => return Err(e.to_string()),
+        };
+        let acked = match rx.on_chunk(&chunk).await {
+            Ok(a) => a,
+            Err(_) if already_complete => return Ok(rx),
+            Err(e) => return Err(e.to_string()),
+        };
         report_progress(total, acked, &mut last_reported);
         let ack = FileAck {
             transfer_id: chunk.transfer_id.clone(),
@@ -213,12 +276,8 @@ pub async fn run_recv(
 
 /// 每 ≥5% 或首帧打一行进度到 stderr。
 fn report_progress(total: u64, acked: u64, last_reported: &mut u64) {
-    let pct = if total == 0 { 100 } else { acked * 100 / total };
-    let last_pct = if total == 0 {
-        100
-    } else {
-        *last_reported * 100 / total
-    };
+    let pct = (acked * 100).checked_div(total).unwrap_or(100);
+    let last_pct = (*last_reported * 100).checked_div(total).unwrap_or(100);
     if pct >= last_pct + 5 || (*last_reported == 0 && acked > 0) {
         eprintln!("  ⏳ {}/{} bytes ({}%)", acked, total, pct);
         *last_reported = acked;
@@ -229,26 +288,11 @@ fn report_progress(total: u64, acked: u64, last_reported: &mut u64) {
 /// 基于真实文件的属性生成稳定的传输 ID，使得传输意外中断后重新发起时
 /// 能够命中已存在的断点（.luciola-meta / .luciola-part），实现跨进程断点续传。
 pub(crate) fn make_transfer_id(file_name: &str, total_size: u64) -> String {
-    let mtime = std::fs::metadata(file_name)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis());
-    let stamp = mtime.unwrap_or_else(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    });
-    format!("{}-{}-{stamp}", sanitize_name(file_name), total_size)
+    luciola_transfer::make_transfer_id(std::path::Path::new(file_name), total_size)
 }
 
 fn sanitize_name(name: &str) -> String {
-    std::path::Path::new(name)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file")
-        .to_string()
+    luciola_transfer::sanitize_file_name(name)
 }
 
 // ---------------------------------------------------------------- 测试

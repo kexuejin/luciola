@@ -18,7 +18,6 @@ use qrcode::render::unicode;
 use qrcode::QrCode;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
@@ -166,10 +165,13 @@ enum TransferCommands {
         /// Optional signaling server URL — the rendezvous route is /ws (e.g. wss://host.example/ws)
         #[arg(long)]
         signaling: Option<String>,
-        /// Optional pairing PSK for WAN encryption
+        /// Optional pairing PSK for WAN encryption (or set LUCIOLA_PSK)
         #[arg(long)]
         psk: Option<String>,
-        /// Enable progressive zero-wait relay with background direct upgrade
+        /// Allow encrypted relay fallback when direct UDP hole punching fails (deny-by-default)
+        #[arg(long, default_value_t = false)]
+        allow_relay: bool,
+        /// Enable progressive zero-wait relay with background direct upgrade (requires --allow-relay)
         #[arg(long, default_value_t = false)]
         progressive: bool,
         /// Seconds to wait for the peer's candidates and for hole punching
@@ -201,10 +203,13 @@ enum TransferCommands {
         /// Optional signaling server URL — the rendezvous route is /ws (e.g. wss://host.example/ws)
         #[arg(long)]
         signaling: Option<String>,
-        /// Optional pairing PSK for WAN encryption
+        /// Optional pairing PSK for WAN encryption (or set LUCIOLA_PSK)
         #[arg(long)]
         psk: Option<String>,
-        /// Enable progressive zero-wait relay with background direct upgrade
+        /// Allow encrypted relay fallback when direct UDP hole punching fails (deny-by-default)
+        #[arg(long, default_value_t = false)]
+        allow_relay: bool,
+        /// Enable progressive zero-wait relay with background direct upgrade (requires --allow-relay)
         #[arg(long, default_value_t = false)]
         progressive: bool,
         /// Seconds to wait for the peer's candidates and for hole punching
@@ -226,9 +231,9 @@ enum TransferCommands {
 
 #[derive(Subcommand)]
 enum ForwardCommands {
-    /// Responder：监听隧道端口，按 ACL 白名单为对端拨号本机目标
+    /// Responder：监听隧道端口（或接入 WAN 会合房间），按 ACL 白名单为对端拨号本机目标
     Serve {
-        /// 隧道监听端口（0 = 系统分配）
+        /// 隧道监听端口（0 = 系统分配；使用 --room + --signaling 时忽略）
         #[arg(long, default_value_t = 3001)]
         tunnel_port: u16,
         /// 本端身份种子（hex，32 字节）
@@ -248,14 +253,32 @@ enum ForwardCommands {
         /// 对端须以 --remote-allow 放行对应目标。
         #[arg(long = "remote-forward")]
         remote_forward: Vec<String>,
+        /// 可选 WAN 会合房间 ID（与 --signaling 同时传入时走 WAN 隧道）
+        #[arg(long)]
+        room: Option<String>,
+        /// 可选 WAN 信令服务 URL（例如 wss://host.example/ws）
+        #[arg(long)]
+        signaling: Option<String>,
+        /// 可选 WAN 配对 PSK
+        #[arg(long)]
+        psk: Option<String>,
+        /// 允许在直连打洞失败时回退到加密中继（默认 false，deny-by-default）
+        #[arg(long, default_value_t = false)]
+        allow_relay: bool,
+        /// 启用渐进式零等待中继 + 后台直连升级
+        #[arg(long, default_value_t = false)]
+        progressive: bool,
+        /// WAN 候选交换与打洞超时（秒）
+        #[arg(long, default_value_t = 15)]
+        punch_timeout_secs: u64,
     },
-    /// Initiator：本机 127.0.0.1:listen → 对端隧道 → target
+    /// Initiator：本机 127.0.0.1:listen → 对端隧道（LAN 或 WAN）→ target
     Dial {
         /// 本机监听端口（仅 127.0.0.1；0 = 系统分配）
         #[arg(long, default_value_t = 3080)]
         listen: u16,
-        /// 对端隧道地址 host:port
-        #[arg(long)]
+        /// 对端隧道地址 host:port（使用 --room + --signaling 时可省略）
+        #[arg(long, default_value = "")]
         connect: String,
         /// 经隧道到达的目标地址 IP/主机名:PORT（对端机上，主机名由对端解析并钉扎）
         #[arg(long)]
@@ -274,6 +297,24 @@ enum ForwardCommands {
         /// 经隧道到对端 TARGET，格式 LISTEN=IP/主机名:PORT；对端须 --allow-udp 放行
         #[arg(long = "udp")]
         udp: Vec<String>,
+        /// 可选 WAN 会合房间 ID（与 --signaling 同时传入时走 WAN 隧道）
+        #[arg(long)]
+        room: Option<String>,
+        /// 可选 WAN 信令服务 URL（例如 wss://host.example/ws）
+        #[arg(long)]
+        signaling: Option<String>,
+        /// 可选 WAN 配对 PSK
+        #[arg(long)]
+        psk: Option<String>,
+        /// 允许在直连打洞失败时回退到加密中继（默认 false，deny-by-default）
+        #[arg(long, default_value_t = false)]
+        allow_relay: bool,
+        /// 启用渐进式零等待中继 + 后台直连升级
+        #[arg(long, default_value_t = false)]
+        progressive: bool,
+        /// WAN 候选交换与打洞超时（秒）
+        #[arg(long, default_value_t = 15)]
+        punch_timeout_secs: u64,
     },
     /// 从身份种子推导公钥 / 指纹 / 短码（供对端 --pin-peer 与配对展示）
     Pin {
@@ -527,6 +568,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             port,
             product,
         } => {
+            #[cfg(windows)]
+            let path = socket.unwrap_or_else(|| r"\\.\pipe\luciola-agent".to_string());
+            #[cfg(not(windows))]
             let path = socket.unwrap_or_else(|| {
                 std::env::var("TMPDIR")
                     .or_else(|_| std::env::var("XDG_RUNTIME_DIR"))
@@ -642,7 +686,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 allow,
                 allow_udp,
                 remote_forward,
+                room,
+                signaling,
+                psk,
+                allow_relay,
+                progressive,
+                punch_timeout_secs,
             } => {
+                let wan = ForwardWanOptions::from_args(
+                    room,
+                    signaling,
+                    psk,
+                    allow_relay,
+                    progressive,
+                    punch_timeout_secs,
+                )?;
                 forward_serve(
                     tunnel_port,
                     &seed,
@@ -650,6 +708,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     allow,
                     allow_udp,
                     remote_forward,
+                    wan,
                 )
                 .await?
             }
@@ -661,7 +720,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pin_peer,
                 remote_allow,
                 udp,
+                room,
+                signaling,
+                psk,
+                allow_relay,
+                progressive,
+                punch_timeout_secs,
             } => {
+                let wan = ForwardWanOptions::from_args(
+                    room,
+                    signaling,
+                    psk,
+                    allow_relay,
+                    progressive,
+                    punch_timeout_secs,
+                )?;
                 forward_dial(
                     listen,
                     &connect,
@@ -670,6 +743,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &pin_peer,
                     remote_allow,
                     udp,
+                    wan,
                 )
                 .await?
             }
@@ -689,12 +763,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 room,
                 signaling,
                 psk,
+                allow_relay,
                 progressive,
                 punch_timeout_secs,
                 adb_device,
             } => {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&pin_peer)?;
+                let wan = ForwardWanOptions::from_args(
+                    room,
+                    signaling,
+                    psk,
+                    allow_relay,
+                    progressive,
+                    punch_timeout_secs,
+                )?;
                 let src = std::path::PathBuf::from(&file);
                 let total = std::fs::metadata(&src)
                     .map_err(|e| format!("--file: {e}"))?
@@ -726,37 +809,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })?;
                     s.set_channel_type(luciola_proto::ChannelType::UsbAdbDirect);
                     s
-                } else if let (Some(room_id), Some(sig_url)) = (room, signaling) {
-                    let id_self = luciola::trust::identity_from_seed(&seed);
-                    let my_pk: [u8; 32] = id_self
-                        .public_key
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| "invalid local public key")?;
-                    let psk_bytes = psk
-                        .as_deref()
-                        .unwrap_or("luciola-default-psk")
-                        .as_bytes()
-                        .to_vec();
-                    let wan_cfg = luciola::wan::WanConfig {
-                        signaling_endpoint: sig_url.clone(),
-                        room: room_id.clone(),
-                        epoch: 0,
-                        psk: zeroize::Zeroizing::new(psk_bytes),
-                        identity_seed: seed,
-                        my_public_key: my_pk,
-                        peer_public_key: pin,
-                        relay: luciola_proto::RelayConfig {
-                            allow_wan_signaling: true,
-                            allow_relay: true,
-                            connection_timeout_ms: 3000,
-                            ..Default::default()
-                        },
-                        progressive,
-                        punch_timeout: Duration::from_secs(punch_timeout_secs),
-                        ..Default::default()
-                    };
-                    println!("📡 Connecting to WAN rendezvous {sig_url} (room={room_id}) progressive={progressive} …");
+                } else if let Some(ref w) = wan {
+                    let wan_cfg = w.to_wan_config(seed, pin)?;
+                    println!(
+                        "📡 Connecting to WAN rendezvous {} (room={}) allow_relay={} progressive={} …",
+                        w.signaling, w.room, w.allow_relay, w.progressive
+                    );
                     luciola::wan::connect_wan(wan_cfg)
                         .await
                         .map_err(|e| format!("WAN connection failed: {e}"))?
@@ -796,12 +854,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 room,
                 signaling,
                 psk,
+                allow_relay,
                 progressive,
                 punch_timeout_secs,
                 adb_device,
             } => {
                 let seed = parse_seed(&seed)?;
                 let pin = parse_pin(&accept_pin)?;
+                let wan = ForwardWanOptions::from_args(
+                    room,
+                    signaling,
+                    psk,
+                    allow_relay,
+                    progressive,
+                    punch_timeout_secs,
+                )?;
 
                 // No adb setup on this side on purpose. The sender's
                 // `adb forward tcp:P` already delivers host:P to device:P,
@@ -815,37 +882,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
 
-                let stream = if let (Some(room_id), Some(sig_url)) = (room, signaling) {
-                    let id_self = luciola::trust::identity_from_seed(&seed);
-                    let my_pk: [u8; 32] = id_self
-                        .public_key
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| "invalid local public key")?;
-                    let psk_bytes = psk
-                        .as_deref()
-                        .unwrap_or("luciola-default-psk")
-                        .as_bytes()
-                        .to_vec();
-                    let wan_cfg = luciola::wan::WanConfig {
-                        signaling_endpoint: sig_url.clone(),
-                        room: room_id.clone(),
-                        epoch: 0,
-                        psk: zeroize::Zeroizing::new(psk_bytes),
-                        identity_seed: seed,
-                        my_public_key: my_pk,
-                        peer_public_key: pin,
-                        relay: luciola_proto::RelayConfig {
-                            allow_wan_signaling: true,
-                            allow_relay: true,
-                            connection_timeout_ms: 3000,
-                            ..Default::default()
-                        },
-                        progressive,
-                        punch_timeout: Duration::from_secs(punch_timeout_secs),
-                        ..Default::default()
-                    };
-                    println!("📡 Waiting on WAN rendezvous {sig_url} (room={room_id}) progressive={progressive} …");
+                let stream = if let Some(ref w) = wan {
+                    let wan_cfg = w.to_wan_config(seed, pin)?;
+                    println!(
+                        "📡 Waiting on WAN rendezvous {} (room={}) allow_relay={} progressive={} …",
+                        w.signaling, w.room, w.allow_relay, w.progressive
+                    );
                     luciola::wan::connect_wan(wan_cfg)
                         .await
                         .map_err(|e| format!("WAN connection failed: {e}"))?
@@ -1044,16 +1086,28 @@ async fn run_agent(
     tokio::spawn(async move {
         loop {
             let line = match events.recv().await {
-                Ok(PeerEvent::Found(p)) => format!(
-                    r#"{{"type":"found","nodeId":"{}","name":"{}","ip":"{}","udpPort":{}}}"#,
-                    p.node_id, p.name, p.ip, p.udp_port
-                ),
-                Ok(PeerEvent::Updated(p)) => format!(
-                    r#"{{"type":"updated","nodeId":"{}","name":"{}","ip":"{}"}}"#,
-                    p.node_id, p.name, p.ip
-                ),
-                Ok(PeerEvent::Lost(id)) => format!(r#"{{"type":"lost","nodeId":"{id}"}}"#),
-                Err(_) => continue,
+                Ok(PeerEvent::Found(p)) => serde_json::json!({
+                    "type": "found",
+                    "nodeId": p.node_id,
+                    "name": p.name,
+                    "ip": p.ip,
+                    "udpPort": p.udp_port,
+                })
+                .to_string(),
+                Ok(PeerEvent::Updated(p)) => serde_json::json!({
+                    "type": "updated",
+                    "nodeId": p.node_id,
+                    "name": p.name,
+                    "ip": p.ip,
+                })
+                .to_string(),
+                Ok(PeerEvent::Lost(id)) => serde_json::json!({
+                    "type": "lost",
+                    "nodeId": id,
+                })
+                .to_string(),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
             let _ = tx_pump.send(line);
         }
@@ -1067,28 +1121,29 @@ async fn run_agent(
     }
 }
 
-#[cfg(unix)]
-async fn handle_agent_client(
-    stream: UnixStream,
+async fn handle_agent_stream<S>(
+    stream: S,
     mut rx: tokio::sync::broadcast::Receiver<String>,
     engine: std::sync::Arc<DiscoveryEngine>,
-) {
-    let (reader, mut writer) = stream.into_split();
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let (reader, mut writer) = tokio::io::split(stream);
     let _ = writer
         .write_all(b"{\"type\":\"hello\",\"product\":\"luciola-agent\"}\n")
         .await;
     // Late joiners get the current peer table first: Found events fired
     // before this client connected are gone (broadcast fanout).
     for p in engine.online_peers().await {
-        let _ = writer
-            .write_all(
-                format!(
-                    r#"{{"type":"found","nodeId":"{}","name":"{}","ip":"{}","udpPort":{}}}"#,
-                    p.node_id, p.name, p.ip, p.udp_port
-                )
-                .as_bytes(),
-            )
-            .await;
+        let line = serde_json::json!({
+            "type": "found",
+            "nodeId": p.node_id,
+            "name": p.name,
+            "ip": p.ip,
+            "udpPort": p.udp_port,
+        })
+        .to_string();
+        let _ = writer.write_all(line.as_bytes()).await;
         let _ = writer.write_all(b"\n").await;
     }
     let mut lines = BufReader::new(reader).lines();
@@ -1096,8 +1151,7 @@ async fn handle_agent_client(
         tokio::select! {
             line = rx.recv() => {
                 if let Ok(l) = line {
-                    if writer.write_all(l.as_bytes()).await.is_err() || writer.write_all(b"
-        ").await.is_err() {
+                    if writer.write_all(l.as_bytes()).await.is_err() || writer.write_all(b"\n").await.is_err() {
                         break;
                     }
                 }
@@ -1117,13 +1171,117 @@ async fn handle_agent_client(
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(unix)]
+async fn handle_agent_client(
+    stream: UnixStream,
+    rx: tokio::sync::broadcast::Receiver<String>,
+    engine: std::sync::Arc<DiscoveryEngine>,
+) {
+    handle_agent_stream(stream, rx, engine).await;
+}
+
+#[cfg(windows)]
+async fn run_agent(
+    socket_path: &str,
+    port: u16,
+    products: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let pipe_name = if socket_path.starts_with(r"\\.\pipe\") {
+        socket_path.to_string()
+    } else {
+        let trimmed = socket_path.trim().trim_start_matches(['\\', '/']);
+        if trimmed.is_empty() {
+            r"\\.\pipe\luciola-agent".to_string()
+        } else {
+            format!(r"\\.\pipe\{trimmed}")
+        }
+    };
+    println!("🛰️  [Agent] listening on {pipe_name} (UDP :{port} owned machine-wide)");
+
+    let profile = luciola::proto::Profile {
+        node_id: format!("agent_{:x}", rand::random::<u32>()),
+        name: luciola_net::DeviceDetector::detect()
+            .hostname
+            .unwrap_or_else(|| "Desktop".into()),
+        profile_rev: 1,
+        addresses: NetworkDetector::local_candidate_addresses(),
+        udp_port: port,
+        tcp_port: 0,
+        device: Some(luciola_net::DeviceDetector::detect()),
+        device_id: None,
+        product: Some("luciola-agent".into()),
+        extra: None,
+        public_key: None,
+    };
+    let config = DiscoveryConfig {
+        self_profile: profile,
+        listen_port: port,
+        broadcast_port: port,
+        product_filter: (!products.is_empty()).then_some(products),
+        ..Default::default()
+    };
+    let engine = DiscoveryEngine::bind(config).await?;
+    let mut events = engine.subscribe();
+    engine.clone().spawn();
+    engine.announce().await;
+
+    let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
+    let tx_pump = tx.clone();
+    tokio::spawn(async move {
+        loop {
+            let line = match events.recv().await {
+                Ok(PeerEvent::Found(p)) => serde_json::json!({
+                    "type": "found",
+                    "nodeId": p.node_id,
+                    "name": p.name,
+                    "ip": p.ip,
+                    "udpPort": p.udp_port,
+                })
+                .to_string(),
+                Ok(PeerEvent::Updated(p)) => serde_json::json!({
+                    "type": "updated",
+                    "nodeId": p.node_id,
+                    "name": p.name,
+                    "ip": p.ip,
+                })
+                .to_string(),
+                Ok(PeerEvent::Lost(id)) => serde_json::json!({
+                    "type": "lost",
+                    "nodeId": id,
+                })
+                .to_string(),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            let _ = tx_pump.send(line);
+        }
+    });
+
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .reject_remote_clients(true)
+        .create(&pipe_name)?;
+    loop {
+        server.connect().await?;
+        let connected = server;
+        server = ServerOptions::new()
+            .reject_remote_clients(true)
+            .create(&pipe_name)?;
+        let rx = tx.subscribe();
+        let eng = engine.clone();
+        tokio::spawn(handle_agent_stream(connected, rx, eng));
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 async fn run_agent(
     _socket_path: &str,
     _port: u16,
     _products: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    Err("the discovery agent requires unix domain sockets (unix platforms only)".into())
+    Err("the discovery agent requires unix domain sockets or windows named pipes".into())
 }
 
 // =========================== 端口隧道（forward） ===========================
@@ -1282,9 +1440,92 @@ fn parse_listen_target(s: &str) -> Result<(u16, DialTarget), String> {
     Ok((listen, parse_target(target)?))
 }
 
+struct ForwardWanOptions {
+    room: String,
+    signaling: String,
+    psk: Option<String>,
+    allow_relay: bool,
+    progressive: bool,
+    punch_timeout_secs: u64,
+}
+
+impl ForwardWanOptions {
+    fn from_args(
+        room: Option<String>,
+        signaling: Option<String>,
+        psk: Option<String>,
+        allow_relay: bool,
+        progressive: bool,
+        punch_timeout_secs: u64,
+    ) -> Result<Option<Self>, String> {
+        if progressive && !allow_relay {
+            return Err("--progressive 必须与 --allow-relay 同时指定".to_string());
+        }
+        match (room, signaling) {
+            (Some(room), Some(signaling)) => {
+                let effective_psk = psk
+                    .or_else(|| std::env::var("LUCIOLA_PSK").ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        "WAN 模式必须显式提供非空 --psk 或设置环境变量 LUCIOLA_PSK".to_string()
+                    })?;
+                Ok(Some(Self {
+                    room,
+                    signaling,
+                    psk: Some(effective_psk),
+                    allow_relay,
+                    progressive,
+                    punch_timeout_secs,
+                }))
+            }
+            (None, None) => Ok(None),
+            _ => Err("--room 与 --signaling 必须同时指定以启用 WAN 隧道".to_string()),
+        }
+    }
+
+    fn to_wan_config(
+        &self,
+        seed: [u8; 32],
+        pin: [u8; 32],
+    ) -> Result<luciola::wan::WanConfig, String> {
+        let id_self = luciola::trust::identity_from_seed(&seed);
+        let my_pk: [u8; 32] = id_self
+            .public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| "invalid local public key".to_string())?;
+        let psk_bytes = self
+            .psk
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "WAN 模式必须提供非空 --psk 或环境变量 LUCIOLA_PSK".to_string())?
+            .as_bytes()
+            .to_vec();
+        Ok(luciola::wan::WanConfig {
+            signaling_endpoint: self.signaling.clone(),
+            room: self.room.clone(),
+            epoch: 0,
+            psk: zeroize::Zeroizing::new(psk_bytes),
+            identity_seed: seed,
+            my_public_key: my_pk,
+            peer_public_key: pin,
+            relay: luciola_proto::RelayConfig {
+                allow_wan_signaling: true,
+                allow_relay: self.allow_relay,
+                connection_timeout_ms: 3000,
+                ..Default::default()
+            },
+            progressive: self.progressive,
+            punch_timeout: Duration::from_secs(self.punch_timeout_secs),
+            ..Default::default()
+        })
+    }
+}
+
 /// T2 responder 侧（r4 §2.3 链路引导契约）：
-/// `bind_dual_stack_listener` + `accept_secure(pin 必填)`，随后进入监督循环 ——
-/// 会话结束（或握手被拒）后回到 accept，等待下一条链路；Ctrl+C 优雅退出。
+/// LAN 走 `bind_dual_stack_listener` + `accept_secure(pin 必填)`，WAN 走 `connect_wan`，
+/// 随后进入监督循环 —— 会话结束（或握手被拒）后继续等待下一条链路；Ctrl+C 优雅退出。
 /// 监听失败打印 `forward_bind_failed` 并 `exit != 0`。
 async fn forward_serve(
     tunnel_port: u16,
@@ -1293,6 +1534,7 @@ async fn forward_serve(
     allow: Vec<String>,
     allow_udp: Vec<String>,
     remote_forward: Vec<String>,
+    wan: Option<ForwardWanOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let seed = parse_seed(seed_hex)?;
     let pin = parse_pin(pin_peer)?;
@@ -1312,27 +1554,49 @@ async fn forward_serve(
     }
     let acl = ForwardAcl::new(rules);
 
-    let listener = match bind_dual_stack_listener(tunnel_port).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("forward_bind_failed: {e}");
-            std::process::exit(1);
-        }
-    };
     // 本端公钥公示：对端把它填进自己的 --pin-peer（改种子后须同步）。
     let local_pub = encode_hex(&luciola::trust::identity_from_seed(&seed).public_key);
-    println!(
-        "forward_serving tunnel_port={} local_pub={local_pub} allow={allow:?} allow_udp={allow_udp:?} remote_forward={remote_forward:?}",
-        listener.local_addr()?.port(),
-    );
+
+    let listener = if let Some(ref w) = wan {
+        println!(
+            "forward_serving_wan signaling={} room={} allow_relay={} progressive={} local_pub={local_pub} allow={allow:?} allow_udp={allow_udp:?} remote_forward={remote_forward:?}",
+            w.signaling, w.room, w.allow_relay, w.progressive
+        );
+        None
+    } else {
+        let l = match bind_dual_stack_listener(tunnel_port).await {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("forward_bind_failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        println!(
+            "forward_serving tunnel_port={} local_pub={local_pub} allow={allow:?} allow_udp={allow_udp:?} remote_forward={remote_forward:?}",
+            l.local_addr()?.port(),
+        );
+        Some(l)
+    };
 
     let mut backoff = Duration::from_millis(500);
     loop {
-        let accepted = tokio::select! {
-            r = accept_secure(&listener, &seed, Some(&pin)) => r,
-            _ = tokio::signal::ctrl_c() => {
-                println!("forward_stopped");
-                return Ok(());
+        let accepted = if let Some(ref w) = wan {
+            let wan_cfg = w.to_wan_config(seed, pin)?;
+            tokio::select! {
+                r = luciola::wan::connect_wan(wan_cfg) => r.map_err(|e| e.to_string()),
+                _ = tokio::signal::ctrl_c() => {
+                    println!("forward_stopped");
+                    return Ok(());
+                }
+            }
+        } else {
+            let l = listener.as_ref().expect("LAN listener initialized");
+            tokio::select! {
+                r = accept_secure(l, &seed, Some(&pin)) => r.map_err(|e| e.to_string()),
+                _ = tokio::signal::ctrl_c() => {
+                    println!("forward_stopped");
+                    return Ok(());
+                }
             }
         };
         match accepted {
@@ -1394,12 +1658,13 @@ async fn forward_serve(
     }
 }
 
-/// T2 initiator 侧：本地 127.0.0.1 转发 + 链路监督。
+/// T2 initiator 侧：本地 127.0.0.1 转发 + 链路监督（LAN 或 WAN）。
 ///
 /// 按 §2.2 `peer_close` 语义分流：
 /// - 对端**主动 CLOSE(ch 0)** → 计划内关闭 → **优雅退出**（e2e 验收：会话断开后客户端 CLI 优雅退出）；
 /// - **传输层断开**（peer_close=false）→ **退避重建**：链路 → MuxSession → forward 规则整链重建
 ///   （r4 §2.3「CLI 侧监督」，与 T3 同语义）。
+#[allow(clippy::too_many_arguments)]
 async fn forward_dial(
     listen: u16,
     connect: &str,
@@ -1408,8 +1673,13 @@ async fn forward_dial(
     pin_peer: &str,
     remote_allow: Vec<String>,
     udp: Vec<String>,
+    wan: Option<ForwardWanOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (host, tunnel_port) = parse_host_port(connect)?;
+    let lan_target = if wan.is_none() {
+        Some(parse_host_port(connect)?)
+    } else {
+        None
+    };
     let target = parse_target(target)?;
     let seed = parse_seed(seed_hex)?;
     let pin = parse_pin(pin_peer)?;
@@ -1426,7 +1696,6 @@ async fn forward_dial(
             parse_listen_target(s).map_err(|e| format!("非法 --udp 转发：{e}"))?;
         udps.push((listen, target));
     }
-    let addrs = vec![host];
     println!(
         "local_pub={}",
         encode_hex(&luciola::trust::identity_from_seed(&seed).public_key)
@@ -1434,7 +1703,28 @@ async fn forward_dial(
 
     let mut backoff = Duration::from_millis(500);
     loop {
-        match connect_secure_raced(addrs.clone(), tunnel_port, &seed, &pin).await {
+        let dialed = if let Some(ref w) = wan {
+            let wan_cfg = w.to_wan_config(seed, pin)?;
+            tokio::select! {
+                r = luciola::wan::connect_wan(wan_cfg) => r.map_err(|e| e.to_string()),
+                _ = tokio::signal::ctrl_c() => {
+                    println!("forward_stopped");
+                    return Ok(());
+                }
+            }
+        } else {
+            let (host, tunnel_port) = lan_target.as_ref().expect("LAN connect parsed");
+            tokio::select! {
+                r = connect_secure_raced(vec![host.clone()], *tunnel_port, &seed, &pin) => {
+                    r.map_err(|e| e.to_string())
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    println!("forward_stopped");
+                    return Ok(());
+                }
+            }
+        };
+        match dialed {
             Ok(stream) => {
                 backoff = Duration::from_millis(500);
                 let session = Arc::new(MuxSession::start(
@@ -1499,6 +1789,12 @@ async fn forward_dial(
                     _ = tokio::signal::ctrl_c() => {
                         session.shutdown();
                         guard.stop().await;
+                        if let Some(g) = &remote_endpoint {
+                            g.stop().await;
+                        }
+                        for g in &udp_guards {
+                            g.stop().await;
+                        }
                         println!("forward_stopped");
                         return Ok(());
                     }
@@ -1522,7 +1818,13 @@ async fn forward_dial(
                 println!("link_failed: {e} → retry in {backoff:?}");
             }
         }
-        tokio::time::sleep(backoff).await;
+        tokio::select! {
+            _ = tokio::time::sleep(backoff) => {}
+            _ = tokio::signal::ctrl_c() => {
+                println!("forward_stopped");
+                return Ok(());
+            }
+        }
         backoff = (backoff * 2).min(Duration::from_secs(30));
     }
 }
@@ -1621,5 +1923,80 @@ mod tests {
             parse_listen_target("9090=127.0.0.1:0").is_err(),
             "port 0 target is invalid"
         );
+    }
+
+    #[test]
+    fn forward_wan_options_validates_room_signaling_psk_and_progressive() {
+        assert!(
+            super::ForwardWanOptions::from_args(None, None, None, false, false, 15)
+                .unwrap()
+                .is_none()
+        );
+        assert!(super::ForwardWanOptions::from_args(
+            Some("r".into()),
+            None,
+            Some("secret".into()),
+            false,
+            false,
+            15
+        )
+        .is_err());
+        assert!(super::ForwardWanOptions::from_args(
+            None,
+            Some("wss://example/ws".into()),
+            Some("secret".into()),
+            false,
+            false,
+            15
+        )
+        .is_err());
+        // `--progressive` without `--allow-relay` must fail fast instead of being silently ignored.
+        assert!(super::ForwardWanOptions::from_args(
+            Some("r".into()),
+            Some("wss://example/ws".into()),
+            Some("secret".into()),
+            false,
+            true,
+            20,
+        )
+        .is_err());
+        // Empty PSK must be rejected (no hardcoded default PSK).
+        assert!(super::ForwardWanOptions::from_args(
+            Some("r".into()),
+            Some("wss://example/ws".into()),
+            Some("   ".into()),
+            false,
+            false,
+            20,
+        )
+        .is_err());
+        let opts = super::ForwardWanOptions::from_args(
+            Some("r".into()),
+            Some("wss://example/ws".into()),
+            Some("secret".into()),
+            false,
+            false,
+            20,
+        )
+        .unwrap()
+        .expect("both present");
+        let cfg = opts.to_wan_config([1u8; 32], [2u8; 32]).unwrap();
+        assert!(!cfg.relay.allow_relay, "relay must stay deny-by-default");
+        assert!(cfg.relay.allow_wan_signaling);
+        assert!(!cfg.progressive);
+
+        let prog = super::ForwardWanOptions::from_args(
+            Some("r".into()),
+            Some("wss://example/ws".into()),
+            Some("secret".into()),
+            true,
+            true,
+            20,
+        )
+        .unwrap()
+        .expect("progressive with allow_relay");
+        let prog_cfg = prog.to_wan_config([1u8; 32], [2u8; 32]).unwrap();
+        assert!(prog_cfg.relay.allow_relay);
+        assert!(prog_cfg.progressive);
     }
 }

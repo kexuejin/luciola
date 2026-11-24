@@ -16,8 +16,11 @@ mod adaptive;
 mod arq;
 mod bridge;
 mod proxy;
+pub mod route;
 mod signaling;
 mod udp;
+
+pub use route::{connect_with_policy, ConnectPolicyError, LanDialConfig, RoutePolicy};
 
 use crate::link::secure::{
     secure_handshake_client, secure_handshake_client_with_remote, secure_handshake_server,
@@ -453,6 +456,7 @@ pub async fn connect_wan(config: WanConfig) -> Result<SecureStream, WanError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::result_large_err)]
 mod tests {
     use super::*;
 

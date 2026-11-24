@@ -18,9 +18,12 @@
 
 #![deny(missing_docs)]
 
+pub mod direct_tunnel;
 pub mod forward;
 pub mod mux;
 pub mod tunnel_link;
+
+pub use direct_tunnel::DirectTunnelSession;
 
 use luciola_proto::{ErrorCode, ErrorInfo};
 

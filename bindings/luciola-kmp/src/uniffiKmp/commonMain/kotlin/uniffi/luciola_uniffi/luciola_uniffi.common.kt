@@ -299,11 +299,177 @@ public expect open class DiscoverySession: Disposable, DiscoverySessionInterface
 
 
 /**
+ * Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+ *
+ * Peer keys are checked against an explicit allowlist **before** the server signs
+ * handshake message 2 (deny by default; untrusted initiators learn neither the hub's
+ * public key nor any signature).
+ */
+public interface SecureHubInterface {
+    
+    /**
+     * Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+     * Returns `true` if newly added, `false` if already present.
+     */
+    @Throws(WanFfiException::class)
+    public fun `addAllowedPeer`(`publicKey`: kotlin.ByteArray): kotlin.Boolean
+    
+    /**
+     * Broadcast an encrypted frame to every connected peer.
+     * Returns fingerprints whose outbound queue rejected the frame.
+     */
+    public fun `broadcast`(`payload`: kotlin.ByteArray): List<kotlin.String>
+    
+    /**
+     * Snapshot of currently connected peers.
+     */
+    public fun `connectedPeers`(): List<HubPeerInfoDto>
+    
+    /**
+     * Disconnect one connected peer by fingerprint and emit `on_peer_disconnected`.
+     */
+    public fun `kick`(`fingerprint`: kotlin.String): kotlin.Boolean
+    
+    /**
+     * Actual listening socket address (`ip:port`).
+     */
+    public fun `localAddr`(): kotlin.String
+    
+    /**
+     * Actual listening TCP port (useful when started with `port == 0`).
+     */
+    public fun `localPort`(): kotlin.UShort
+    
+    /**
+     * Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+     * Does not disconnect an already-connected session; call [`Self::kick`] to drop an active peer.
+     */
+    @Throws(WanFfiException::class)
+    public fun `removeAllowedPeer`(`publicKey`: kotlin.ByteArray): kotlin.Boolean
+    
+    /**
+     * Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+     */
+    public fun `sendTo`(`fingerprint`: kotlin.String, `payload`: kotlin.ByteArray): kotlin.Boolean
+    
+    /**
+     * Stop accepting new peers and disconnect every active peer. Idempotent.
+     */
+    public fun `stop`()
+    
+    public companion object
+}
+
+
+/**
+ * Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+ *
+ * Peer keys are checked against an explicit allowlist **before** the server signs
+ * handshake message 2 (deny by default; untrusted initiators learn neither the hub's
+ * public key nor any signature).
+ */
+public expect open class SecureHub: Disposable, SecureHubInterface {
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("ConvertSecondaryConstructorToPrimary")
+    public constructor(noPointer: NoPointer)
+
+    
+
+    override fun destroy()
+    override fun close()
+
+    
+    /**
+     * Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+     * Returns `true` if newly added, `false` if already present.
+     */
+    @Throws(WanFfiException::class)
+    public override fun `addAllowedPeer`(`publicKey`: kotlin.ByteArray): kotlin.Boolean
+    
+    /**
+     * Broadcast an encrypted frame to every connected peer.
+     * Returns fingerprints whose outbound queue rejected the frame.
+     */
+    public override fun `broadcast`(`payload`: kotlin.ByteArray): List<kotlin.String>
+    
+    /**
+     * Snapshot of currently connected peers.
+     */
+    public override fun `connectedPeers`(): List<HubPeerInfoDto>
+    
+    /**
+     * Disconnect one connected peer by fingerprint and emit `on_peer_disconnected`.
+     */
+    public override fun `kick`(`fingerprint`: kotlin.String): kotlin.Boolean
+    
+    /**
+     * Actual listening socket address (`ip:port`).
+     */
+    public override fun `localAddr`(): kotlin.String
+    
+    /**
+     * Actual listening TCP port (useful when started with `port == 0`).
+     */
+    public override fun `localPort`(): kotlin.UShort
+    
+    /**
+     * Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+     * Does not disconnect an already-connected session; call [`Self::kick`] to drop an active peer.
+     */
+    @Throws(WanFfiException::class)
+    public override fun `removeAllowedPeer`(`publicKey`: kotlin.ByteArray): kotlin.Boolean
+    
+    /**
+     * Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+     */
+    public override fun `sendTo`(`fingerprint`: kotlin.String, `payload`: kotlin.ByteArray): kotlin.Boolean
+    
+    /**
+     * Stop accepting new peers and disconnect every active peer. Idempotent.
+     */
+    public override fun `stop`()
+    
+
+    public companion object {
+        
+        /**
+         * Bind `port` (`0` = OS ephemeral) and start accepting concurrent peers.
+         *
+         * `allowed_peer_public_keys` seeds the pre-sign allowlist (each entry must be 32 bytes;
+         * an empty list starts in deny-all mode until [`Self::add_allowed_peer`] is called).
+         */
+        @Throws(WanFfiException::class)
+        public fun `start`(`port`: kotlin.UShort, `identitySeed`: kotlin.ByteArray, `allowedPeerPublicKeys`: List<kotlin.ByteArray>, `listener`: HubEventListener): SecureHub
+        
+    }
+    
+}
+
+
+
+
+/**
  * One authenticated encrypted channel (see `luciola::link::secure`).
  * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
  * received frames are decrypted and delivered through the listener.
  */
 public interface SecureSessionInterface {
+    
+    /**
+     * Take ownership of an established [`WanChannel`] and drive its
+     * authenticated [`luciola::link::secure::SecureStream`] through this
+     * session's existing `send` / `on_message` / `stats` / `disconnect` surface.
+     *
+     * Stops any prior LAN link and pauses the LAN dual-port tunnel (`TunnelLink`).
+     * WAN sessions do not auto-reconnect (see `docs/DECISIONS.md`); on drop,
+     * `on_state("closed", None)` is emitted and the caller decides whether to redial.
+     */
+    @Throws(WanFfiException::class)
+    public fun `attachWanChannel`(`channel`: WanChannel, `listener`: SecureSessionListener)
     
     /**
      * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
@@ -485,6 +651,18 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
 
     
     /**
+     * Take ownership of an established [`WanChannel`] and drive its
+     * authenticated [`luciola::link::secure::SecureStream`] through this
+     * session's existing `send` / `on_message` / `stats` / `disconnect` surface.
+     *
+     * Stops any prior LAN link and pauses the LAN dual-port tunnel (`TunnelLink`).
+     * WAN sessions do not auto-reconnect (see `docs/DECISIONS.md`); on drop,
+     * `on_state("closed", None)` is emitted and the caller decides whether to redial.
+     */
+    @Throws(WanFfiException::class)
+    public override fun `attachWanChannel`(`channel`: WanChannel, `listener`: SecureSessionListener)
+    
+    /**
      * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
      *
      * 与 [`Self::disconnect`] 的语义差异是故意的也是关键的：入站会话清理（陌生连接
@@ -632,6 +810,67 @@ public expect open class SecureSession: Disposable, SecureSessionInterface {
      * 注销 UDP 转发。未注册返回 false。
      */
     public override fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+
+    
+    public companion object
+}
+
+
+
+
+/**
+ * Cooperative cancellation handle shared with any `transfer_*` call.
+ */
+public interface TransferCancelHandleInterface {
+    
+    /**
+     * Signal cancellation to any transfer observing this handle.
+     */
+    public fun `cancel`()
+    
+    /**
+     * Whether [`Self::cancel`] has been called.
+     */
+    public fun `isCancelled`(): kotlin.Boolean
+    
+    public companion object
+}
+
+
+/**
+ * Cooperative cancellation handle shared with any `transfer_*` call.
+ */
+public expect open class TransferCancelHandle: Disposable, TransferCancelHandleInterface {
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    /**
+     * Create a fresh non-cancelled handle.
+     */
+    public constructor(noPointer: NoPointer)
+
+    
+    /**
+     * Create a fresh non-cancelled handle.
+     */
+    public constructor()
+
+    override fun destroy()
+    override fun close()
+
+    
+    /**
+     * Signal cancellation to any transfer observing this handle.
+     */
+    public override fun `cancel`()
+    
+    /**
+     * Whether [`Self::cancel`] has been called.
+     */
+    public override fun `isCancelled`(): kotlin.Boolean
     
 
     
@@ -814,6 +1053,159 @@ public expect open class WanChannel: Disposable, WanChannelInterface {
 
     
     public companion object
+}
+
+
+
+
+/**
+ * Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+ * Does not alter the LAN dual-port `SecureSession` tunnel contract.
+ */
+public interface WanTunnelSessionInterface {
+    
+    /**
+     * Transport plane of the underlying channel.
+     */
+    public fun `channelType`(): WanChannelKind
+    
+    /**
+     * Disable the inbound ACL forward endpoint.
+     */
+    public fun `disableForwardEndpoint`()
+    
+    /**
+     * Enable or replace the inbound ACL forward endpoint (`--allow`).
+     */
+    @Throws(WanFfiException::class)
+    public fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>)
+    
+    /**
+     * Whether the underlying mux session is still alive.
+     */
+    public fun `isAlive`(): kotlin.Boolean
+    
+    /**
+     * Stop all forwards and shut down the tunnel. Idempotent.
+     */
+    public fun `shutdown`()
+    
+    /**
+     * Start a local TCP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     * Returns the actual bound local port (helpful when `listen_port == 0`).
+     */
+    @Throws(WanFfiException::class)
+    public fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.UShort
+    
+    /**
+     * Start a local UDP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     */
+    @Throws(WanFfiException::class)
+    public fun `startUdpForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.UShort
+    
+    /**
+     * Snapshot active forward stats.
+     */
+    public fun `stats`(): List<ForwardStatusDto>
+    
+    /**
+     * Stop a local TCP forward on `listen_port`.
+     */
+    public fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * Stop a local UDP forward on `listen_port`.
+     */
+    public fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    public companion object
+}
+
+
+/**
+ * Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+ * Does not alter the LAN dual-port `SecureSession` tunnel contract.
+ */
+public expect open class WanTunnelSession: Disposable, WanTunnelSessionInterface {
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("ConvertSecondaryConstructorToPrimary")
+    public constructor(noPointer: NoPointer)
+
+    
+
+    override fun destroy()
+    override fun close()
+
+    
+    /**
+     * Transport plane of the underlying channel.
+     */
+    public override fun `channelType`(): WanChannelKind
+    
+    /**
+     * Disable the inbound ACL forward endpoint.
+     */
+    public override fun `disableForwardEndpoint`()
+    
+    /**
+     * Enable or replace the inbound ACL forward endpoint (`--allow`).
+     */
+    @Throws(WanFfiException::class)
+    public override fun `enableForwardEndpoint`(`rules`: List<ForwardRuleDto>)
+    
+    /**
+     * Whether the underlying mux session is still alive.
+     */
+    public override fun `isAlive`(): kotlin.Boolean
+    
+    /**
+     * Stop all forwards and shut down the tunnel. Idempotent.
+     */
+    public override fun `shutdown`()
+    
+    /**
+     * Start a local TCP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     * Returns the actual bound local port (helpful when `listen_port == 0`).
+     */
+    @Throws(WanFfiException::class)
+    public override fun `startLocalForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.UShort
+    
+    /**
+     * Start a local UDP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     */
+    @Throws(WanFfiException::class)
+    public override fun `startUdpForward`(`listenPort`: kotlin.UShort, `host`: kotlin.String, `port`: kotlin.UShort): kotlin.UShort
+    
+    /**
+     * Snapshot active forward stats.
+     */
+    public override fun `stats`(): List<ForwardStatusDto>
+    
+    /**
+     * Stop a local TCP forward on `listen_port`.
+     */
+    public override fun `stopLocalForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+    /**
+     * Stop a local UDP forward on `listen_port`.
+     */
+    public override fun `stopUdpForward`(`listenPort`: kotlin.UShort): kotlin.Boolean
+    
+
+    public companion object {
+        
+        /**
+         * Consume `channel` and start a [`luciola_tunnel::DirectTunnelSession`] on `wan_runtime()`.
+         */
+        @Throws(WanFfiException::class)
+        public fun `fromWanChannel`(`channel`: WanChannel, `isInitiator`: kotlin.Boolean): WanTunnelSession
+        
+    }
+    
 }
 
 
@@ -1068,6 +1460,92 @@ public data class ForwardStatusDto (
 
 
 /**
+ * Metadata for a peer currently authenticated with [`SecureHub`].
+ */
+
+public data class HubPeerInfoDto (
+    /**
+     * Verified `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
+     */
+    var `fingerprint`: kotlin.String, 
+    /**
+     * Raw 32-byte Ed25519 public key of the peer.
+     */
+    var `publicKey`: kotlin.ByteArray, 
+    /**
+     * Peer's TCP socket address (`ip:port`).
+     */
+    var `remoteAddr`: kotlin.String
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+
+        other as HubPeerInfoDto
+        if (`fingerprint` != other.`fingerprint`) return false
+        if (!`publicKey`.contentEquals(other.`publicKey`)) return false
+        if (`remoteAddr` != other.`remoteAddr`) return false
+
+        return true
+    }
+    override fun hashCode(): Int {
+        var result = `fingerprint`.hashCode()
+        result = 31 * result + `publicKey`.contentHashCode()
+        result = 31 * result + `remoteAddr`.hashCode()
+        return result
+    }
+    public companion object
+}
+
+
+
+/**
+ * LAN dial parameters for [`connect_with_policy`] (pinned peer identity required; no TOFU).
+ */
+
+public data class LanDialConfigDto (
+    /**
+     * Candidate LAN IPv4 / IPv6 addresses.
+     */
+    var `addresses`: List<kotlin.String>, 
+    /**
+     * Peer's secure TCP port.
+     */
+    var `port`: kotlin.UShort, 
+    /**
+     * Local 32-byte Ed25519 identity seed (zeroized after validation).
+     */
+    var `identitySeed`: kotlin.ByteArray, 
+    /**
+     * Pinned 32-byte Ed25519 peer public key (mandatory; no TOFU).
+     */
+    var `peerPublicKey`: kotlin.ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+
+        other as LanDialConfigDto
+        if (`addresses` != other.`addresses`) return false
+        if (`port` != other.`port`) return false
+        if (!`identitySeed`.contentEquals(other.`identitySeed`)) return false
+        if (!`peerPublicKey`.contentEquals(other.`peerPublicKey`)) return false
+
+        return true
+    }
+    override fun hashCode(): Int {
+        var result = `addresses`.hashCode()
+        result = 31 * result + `port`.hashCode()
+        result = 31 * result + `identitySeed`.contentHashCode()
+        result = 31 * result + `peerPublicKey`.contentHashCode()
+        return result
+    }
+    public companion object
+}
+
+
+
+/**
  * Link health counters for UI/diagnostics.
  */
 
@@ -1256,6 +1734,73 @@ public data class RelaySessionKeys (
         result = 31 * result + `recvKey`.contentHashCode()
         return result
     }
+    public companion object
+}
+
+
+
+/**
+ * Progress event delivered by [`transfer_send_lan`], [`transfer_recv_lan`],
+ * [`transfer_send_wan`], and [`transfer_recv_wan`].
+ */
+
+public data class TransferProgressDto (
+    /**
+     * Stable transfer identifier used for checkpoint matching.
+     */
+    var `transferId`: kotlin.String, 
+    /**
+     * Contiguous acknowledged bytes so far.
+     */
+    var `bytesDone`: kotlin.ULong, 
+    /**
+     * Total expected bytes.
+     */
+    var `totalBytes`: kotlin.ULong, 
+    /**
+     * Active transport plane carrying the transfer.
+     */
+    var `channelType`: WanChannelKind, 
+    /**
+     * True when this update reports a resumed checkpoint skip.
+     */
+    var `resumed`: kotlin.Boolean
+) {
+    public companion object
+}
+
+
+
+/**
+ * Verified final receipt returned when a file transfer completes.
+ */
+
+public data class TransferReceiptDto (
+    /**
+     * Stable transfer identifier.
+     */
+    var `transferId`: kotlin.String, 
+    /**
+     * Sanitized basename of the file.
+     */
+    var `fileName`: kotlin.String, 
+    /**
+     * Total bytes transferred.
+     */
+    var `totalBytes`: kotlin.ULong, 
+    /**
+     * Lowercase hex SHA-256 checksum of the complete file.
+     */
+    var `sha256Hex`: kotlin.String, 
+    /**
+     * Saved destination path on disk (receiver side only).
+     */
+    var `savedPath`: kotlin.String?, 
+    /**
+     * Final transport plane active on completion.
+     */
+    var `channelType`: WanChannelKind
+) {
     public companion object
 }
 
@@ -1588,6 +2133,93 @@ public sealed class RelayCryptoException: kotlin.Exception() {
 
 
 /**
+ * Route selection strategy for [`connect_with_policy`].
+ */
+
+
+public enum class RoutePolicyKind {
+    
+    /**
+     * Dial LAN candidates only; never contact signalling or relay.
+     */
+    LAN_ONLY,
+    /**
+     * Race LAN candidates up to `lan_budget_ms`, falling back to WAN on connectivity failure.
+     * Security failures (pin mismatch / tamper) fail immediately without WAN fallback.
+     */
+    LAN_THEN_WAN,
+    /**
+     * Skip LAN and dial WAN directly.
+     */
+    WAN_ONLY;
+    public companion object
+}
+
+
+
+
+
+
+
+/**
+ * Errors returned by the FFI file transfer helpers.
+ */
+public sealed class TransferFfiException: kotlin.Exception() {
+    
+    /**
+     * Invalid key, path, or already-consumed channel.
+     */
+    public class InvalidConfig(
+        /**
+         * Diagnostic description.
+         */
+        public val `detail`: kotlin.String,
+    ) : TransferFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * Transfer size exceeds the active channel quota (for example over relay).
+     */
+    public class QuotaExceeded(
+        /**
+         * Diagnostic description.
+         */
+        public val `detail`: kotlin.String,
+    ) : TransferFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+    /**
+     * Transfer was cancelled by the caller via [`TransferCancelHandle`].
+     */
+    public class Cancelled(
+    ) : TransferFfiException() {
+        override val message: String
+            get() = ""
+    }
+    
+    /**
+     * Network, handshake, or I/O failure during transfer.
+     */
+    public class TransferFailed(
+        /**
+         * Diagnostic description.
+         */
+        public val `detail`: kotlin.String,
+    ) : TransferFfiException() {
+        override val message: String
+            get() = "detail=${ `detail` }"
+    }
+    
+}
+
+
+
+
+/**
  * How much a paired device may do without per-action confirmation.
  */
 
@@ -1740,6 +2372,38 @@ public sealed class WanFfiException: kotlin.Exception() {
 
 
 /**
+ * Callback interface receiving lifecycle and message events from [`SecureHub`].
+ */
+public interface HubEventListener {
+    
+    /**
+     * A peer completed the authenticated handshake and passed the pre-sign allowlist check.
+     */
+    public fun `onPeerConnected`(`peer`: HubPeerInfoDto)
+    
+    /**
+     * A decrypted application frame arrived from an authenticated peer.
+     */
+    public fun `onMessage`(`fingerprint`: kotlin.String, `remoteAddr`: kotlin.String, `payload`: kotlin.ByteArray)
+    
+    /**
+     * A connected peer disconnected or was kicked.
+     */
+    public fun `onPeerDisconnected`(`fingerprint`: kotlin.String)
+    
+    /**
+     * An inbound connection was rejected by the allowlist or failed handshake.
+     */
+    public fun `onPeerRejected`(`remoteAddr`: kotlin.String, `reason`: kotlin.String)
+    
+    public companion object
+}
+
+
+
+
+
+/**
  * 平台日志出口（可选）：宿主实现 [`LogSink`] 后调 [`set_log_sink`]，引擎内
  * 的 tracing 日志以 (level, message) 文本送达 FFI。
  *
@@ -1824,6 +2488,35 @@ public interface SecureSessionListener {
 
 
 
+/**
+ * Callback receiving transfer progress updates.
+ */
+public interface TransferListener {
+    
+    /**
+     * Called as contiguous acknowledged bytes advance.
+     */
+    public fun `onProgress`(`progress`: TransferProgressDto)
+    
+    public companion object
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1896,6 +2589,16 @@ public expect fun `comparisonPin`(`localPk`: kotlin.ByteArray, `remotePk`: kotli
  */
 @Throws(WanFfiException::class)
 public expect fun `connectWan`(`config`: WanConfig): WanChannel
+
+/**
+ * Establish an authenticated channel according to `policy` (`LanOnly`, `LanThenWan`, or `WanOnly`).
+ *
+ * When `policy` is [`RoutePolicyKind::LanThenWan`], `lan_budget_ms == 0` uses a 1500 ms default
+ * budget. The returned [`WanChannel`] always reports the honest transport plane (`LanDirect`,
+ * `HolePunchedDirect`, or `RelayForwarded`). Call from a worker thread, never from the UI thread.
+ */
+@Throws(WanFfiException::class)
+public expect fun `connectWithPolicy`(`policy`: RoutePolicyKind, `lanBudgetMs`: kotlin.ULong, `lan`: LanDialConfigDto?, `wan`: WanConfig?): WanChannel
 
 /**
  * Selection policy shared with the demos: first 3 IPv4 candidates plus the
@@ -2050,6 +2753,32 @@ public expect fun `signMessage`(`seed`: kotlin.ByteArray, `message`: kotlin.Byte
  * These addresses bypass Clash / Sing-box TUN mode (0.0.0.0/1) route capture.
  */
 public expect fun `subnetBroadcastAddresses`(): List<kotlin.String>
+
+/**
+ * Accept one pin-verified LAN file transfer into `dest_dir` (no TOFU).
+ * Call from a background worker thread.
+ */
+@Throws(TransferFfiException::class)
+public expect fun `transferRecvLan`(`identitySeed`: kotlin.ByteArray, `listenPort`: kotlin.UShort, `acceptPeerPublicKey`: kotlin.ByteArray, `destDir`: kotlin.String, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto
+
+/**
+ * Receive one file over an already-established [`WanChannel`] (consumes the channel).
+ */
+@Throws(TransferFfiException::class)
+public expect fun `transferRecvWan`(`channel`: WanChannel, `destDir`: kotlin.String, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto
+
+/**
+ * Send one file over a pin-verified LAN connection (no TOFU).
+ * Call from a background worker thread.
+ */
+@Throws(TransferFfiException::class)
+public expect fun `transferSendLan`(`identitySeed`: kotlin.ByteArray, `addresses`: List<kotlin.String>, `port`: kotlin.UShort, `pinnedPeerPublicKey`: kotlin.ByteArray, `filePath`: kotlin.String, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto
+
+/**
+ * Send one file over an already-established [`WanChannel`] (consumes the channel).
+ */
+@Throws(TransferFfiException::class)
+public expect fun `transferSendWan`(`channel`: WanChannel, `filePath`: kotlin.String, `maxRelayBytes`: kotlin.ULong?, `listener`: TransferListener?, `cancel`: TransferCancelHandle?): TransferReceiptDto
 
 /**
  * Verify a signature against an Ed25519 public key.

@@ -868,11 +868,312 @@ public func FfiConverterTypeDiscoverySession_lower(_ value: DiscoverySession) ->
 
 
 /**
+ * Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+ *
+ * Peer keys are checked against an explicit allowlist **before** the server signs
+ * handshake message 2 (deny by default; untrusted initiators learn neither the hub's
+ * public key nor any signature).
+ */
+public protocol SecureHubProtocol: AnyObject, Sendable {
+    
+    /**
+     * Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+     * Returns `true` if newly added, `false` if already present.
+     */
+    func addAllowedPeer(publicKey: Data) throws  -> Bool
+    
+    /**
+     * Broadcast an encrypted frame to every connected peer.
+     * Returns fingerprints whose outbound queue rejected the frame.
+     */
+    func broadcast(payload: Data)  -> [String]
+    
+    /**
+     * Snapshot of currently connected peers.
+     */
+    func connectedPeers()  -> [HubPeerInfoDto]
+    
+    /**
+     * Disconnect one connected peer by fingerprint and emit `on_peer_disconnected`.
+     */
+    func kick(fingerprint: String)  -> Bool
+    
+    /**
+     * Actual listening socket address (`ip:port`).
+     */
+    func localAddr()  -> String
+    
+    /**
+     * Actual listening TCP port (useful when started with `port == 0`).
+     */
+    func localPort()  -> UInt16
+    
+    /**
+     * Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+     * Does not disconnect an already-connected session; call [`Self::kick`] to drop an active peer.
+     */
+    func removeAllowedPeer(publicKey: Data) throws  -> Bool
+    
+    /**
+     * Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+     */
+    func sendTo(fingerprint: String, payload: Data)  -> Bool
+    
+    /**
+     * Stop accepting new peers and disconnect every active peer. Idempotent.
+     */
+    func stop() 
+    
+}
+/**
+ * Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+ *
+ * Peer keys are checked against an explicit allowlist **before** the server signs
+ * handshake message 2 (deny by default; untrusted initiators learn neither the hub's
+ * public key nor any signature).
+ */
+open class SecureHub: SecureHubProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_securehub(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_securehub(pointer, $0) }
+    }
+
+    
+    /**
+     * Bind `port` (`0` = OS ephemeral) and start accepting concurrent peers.
+     *
+     * `allowed_peer_public_keys` seeds the pre-sign allowlist (each entry must be 32 bytes;
+     * an empty list starts in deny-all mode until [`Self::add_allowed_peer`] is called).
+     */
+public static func start(port: UInt16, identitySeed: Data, allowedPeerPublicKeys: [Data], listener: HubEventListener)throws  -> SecureHub  {
+    return try  FfiConverterTypeSecureHub_lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_constructor_securehub_start(
+        FfiConverterUInt16.lower(port),
+        FfiConverterData.lower(identitySeed),
+        FfiConverterSequenceData.lower(allowedPeerPublicKeys),
+        FfiConverterCallbackInterfaceHubEventListener_lower(listener),$0
+    )
+})
+}
+    
+
+    
+    /**
+     * Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+     * Returns `true` if newly added, `false` if already present.
+     */
+open func addAllowedPeer(publicKey: Data)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_securehub_add_allowed_peer(self.uniffiClonePointer(),
+        FfiConverterData.lower(publicKey),$0
+    )
+})
+}
+    
+    /**
+     * Broadcast an encrypted frame to every connected peer.
+     * Returns fingerprints whose outbound queue rejected the frame.
+     */
+open func broadcast(payload: Data) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_broadcast(self.uniffiClonePointer(),
+        FfiConverterData.lower(payload),$0
+    )
+})
+}
+    
+    /**
+     * Snapshot of currently connected peers.
+     */
+open func connectedPeers() -> [HubPeerInfoDto]  {
+    return try!  FfiConverterSequenceTypeHubPeerInfoDto.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_connected_peers(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Disconnect one connected peer by fingerprint and emit `on_peer_disconnected`.
+     */
+open func kick(fingerprint: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_kick(self.uniffiClonePointer(),
+        FfiConverterString.lower(fingerprint),$0
+    )
+})
+}
+    
+    /**
+     * Actual listening socket address (`ip:port`).
+     */
+open func localAddr() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_local_addr(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Actual listening TCP port (useful when started with `port == 0`).
+     */
+open func localPort() -> UInt16  {
+    return try!  FfiConverterUInt16.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_local_port(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+     * Does not disconnect an already-connected session; call [`Self::kick`] to drop an active peer.
+     */
+open func removeAllowedPeer(publicKey: Data)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_securehub_remove_allowed_peer(self.uniffiClonePointer(),
+        FfiConverterData.lower(publicKey),$0
+    )
+})
+}
+    
+    /**
+     * Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+     */
+open func sendTo(fingerprint: String, payload: Data) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_send_to(self.uniffiClonePointer(),
+        FfiConverterString.lower(fingerprint),
+        FfiConverterData.lower(payload),$0
+    )
+})
+}
+    
+    /**
+     * Stop accepting new peers and disconnect every active peer. Idempotent.
+     */
+open func stop()  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_securehub_stop(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecureHub: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = SecureHub
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> SecureHub {
+        return SecureHub(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: SecureHub) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecureHub {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: SecureHub, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecureHub_lift(_ pointer: UnsafeMutableRawPointer) throws -> SecureHub {
+    return try FfiConverterTypeSecureHub.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecureHub_lower(_ value: SecureHub) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeSecureHub.lower(value)
+}
+
+
+
+
+
+
+/**
  * One authenticated encrypted channel (see `luciola::link::secure`).
  * Message-oriented for FFI friendliness: `send` queues an encrypted frame;
  * received frames are decrypted and delivered through the listener.
  */
 public protocol SecureSessionProtocol: AnyObject, Sendable {
+    
+    /**
+     * Take ownership of an established [`WanChannel`] and drive its
+     * authenticated [`luciola::link::secure::SecureStream`] through this
+     * session's existing `send` / `on_message` / `stats` / `disconnect` surface.
+     *
+     * Stops any prior LAN link and pauses the LAN dual-port tunnel (`TunnelLink`).
+     * WAN sessions do not auto-reconnect (see `docs/DECISIONS.md`); on drop,
+     * `on_state("closed", None)` is emitted and the caller decides whether to redial.
+     */
+    func attachWanChannel(channel: WanChannel, listener: SecureSessionListener) throws 
     
     /**
      * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
@@ -1091,6 +1392,23 @@ public convenience init(identitySeed: Data) {
 
     
 
+    
+    /**
+     * Take ownership of an established [`WanChannel`] and drive its
+     * authenticated [`luciola::link::secure::SecureStream`] through this
+     * session's existing `send` / `on_message` / `stats` / `disconnect` surface.
+     *
+     * Stops any prior LAN link and pauses the LAN dual-port tunnel (`TunnelLink`).
+     * WAN sessions do not auto-reconnect (see `docs/DECISIONS.md`); on drop,
+     * `on_state("closed", None)` is emitted and the caller decides whether to redial.
+     */
+open func attachWanChannel(channel: WanChannel, listener: SecureSessionListener)throws   {try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_securesession_attach_wan_channel(self.uniffiClonePointer(),
+        FfiConverterTypeWanChannel_lower(channel),
+        FfiConverterCallbackInterfaceSecureSessionListener_lower(listener),$0
+    )
+}
+}
     
     /**
      * 只断**当前这条连接**（Listen 角色的 accept 循环继续接下一个；Dial+auto 重拨）。
@@ -1431,6 +1749,164 @@ public func FfiConverterTypeSecureSession_lift(_ pointer: UnsafeMutableRawPointe
 #endif
 public func FfiConverterTypeSecureSession_lower(_ value: SecureSession) -> UnsafeMutableRawPointer {
     return FfiConverterTypeSecureSession.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Cooperative cancellation handle shared with any `transfer_*` call.
+ */
+public protocol TransferCancelHandleProtocol: AnyObject, Sendable {
+    
+    /**
+     * Signal cancellation to any transfer observing this handle.
+     */
+    func cancel() 
+    
+    /**
+     * Whether [`Self::cancel`] has been called.
+     */
+    func isCancelled()  -> Bool
+    
+}
+/**
+ * Cooperative cancellation handle shared with any `transfer_*` call.
+ */
+open class TransferCancelHandle: TransferCancelHandleProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_transfercancelhandle(self.pointer, $0) }
+    }
+    /**
+     * Create a fresh non-cancelled handle.
+     */
+public convenience init() {
+    let pointer =
+        try! rustCall() {
+    uniffi_luciola_uniffi_fn_constructor_transfercancelhandle_new($0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_transfercancelhandle(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * Signal cancellation to any transfer observing this handle.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_transfercancelhandle_cancel(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Whether [`Self::cancel`] has been called.
+     */
+open func isCancelled() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_transfercancelhandle_is_cancelled(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransferCancelHandle: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = TransferCancelHandle
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> TransferCancelHandle {
+        return TransferCancelHandle(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: TransferCancelHandle) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransferCancelHandle {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: TransferCancelHandle, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferCancelHandle_lift(_ pointer: UnsafeMutableRawPointer) throws -> TransferCancelHandle {
+    return try FfiConverterTypeTransferCancelHandle.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferCancelHandle_lower(_ value: TransferCancelHandle) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeTransferCancelHandle.lower(value)
 }
 
 
@@ -1821,6 +2297,297 @@ public func FfiConverterTypeWanChannel_lift(_ pointer: UnsafeMutableRawPointer) 
 #endif
 public func FfiConverterTypeWanChannel_lower(_ value: WanChannel) -> UnsafeMutableRawPointer {
     return FfiConverterTypeWanChannel.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+ * Does not alter the LAN dual-port `SecureSession` tunnel contract.
+ */
+public protocol WanTunnelSessionProtocol: AnyObject, Sendable {
+    
+    /**
+     * Transport plane of the underlying channel.
+     */
+    func channelType()  -> WanChannelKind
+    
+    /**
+     * Disable the inbound ACL forward endpoint.
+     */
+    func disableForwardEndpoint() 
+    
+    /**
+     * Enable or replace the inbound ACL forward endpoint (`--allow`).
+     */
+    func enableForwardEndpoint(rules: [ForwardRuleDto]) throws 
+    
+    /**
+     * Whether the underlying mux session is still alive.
+     */
+    func isAlive()  -> Bool
+    
+    /**
+     * Stop all forwards and shut down the tunnel. Idempotent.
+     */
+    func shutdown() 
+    
+    /**
+     * Start a local TCP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     * Returns the actual bound local port (helpful when `listen_port == 0`).
+     */
+    func startLocalForward(listenPort: UInt16, host: String, port: UInt16) throws  -> UInt16
+    
+    /**
+     * Start a local UDP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     */
+    func startUdpForward(listenPort: UInt16, host: String, port: UInt16) throws  -> UInt16
+    
+    /**
+     * Snapshot active forward stats.
+     */
+    func stats()  -> [ForwardStatusDto]
+    
+    /**
+     * Stop a local TCP forward on `listen_port`.
+     */
+    func stopLocalForward(listenPort: UInt16)  -> Bool
+    
+    /**
+     * Stop a local UDP forward on `listen_port`.
+     */
+    func stopUdpForward(listenPort: UInt16)  -> Bool
+    
+}
+/**
+ * Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+ * Does not alter the LAN dual-port `SecureSession` tunnel contract.
+ */
+open class WanTunnelSession: WanTunnelSessionProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_luciola_uniffi_fn_clone_wantunnelsession(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_luciola_uniffi_fn_free_wantunnelsession(pointer, $0) }
+    }
+
+    
+    /**
+     * Consume `channel` and start a [`luciola_tunnel::DirectTunnelSession`] on `wan_runtime()`.
+     */
+public static func fromWanChannel(channel: WanChannel, isInitiator: Bool)throws  -> WanTunnelSession  {
+    return try  FfiConverterTypeWanTunnelSession_lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_constructor_wantunnelsession_from_wan_channel(
+        FfiConverterTypeWanChannel_lower(channel),
+        FfiConverterBool.lower(isInitiator),$0
+    )
+})
+}
+    
+
+    
+    /**
+     * Transport plane of the underlying channel.
+     */
+open func channelType() -> WanChannelKind  {
+    return try!  FfiConverterTypeWanChannelKind_lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_channel_type(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Disable the inbound ACL forward endpoint.
+     */
+open func disableForwardEndpoint()  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_disable_forward_endpoint(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Enable or replace the inbound ACL forward endpoint (`--allow`).
+     */
+open func enableForwardEndpoint(rules: [ForwardRuleDto])throws   {try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_enable_forward_endpoint(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeForwardRuleDto.lower(rules),$0
+    )
+}
+}
+    
+    /**
+     * Whether the underlying mux session is still alive.
+     */
+open func isAlive() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_is_alive(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Stop all forwards and shut down the tunnel. Idempotent.
+     */
+open func shutdown()  {try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_shutdown(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * Start a local TCP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     * Returns the actual bound local port (helpful when `listen_port == 0`).
+     */
+open func startLocalForward(listenPort: UInt16, host: String, port: UInt16)throws  -> UInt16  {
+    return try  FfiConverterUInt16.lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_start_local_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),
+        FfiConverterString.lower(host),
+        FfiConverterUInt16.lower(port),$0
+    )
+})
+}
+    
+    /**
+     * Start a local UDP forward (`127.0.0.1:listen_port` → peer `host:port`).
+     */
+open func startUdpForward(listenPort: UInt16, host: String, port: UInt16)throws  -> UInt16  {
+    return try  FfiConverterUInt16.lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_start_udp_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),
+        FfiConverterString.lower(host),
+        FfiConverterUInt16.lower(port),$0
+    )
+})
+}
+    
+    /**
+     * Snapshot active forward stats.
+     */
+open func stats() -> [ForwardStatusDto]  {
+    return try!  FfiConverterSequenceTypeForwardStatusDto.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_stats(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Stop a local TCP forward on `listen_port`.
+     */
+open func stopLocalForward(listenPort: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_local_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),$0
+    )
+})
+}
+    
+    /**
+     * Stop a local UDP forward on `listen_port`.
+     */
+open func stopUdpForward(listenPort: UInt16) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_udp_forward(self.uniffiClonePointer(),
+        FfiConverterUInt16.lower(listenPort),$0
+    )
+})
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWanTunnelSession: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = WanTunnelSession
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> WanTunnelSession {
+        return WanTunnelSession(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: WanTunnelSession) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WanTunnelSession {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: WanTunnelSession, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanTunnelSession_lift(_ pointer: UnsafeMutableRawPointer) throws -> WanTunnelSession {
+    return try FfiConverterTypeWanTunnelSession.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWanTunnelSession_lower(_ value: WanTunnelSession) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeWanTunnelSession.lower(value)
 }
 
 
@@ -2739,6 +3506,218 @@ public func FfiConverterTypeForwardStatusDto_lower(_ value: ForwardStatusDto) ->
 
 
 /**
+ * Metadata for a peer currently authenticated with [`SecureHub`].
+ */
+public struct HubPeerInfoDto {
+    /**
+     * Verified `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
+     */
+    public var fingerprint: String
+    /**
+     * Raw 32-byte Ed25519 public key of the peer.
+     */
+    public var publicKey: Data
+    /**
+     * Peer's TCP socket address (`ip:port`).
+     */
+    public var remoteAddr: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Verified `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
+         */fingerprint: String, 
+        /**
+         * Raw 32-byte Ed25519 public key of the peer.
+         */publicKey: Data, 
+        /**
+         * Peer's TCP socket address (`ip:port`).
+         */remoteAddr: String) {
+        self.fingerprint = fingerprint
+        self.publicKey = publicKey
+        self.remoteAddr = remoteAddr
+    }
+}
+
+#if compiler(>=6)
+extension HubPeerInfoDto: Sendable {}
+#endif
+
+
+extension HubPeerInfoDto: Equatable, Hashable {
+    public static func ==(lhs: HubPeerInfoDto, rhs: HubPeerInfoDto) -> Bool {
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        if lhs.publicKey != rhs.publicKey {
+            return false
+        }
+        if lhs.remoteAddr != rhs.remoteAddr {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(fingerprint)
+        hasher.combine(publicKey)
+        hasher.combine(remoteAddr)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHubPeerInfoDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HubPeerInfoDto {
+        return
+            try HubPeerInfoDto(
+                fingerprint: FfiConverterString.read(from: &buf), 
+                publicKey: FfiConverterData.read(from: &buf), 
+                remoteAddr: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HubPeerInfoDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.fingerprint, into: &buf)
+        FfiConverterData.write(value.publicKey, into: &buf)
+        FfiConverterString.write(value.remoteAddr, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHubPeerInfoDto_lift(_ buf: RustBuffer) throws -> HubPeerInfoDto {
+    return try FfiConverterTypeHubPeerInfoDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHubPeerInfoDto_lower(_ value: HubPeerInfoDto) -> RustBuffer {
+    return FfiConverterTypeHubPeerInfoDto.lower(value)
+}
+
+
+/**
+ * LAN dial parameters for [`connect_with_policy`] (pinned peer identity required; no TOFU).
+ */
+public struct LanDialConfigDto {
+    /**
+     * Candidate LAN IPv4 / IPv6 addresses.
+     */
+    public var addresses: [String]
+    /**
+     * Peer's secure TCP port.
+     */
+    public var port: UInt16
+    /**
+     * Local 32-byte Ed25519 identity seed (zeroized after validation).
+     */
+    public var identitySeed: Data
+    /**
+     * Pinned 32-byte Ed25519 peer public key (mandatory; no TOFU).
+     */
+    public var peerPublicKey: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Candidate LAN IPv4 / IPv6 addresses.
+         */addresses: [String], 
+        /**
+         * Peer's secure TCP port.
+         */port: UInt16, 
+        /**
+         * Local 32-byte Ed25519 identity seed (zeroized after validation).
+         */identitySeed: Data, 
+        /**
+         * Pinned 32-byte Ed25519 peer public key (mandatory; no TOFU).
+         */peerPublicKey: Data) {
+        self.addresses = addresses
+        self.port = port
+        self.identitySeed = identitySeed
+        self.peerPublicKey = peerPublicKey
+    }
+}
+
+#if compiler(>=6)
+extension LanDialConfigDto: Sendable {}
+#endif
+
+
+extension LanDialConfigDto: Equatable, Hashable {
+    public static func ==(lhs: LanDialConfigDto, rhs: LanDialConfigDto) -> Bool {
+        if lhs.addresses != rhs.addresses {
+            return false
+        }
+        if lhs.port != rhs.port {
+            return false
+        }
+        if lhs.identitySeed != rhs.identitySeed {
+            return false
+        }
+        if lhs.peerPublicKey != rhs.peerPublicKey {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(addresses)
+        hasher.combine(port)
+        hasher.combine(identitySeed)
+        hasher.combine(peerPublicKey)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLanDialConfigDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LanDialConfigDto {
+        return
+            try LanDialConfigDto(
+                addresses: FfiConverterSequenceString.read(from: &buf), 
+                port: FfiConverterUInt16.read(from: &buf), 
+                identitySeed: FfiConverterData.read(from: &buf), 
+                peerPublicKey: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LanDialConfigDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.addresses, into: &buf)
+        FfiConverterUInt16.write(value.port, into: &buf)
+        FfiConverterData.write(value.identitySeed, into: &buf)
+        FfiConverterData.write(value.peerPublicKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLanDialConfigDto_lift(_ buf: RustBuffer) throws -> LanDialConfigDto {
+    return try FfiConverterTypeLanDialConfigDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLanDialConfigDto_lower(_ value: LanDialConfigDto) -> RustBuffer {
+    return FfiConverterTypeLanDialConfigDto.lower(value)
+}
+
+
+/**
  * Link health counters for UI/diagnostics.
  */
 public struct LinkStats {
@@ -3410,6 +4389,275 @@ public func FfiConverterTypeRelaySessionKeys_lift(_ buf: RustBuffer) throws -> R
 #endif
 public func FfiConverterTypeRelaySessionKeys_lower(_ value: RelaySessionKeys) -> RustBuffer {
     return FfiConverterTypeRelaySessionKeys.lower(value)
+}
+
+
+/**
+ * Progress event delivered by [`transfer_send_lan`], [`transfer_recv_lan`],
+ * [`transfer_send_wan`], and [`transfer_recv_wan`].
+ */
+public struct TransferProgressDto {
+    /**
+     * Stable transfer identifier used for checkpoint matching.
+     */
+    public var transferId: String
+    /**
+     * Contiguous acknowledged bytes so far.
+     */
+    public var bytesDone: UInt64
+    /**
+     * Total expected bytes.
+     */
+    public var totalBytes: UInt64
+    /**
+     * Active transport plane carrying the transfer.
+     */
+    public var channelType: WanChannelKind
+    /**
+     * True when this update reports a resumed checkpoint skip.
+     */
+    public var resumed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable transfer identifier used for checkpoint matching.
+         */transferId: String, 
+        /**
+         * Contiguous acknowledged bytes so far.
+         */bytesDone: UInt64, 
+        /**
+         * Total expected bytes.
+         */totalBytes: UInt64, 
+        /**
+         * Active transport plane carrying the transfer.
+         */channelType: WanChannelKind, 
+        /**
+         * True when this update reports a resumed checkpoint skip.
+         */resumed: Bool) {
+        self.transferId = transferId
+        self.bytesDone = bytesDone
+        self.totalBytes = totalBytes
+        self.channelType = channelType
+        self.resumed = resumed
+    }
+}
+
+#if compiler(>=6)
+extension TransferProgressDto: Sendable {}
+#endif
+
+
+extension TransferProgressDto: Equatable, Hashable {
+    public static func ==(lhs: TransferProgressDto, rhs: TransferProgressDto) -> Bool {
+        if lhs.transferId != rhs.transferId {
+            return false
+        }
+        if lhs.bytesDone != rhs.bytesDone {
+            return false
+        }
+        if lhs.totalBytes != rhs.totalBytes {
+            return false
+        }
+        if lhs.channelType != rhs.channelType {
+            return false
+        }
+        if lhs.resumed != rhs.resumed {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(transferId)
+        hasher.combine(bytesDone)
+        hasher.combine(totalBytes)
+        hasher.combine(channelType)
+        hasher.combine(resumed)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransferProgressDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransferProgressDto {
+        return
+            try TransferProgressDto(
+                transferId: FfiConverterString.read(from: &buf), 
+                bytesDone: FfiConverterUInt64.read(from: &buf), 
+                totalBytes: FfiConverterUInt64.read(from: &buf), 
+                channelType: FfiConverterTypeWanChannelKind.read(from: &buf), 
+                resumed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TransferProgressDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.transferId, into: &buf)
+        FfiConverterUInt64.write(value.bytesDone, into: &buf)
+        FfiConverterUInt64.write(value.totalBytes, into: &buf)
+        FfiConverterTypeWanChannelKind.write(value.channelType, into: &buf)
+        FfiConverterBool.write(value.resumed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferProgressDto_lift(_ buf: RustBuffer) throws -> TransferProgressDto {
+    return try FfiConverterTypeTransferProgressDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferProgressDto_lower(_ value: TransferProgressDto) -> RustBuffer {
+    return FfiConverterTypeTransferProgressDto.lower(value)
+}
+
+
+/**
+ * Verified final receipt returned when a file transfer completes.
+ */
+public struct TransferReceiptDto {
+    /**
+     * Stable transfer identifier.
+     */
+    public var transferId: String
+    /**
+     * Sanitized basename of the file.
+     */
+    public var fileName: String
+    /**
+     * Total bytes transferred.
+     */
+    public var totalBytes: UInt64
+    /**
+     * Lowercase hex SHA-256 checksum of the complete file.
+     */
+    public var sha256Hex: String
+    /**
+     * Saved destination path on disk (receiver side only).
+     */
+    public var savedPath: String?
+    /**
+     * Final transport plane active on completion.
+     */
+    public var channelType: WanChannelKind
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable transfer identifier.
+         */transferId: String, 
+        /**
+         * Sanitized basename of the file.
+         */fileName: String, 
+        /**
+         * Total bytes transferred.
+         */totalBytes: UInt64, 
+        /**
+         * Lowercase hex SHA-256 checksum of the complete file.
+         */sha256Hex: String, 
+        /**
+         * Saved destination path on disk (receiver side only).
+         */savedPath: String?, 
+        /**
+         * Final transport plane active on completion.
+         */channelType: WanChannelKind) {
+        self.transferId = transferId
+        self.fileName = fileName
+        self.totalBytes = totalBytes
+        self.sha256Hex = sha256Hex
+        self.savedPath = savedPath
+        self.channelType = channelType
+    }
+}
+
+#if compiler(>=6)
+extension TransferReceiptDto: Sendable {}
+#endif
+
+
+extension TransferReceiptDto: Equatable, Hashable {
+    public static func ==(lhs: TransferReceiptDto, rhs: TransferReceiptDto) -> Bool {
+        if lhs.transferId != rhs.transferId {
+            return false
+        }
+        if lhs.fileName != rhs.fileName {
+            return false
+        }
+        if lhs.totalBytes != rhs.totalBytes {
+            return false
+        }
+        if lhs.sha256Hex != rhs.sha256Hex {
+            return false
+        }
+        if lhs.savedPath != rhs.savedPath {
+            return false
+        }
+        if lhs.channelType != rhs.channelType {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(transferId)
+        hasher.combine(fileName)
+        hasher.combine(totalBytes)
+        hasher.combine(sha256Hex)
+        hasher.combine(savedPath)
+        hasher.combine(channelType)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransferReceiptDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransferReceiptDto {
+        return
+            try TransferReceiptDto(
+                transferId: FfiConverterString.read(from: &buf), 
+                fileName: FfiConverterString.read(from: &buf), 
+                totalBytes: FfiConverterUInt64.read(from: &buf), 
+                sha256Hex: FfiConverterString.read(from: &buf), 
+                savedPath: FfiConverterOptionString.read(from: &buf), 
+                channelType: FfiConverterTypeWanChannelKind.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TransferReceiptDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.transferId, into: &buf)
+        FfiConverterString.write(value.fileName, into: &buf)
+        FfiConverterUInt64.write(value.totalBytes, into: &buf)
+        FfiConverterString.write(value.sha256Hex, into: &buf)
+        FfiConverterOptionString.write(value.savedPath, into: &buf)
+        FfiConverterTypeWanChannelKind.write(value.channelType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferReceiptDto_lift(_ buf: RustBuffer) throws -> TransferReceiptDto {
+    return try FfiConverterTypeTransferReceiptDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferReceiptDto_lower(_ value: TransferReceiptDto) -> RustBuffer {
+    return FfiConverterTypeTransferReceiptDto.lower(value)
 }
 
 
@@ -4326,6 +5574,222 @@ extension RelayCryptoError: Foundation.LocalizedError {
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Route selection strategy for [`connect_with_policy`].
+ */
+
+public enum RoutePolicyKind {
+    
+    /**
+     * Dial LAN candidates only; never contact signalling or relay.
+     */
+    case lanOnly
+    /**
+     * Race LAN candidates up to `lan_budget_ms`, falling back to WAN on connectivity failure.
+     * Security failures (pin mismatch / tamper) fail immediately without WAN fallback.
+     */
+    case lanThenWan
+    /**
+     * Skip LAN and dial WAN directly.
+     */
+    case wanOnly
+}
+
+
+#if compiler(>=6)
+extension RoutePolicyKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRoutePolicyKind: FfiConverterRustBuffer {
+    typealias SwiftType = RoutePolicyKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RoutePolicyKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lanOnly
+        
+        case 2: return .lanThenWan
+        
+        case 3: return .wanOnly
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RoutePolicyKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lanOnly:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .lanThenWan:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .wanOnly:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRoutePolicyKind_lift(_ buf: RustBuffer) throws -> RoutePolicyKind {
+    return try FfiConverterTypeRoutePolicyKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRoutePolicyKind_lower(_ value: RoutePolicyKind) -> RustBuffer {
+    return FfiConverterTypeRoutePolicyKind.lower(value)
+}
+
+
+extension RoutePolicyKind: Equatable, Hashable {}
+
+
+
+
+
+
+
+/**
+ * Errors returned by the FFI file transfer helpers.
+ */
+public enum TransferFfiError: Swift.Error {
+
+    
+    
+    /**
+     * Invalid key, path, or already-consumed channel.
+     */
+    case InvalidConfig(
+        /**
+         * Diagnostic description.
+         */detail: String
+    )
+    /**
+     * Transfer size exceeds the active channel quota (for example over relay).
+     */
+    case QuotaExceeded(
+        /**
+         * Diagnostic description.
+         */detail: String
+    )
+    /**
+     * Transfer was cancelled by the caller via [`TransferCancelHandle`].
+     */
+    case Cancelled
+    /**
+     * Network, handshake, or I/O failure during transfer.
+     */
+    case TransferFailed(
+        /**
+         * Diagnostic description.
+         */detail: String
+    )
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransferFfiError: FfiConverterRustBuffer {
+    typealias SwiftType = TransferFfiError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransferFfiError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .InvalidConfig(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .QuotaExceeded(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .Cancelled
+        case 4: return .TransferFailed(
+            detail: try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TransferFfiError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .InvalidConfig(detail):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .QuotaExceeded(detail):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case .Cancelled:
+            writeInt(&buf, Int32(3))
+        
+        
+        case let .TransferFailed(detail):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(detail, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferFfiError_lift(_ buf: RustBuffer) throws -> TransferFfiError {
+    return try FfiConverterTypeTransferFfiError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferFfiError_lower(_ value: TransferFfiError) -> RustBuffer {
+    return FfiConverterTypeTransferFfiError.lower(value)
+}
+
+
+extension TransferFfiError: Equatable, Hashable {}
+
+
+
+
+extension TransferFfiError: Foundation.LocalizedError {
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+}
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * How much a paired device may do without per-action confirmation.
  */
 
@@ -4679,6 +6143,221 @@ extension WanFfiError: Foundation.LocalizedError {
 
 
 
+
+
+
+
+/**
+ * Callback interface receiving lifecycle and message events from [`SecureHub`].
+ */
+public protocol HubEventListener: AnyObject, Sendable {
+    
+    /**
+     * A peer completed the authenticated handshake and passed the pre-sign allowlist check.
+     */
+    func onPeerConnected(peer: HubPeerInfoDto) 
+    
+    /**
+     * A decrypted application frame arrived from an authenticated peer.
+     */
+    func onMessage(fingerprint: String, remoteAddr: String, payload: Data) 
+    
+    /**
+     * A connected peer disconnected or was kicked.
+     */
+    func onPeerDisconnected(fingerprint: String) 
+    
+    /**
+     * An inbound connection was rejected by the allowlist or failed handshake.
+     */
+    func onPeerRejected(remoteAddr: String, reason: String) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceHubEventListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceHubEventListener] = [UniffiVTableCallbackInterfaceHubEventListener(
+        onPeerConnected: { (
+            uniffiHandle: UInt64,
+            peer: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceHubEventListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onPeerConnected(
+                     peer: try FfiConverterTypeHubPeerInfoDto_lift(peer)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onMessage: { (
+            uniffiHandle: UInt64,
+            fingerprint: RustBuffer,
+            remoteAddr: RustBuffer,
+            payload: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceHubEventListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onMessage(
+                     fingerprint: try FfiConverterString.lift(fingerprint),
+                     remoteAddr: try FfiConverterString.lift(remoteAddr),
+                     payload: try FfiConverterData.lift(payload)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onPeerDisconnected: { (
+            uniffiHandle: UInt64,
+            fingerprint: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceHubEventListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onPeerDisconnected(
+                     fingerprint: try FfiConverterString.lift(fingerprint)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onPeerRejected: { (
+            uniffiHandle: UInt64,
+            remoteAddr: RustBuffer,
+            reason: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceHubEventListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onPeerRejected(
+                     remoteAddr: try FfiConverterString.lift(remoteAddr),
+                     reason: try FfiConverterString.lift(reason)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceHubEventListener.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface HubEventListener: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitHubEventListener() {
+    uniffi_luciola_uniffi_fn_init_callback_vtable_hubeventlistener(UniffiCallbackInterfaceHubEventListener.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceHubEventListener {
+    fileprivate static let handleMap = UniffiHandleMap<HubEventListener>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceHubEventListener : FfiConverter {
+    typealias SwiftType = HubEventListener
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceHubEventListener_lift(_ handle: UInt64) throws -> HubEventListener {
+    return try FfiConverterCallbackInterfaceHubEventListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceHubEventListener_lower(_ v: HubEventListener) -> UInt64 {
+    return FfiConverterCallbackInterfaceHubEventListener.lower(v)
+}
 
 
 
@@ -5186,6 +6865,128 @@ public func FfiConverterCallbackInterfaceSecureSessionListener_lower(_ v: Secure
     return FfiConverterCallbackInterfaceSecureSessionListener.lower(v)
 }
 
+
+
+
+/**
+ * Callback receiving transfer progress updates.
+ */
+public protocol TransferListener: AnyObject, Sendable {
+    
+    /**
+     * Called as contiguous acknowledged bytes advance.
+     */
+    func onProgress(progress: TransferProgressDto) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceTransferListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceTransferListener] = [UniffiVTableCallbackInterfaceTransferListener(
+        onProgress: { (
+            uniffiHandle: UInt64,
+            progress: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceTransferListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onProgress(
+                     progress: try FfiConverterTypeTransferProgressDto_lift(progress)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceTransferListener.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface TransferListener: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitTransferListener() {
+    uniffi_luciola_uniffi_fn_init_callback_vtable_transferlistener(UniffiCallbackInterfaceTransferListener.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceTransferListener {
+    fileprivate static let handleMap = UniffiHandleMap<TransferListener>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceTransferListener : FfiConverter {
+    typealias SwiftType = TransferListener
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceTransferListener_lift(_ handle: UInt64) throws -> TransferListener {
+    return try FfiConverterCallbackInterfaceTransferListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceTransferListener_lower(_ v: TransferListener) -> UInt64 {
+    return FfiConverterCallbackInterfaceTransferListener.lower(v)
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -5309,6 +7110,30 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeTransferCancelHandle: FfiConverterRustBuffer {
+    typealias SwiftType = TransferCancelHandle?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTransferCancelHandle.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTransferCancelHandle.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeDeviceMeta: FfiConverterRustBuffer {
     typealias SwiftType = DeviceMeta?
 
@@ -5333,6 +7158,30 @@ fileprivate struct FfiConverterOptionTypeDeviceMeta: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeLanDialConfigDto: FfiConverterRustBuffer {
+    typealias SwiftType = LanDialConfigDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeLanDialConfigDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeLanDialConfigDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypePairingInfo: FfiConverterRustBuffer {
     typealias SwiftType = PairingInfo?
 
@@ -5349,6 +7198,30 @@ fileprivate struct FfiConverterOptionTypePairingInfo: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypePairingInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeWanConfig: FfiConverterRustBuffer {
+    typealias SwiftType = WanConfig?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeWanConfig.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeWanConfig.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -5397,6 +7270,30 @@ fileprivate struct FfiConverterOptionCallbackInterfaceLogSink: FfiConverterRustB
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterCallbackInterfaceLogSink.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionCallbackInterfaceTransferListener: FfiConverterRustBuffer {
+    typealias SwiftType = TransferListener?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterCallbackInterfaceTransferListener.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterCallbackInterfaceTransferListener.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -5478,6 +7375,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]
+
+    public static func write(_ value: [Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Data] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Data]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeDialChannel: FfiConverterRustBuffer {
     typealias SwiftType = [DialChannel]
 
@@ -5545,6 +7467,31 @@ fileprivate struct FfiConverterSequenceTypeForwardStatusDto: FfiConverterRustBuf
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeForwardStatusDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeHubPeerInfoDto: FfiConverterRustBuffer {
+    typealias SwiftType = [HubPeerInfoDto]
+
+    public static func write(_ value: [HubPeerInfoDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHubPeerInfoDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HubPeerInfoDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HubPeerInfoDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHubPeerInfoDto.read(from: &buf))
         }
         return seq
     }
@@ -5682,6 +7629,23 @@ public func connectWan(config: WanConfig)throws  -> WanChannel  {
     return try  FfiConverterTypeWanChannel_lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
     uniffi_luciola_uniffi_fn_func_connect_wan(
         FfiConverterTypeWanConfig_lower(config),$0
+    )
+})
+}
+/**
+ * Establish an authenticated channel according to `policy` (`LanOnly`, `LanThenWan`, or `WanOnly`).
+ *
+ * When `policy` is [`RoutePolicyKind::LanThenWan`], `lan_budget_ms == 0` uses a 1500 ms default
+ * budget. The returned [`WanChannel`] always reports the honest transport plane (`LanDirect`,
+ * `HolePunchedDirect`, or `RelayForwarded`). Call from a worker thread, never from the UI thread.
+ */
+public func connectWithPolicy(policy: RoutePolicyKind, lanBudgetMs: UInt64, lan: LanDialConfigDto?, wan: WanConfig?)throws  -> WanChannel  {
+    return try  FfiConverterTypeWanChannel_lift(try rustCallWithError(FfiConverterTypeWanFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_connect_with_policy(
+        FfiConverterTypeRoutePolicyKind_lower(policy),
+        FfiConverterUInt64.lower(lanBudgetMs),
+        FfiConverterOptionTypeLanDialConfigDto.lower(lan),
+        FfiConverterOptionTypeWanConfig.lower(wan),$0
     )
 })
 }
@@ -5996,6 +7960,66 @@ public func subnetBroadcastAddresses() -> [String]  {
 })
 }
 /**
+ * Accept one pin-verified LAN file transfer into `dest_dir` (no TOFU).
+ * Call from a background worker thread.
+ */
+public func transferRecvLan(identitySeed: Data, listenPort: UInt16, acceptPeerPublicKey: Data, destDir: String, listener: TransferListener?, cancel: TransferCancelHandle?)throws  -> TransferReceiptDto  {
+    return try  FfiConverterTypeTransferReceiptDto_lift(try rustCallWithError(FfiConverterTypeTransferFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_transfer_recv_lan(
+        FfiConverterData.lower(identitySeed),
+        FfiConverterUInt16.lower(listenPort),
+        FfiConverterData.lower(acceptPeerPublicKey),
+        FfiConverterString.lower(destDir),
+        FfiConverterOptionCallbackInterfaceTransferListener.lower(listener),
+        FfiConverterOptionTypeTransferCancelHandle.lower(cancel),$0
+    )
+})
+}
+/**
+ * Receive one file over an already-established [`WanChannel`] (consumes the channel).
+ */
+public func transferRecvWan(channel: WanChannel, destDir: String, listener: TransferListener?, cancel: TransferCancelHandle?)throws  -> TransferReceiptDto  {
+    return try  FfiConverterTypeTransferReceiptDto_lift(try rustCallWithError(FfiConverterTypeTransferFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_transfer_recv_wan(
+        FfiConverterTypeWanChannel_lower(channel),
+        FfiConverterString.lower(destDir),
+        FfiConverterOptionCallbackInterfaceTransferListener.lower(listener),
+        FfiConverterOptionTypeTransferCancelHandle.lower(cancel),$0
+    )
+})
+}
+/**
+ * Send one file over a pin-verified LAN connection (no TOFU).
+ * Call from a background worker thread.
+ */
+public func transferSendLan(identitySeed: Data, addresses: [String], port: UInt16, pinnedPeerPublicKey: Data, filePath: String, listener: TransferListener?, cancel: TransferCancelHandle?)throws  -> TransferReceiptDto  {
+    return try  FfiConverterTypeTransferReceiptDto_lift(try rustCallWithError(FfiConverterTypeTransferFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_transfer_send_lan(
+        FfiConverterData.lower(identitySeed),
+        FfiConverterSequenceString.lower(addresses),
+        FfiConverterUInt16.lower(port),
+        FfiConverterData.lower(pinnedPeerPublicKey),
+        FfiConverterString.lower(filePath),
+        FfiConverterOptionCallbackInterfaceTransferListener.lower(listener),
+        FfiConverterOptionTypeTransferCancelHandle.lower(cancel),$0
+    )
+})
+}
+/**
+ * Send one file over an already-established [`WanChannel`] (consumes the channel).
+ */
+public func transferSendWan(channel: WanChannel, filePath: String, maxRelayBytes: UInt64?, listener: TransferListener?, cancel: TransferCancelHandle?)throws  -> TransferReceiptDto  {
+    return try  FfiConverterTypeTransferReceiptDto_lift(try rustCallWithError(FfiConverterTypeTransferFfiError_lift) {
+    uniffi_luciola_uniffi_fn_func_transfer_send_wan(
+        FfiConverterTypeWanChannel_lower(channel),
+        FfiConverterString.lower(filePath),
+        FfiConverterOptionUInt64.lower(maxRelayBytes),
+        FfiConverterOptionCallbackInterfaceTransferListener.lower(listener),
+        FfiConverterOptionTypeTransferCancelHandle.lower(cancel),$0
+    )
+})
+}
+/**
  * Verify a signature against an Ed25519 public key.
  */
 public func verifyMessage(publicKey: Data, message: Data, signature: Data) -> Bool  {
@@ -6064,6 +8088,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_connect_wan() != 30765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_connect_with_policy() != 35820) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_func_default_race_candidates() != 52364) {
@@ -6150,6 +8177,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses() != 6105) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_func_transfer_recv_lan() != 52444) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_transfer_recv_wan() != 50333) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_transfer_send_lan() != 57051) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_func_transfer_send_wan() != 33149) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_func_verify_message() != 57140) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6181,6 +8220,36 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_discoverysession_stop() != 1480) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_add_allowed_peer() != 50106) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_broadcast() != 35669) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_connected_peers() != 16789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_kick() != 36514) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_local_addr() != 51642) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_local_port() != 17492) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_remove_allowed_peer() != 60786) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_send_to() != 59826) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securehub_stop() != 34084) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_securesession_attach_wan_channel() != 65072) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel() != 43852) {
@@ -6252,6 +8321,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward() != 19408) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_transfercancelhandle_cancel() != 48631) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_transfercancelhandle_is_cancelled() != 28569) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_method_truststore_entries() != 48483) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6276,13 +8351,64 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown() != 26295) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_channel_type() != 15028) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_disable_forward_endpoint() != 38116) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_enable_forward_endpoint() != 21219) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_is_alive() != 25609) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_shutdown() != 44211) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_local_forward() != 25028) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_udp_forward() != 63004) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_stats() != 40911) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_local_forward() != 19788) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_udp_forward() != 16388) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_constructor_discoverysession_new() != 49533) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_constructor_securehub_start() != 17026) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_constructor_securesession_new() != 15751) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_constructor_transfercancelhandle_new() != 59042) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_luciola_uniffi_checksum_constructor_truststore_new() != 36036) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_constructor_wantunnelsession_from_wan_channel() != 43571) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_connected() != 8661) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_message() != 52361) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_disconnected() != 58039) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_rejected() != 47150) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_luciola_uniffi_checksum_method_logsink_log() != 26187) {
@@ -6306,10 +8432,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message() != 63088) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_luciola_uniffi_checksum_method_transferlistener_on_progress() != 3422) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
+    uniffiCallbackInitHubEventListener()
     uniffiCallbackInitLogSink()
     uniffiCallbackInitOnPeerDiscovered()
     uniffiCallbackInitSecureSessionListener()
+    uniffiCallbackInitTransferListener()
     return InitializationResult.ok
 }()
 

@@ -1102,6 +1102,44 @@ pub struct SecureSession {
     /// 否则第一条陌生连接的清理会把宿主的监听器整个带死（真机实测：一条超期的
     /// 配对申请让桌面从此 TCP 连不上，直到重启）。
     drop_channel_tx: std::sync::Arc<std::sync::Mutex<Option<mpsc::Sender<()>>>>,
+    /// Monotonic session generation counter so an exiting old link/WAN pump
+    /// cannot clobber `connected` or emit a stale `"closed"` after a newer
+    /// link or `attach_wan_channel` has taken over.
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Serializes `disconnect()`, `spawn_link()`, and `attach_wan_channel()` so
+    /// concurrent lifecycle transitions cannot install a live pump after
+    /// `disconnect()` has already returned.
+    lifecycle: Mutex<()>,
+}
+
+/// Upper bound (24 h) on keepalive/retry timers so `Instant::now() + period`
+/// can never overflow platform instant arithmetic.
+const MAX_LINK_TIMER_MS: u64 = 86_400_000;
+
+/// Ordered OS-thread callback dispatcher used by `attach_wan_channel` so
+/// foreign `SecureSessionListener` callbacks never execute on `wan_runtime()`'s
+/// 2 Tokio worker threads (preventing both nested `block_on` panics and worker
+/// starvation). Exits cleanly once its sender is dropped.
+struct CallbackDispatcher {
+    tx: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>,
+}
+
+impl CallbackDispatcher {
+    fn spawn(thread_name: &'static str) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let _ = std::thread::Builder::new()
+            .name(thread_name.to_string())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    job();
+                }
+            });
+        Self { tx }
+    }
+
+    fn dispatch<F: FnOnce() + Send + 'static>(&self, f: F) {
+        let _ = self.tx.send(Box::new(f));
+    }
 }
 
 /// Retry/keepalive timings, adjustable before/after connect.
@@ -1160,6 +1198,8 @@ impl SecureSession {
             connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             peer_public_key: std::sync::Arc::new(std::sync::Mutex::new(None)),
             drop_channel_tx: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            lifecycle: Mutex::new(()),
             stats: std::sync::Arc::new(LinkStatsCounters::default()),
             timings: std::sync::Arc::new(LinkTimings::default()),
             tunnel,
@@ -1171,10 +1211,12 @@ impl SecureSession {
     /// `max_ms`, each delay jittered by +-`jitter_pct` percent (anti-thundering-herd).
     pub fn set_retry_policy(&self, min_ms: u64, max_ms: u64, jitter_pct: u64) {
         let t = &self.timings;
+        let min_c = min_ms.min(MAX_LINK_TIMER_MS);
+        let max_c = max_ms.min(MAX_LINK_TIMER_MS).max(min_c);
         t.reconnect_min_ms
-            .store(min_ms, std::sync::atomic::Ordering::Relaxed);
+            .store(min_c, std::sync::atomic::Ordering::Relaxed);
         t.reconnect_max_ms
-            .store(max_ms.max(min_ms), std::sync::atomic::Ordering::Relaxed);
+            .store(max_c, std::sync::atomic::Ordering::Relaxed);
         t.jitter_pct
             .store(jitter_pct.min(90), std::sync::atomic::Ordering::Relaxed);
     }
@@ -1183,12 +1225,12 @@ impl SecureSession {
     /// after `dead_after_ms` of silence. Hosts raise both under Android Doze.
     pub fn set_keepalive(&self, interval_ms: u64, dead_after_ms: u64) {
         let t = &self.timings;
+        let interval_c = interval_ms.min(MAX_LINK_TIMER_MS);
+        let dead_c = dead_after_ms.min(MAX_LINK_TIMER_MS).max(interval_c);
         t.keepalive_ms
-            .store(interval_ms, std::sync::atomic::Ordering::Relaxed);
-        t.dead_after_ms.store(
-            dead_after_ms.max(interval_ms),
-            std::sync::atomic::Ordering::Relaxed,
-        );
+            .store(interval_c, std::sync::atomic::Ordering::Relaxed);
+        t.dead_after_ms
+            .store(dead_c, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Link health counters (sent/received frames, connections, retries).
@@ -1233,6 +1275,138 @@ impl SecureSession {
         listener: Box<dyn SecureSessionListener>,
     ) {
         self.spawn_link(LinkRole::Listen(port, expected_peer), listener);
+    }
+
+    /// Take ownership of an established [`WanChannel`] and drive its
+    /// authenticated [`luciola::link::secure::SecureStream`] through this
+    /// session's existing `send` / `on_message` / `stats` / `disconnect` surface.
+    ///
+    /// Stops any prior LAN link and pauses the LAN dual-port tunnel (`TunnelLink`).
+    /// WAN sessions do not auto-reconnect (see `docs/DECISIONS.md`); on drop,
+    /// `on_state("closed", None)` is emitted and the caller decides whether to redial.
+    pub fn attach_wan_channel(
+        self: std::sync::Arc<Self>,
+        channel: Arc<WanChannel>,
+        listener: Box<dyn SecureSessionListener>,
+    ) -> Result<(), WanFfiError> {
+        let mut stream = channel
+            .take_stream()?
+            .ok_or_else(|| WanFfiError::InvalidConfig {
+                detail: "WanChannel already attached or shut down".into(),
+            })?;
+
+        let listener: std::sync::Arc<dyn SecureSessionListener> = listener.into();
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(64);
+        let (drop_tx, mut drop_rx) = mpsc::channel::<()>(1);
+        let peer_fp = stream.peer_fingerprint();
+
+        let my_gen = {
+            let _life = self.lifecycle.lock().unwrap();
+            self.disconnect_locked();
+            let g = self
+                .generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
+            *self.outbound_tx.lock().unwrap() = Some(out_tx);
+            self.stats
+                .connections
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.connected
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            *self.peer_public_key.lock().unwrap() = Some(stream.peer_public_key.clone());
+            *self.drop_channel_tx.lock().unwrap() = Some(drop_tx);
+            g
+        };
+
+        let connected = self.connected.clone();
+        let stats = self.stats.clone();
+        let timings = self.timings.clone();
+        let generation = self.generation.clone();
+        let cb_dispatcher = CallbackDispatcher::spawn("luciola-wan-cb");
+        {
+            let l = listener.clone();
+            let fp = peer_fp;
+            cb_dispatcher.dispatch(move || l.on_state("connected".into(), Some(fp)));
+        }
+
+        wan_runtime().spawn(async move {
+            let ka_ms = timings
+                .keepalive_ms
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let mut keepalive = (ka_ms > 0).then(|| {
+                let mut iv = tokio::time::interval(std::time::Duration::from_millis(ka_ms));
+                iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                iv.reset();
+                iv
+            });
+            let mut awaiting_pong = false;
+            loop {
+                let mut buf = Vec::new();
+                tokio::select! {
+                    _ = &mut shutdown_rx => {
+                        let _ = stream.shutdown().await;
+                        break;
+                    }
+                    _ = drop_rx.recv() => {
+                        let _ = stream.shutdown().await;
+                        break;
+                    }
+                    _ = async {
+                        if let Some(ref mut iv) = keepalive {
+                            iv.tick().await;
+                        }
+                    }, if keepalive.is_some() => {
+                        if awaiting_pong {
+                            break;
+                        }
+                        if stream.send(&[]).await.is_err() {
+                            break;
+                        }
+                        awaiting_pong = true;
+                    }
+                    msg = out_rx.recv() => match msg {
+                        Some(m) => {
+                            stats.frames_dequeued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if let Some(ref mut iv) = keepalive {
+                                iv.reset();
+                            }
+                            awaiting_pong = false;
+                            if stream.send(&m).await.is_ok() {
+                                stats.frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            } else {
+                                break;
+                            }
+                        }
+                        None => break,
+                    },
+                    frame = stream.recv(&mut buf) => {
+                        if let Some(ref mut iv) = keepalive {
+                            iv.reset();
+                        }
+                        awaiting_pong = false;
+                        if frame.is_err() {
+                            break;
+                        }
+                        if !buf.is_empty() {
+                            stats.frames_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let remote_addr = stream.remote_addr().map(|a| a.to_string());
+                            let fp = stream.peer_fingerprint();
+                            let l = listener.clone();
+                            cb_dispatcher.dispatch(move || l.on_message(buf, fp, remote_addr));
+                        }
+                    }
+                }
+            }
+            if generation.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                let l = listener.clone();
+                cb_dispatcher.dispatch(move || l.on_state("closed".into(), None));
+            }
+        });
+
+        Ok(())
     }
 
     /// 对端的 Ed25519 身份公钥（最近一次连接的）。发起侧 TOFU 时这把 key 是
@@ -1389,14 +1563,8 @@ impl SecureSession {
     /// `disconnect` because the generated Disposable interface already owns
     /// `close`.)
     pub fn disconnect(&self) {
-        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
-            let _ = tx.send(());
-        }
-        *self.outbound_tx.lock().unwrap() = None;
-        self.connected
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-        // T3：消息链路断开 → 暂停隧道（拆除活跃转发；注册表/基址保留待恢复）。
-        self.tunnel.pause();
+        let _life = self.lifecycle.lock().unwrap();
+        self.disconnect_locked();
     }
 }
 
@@ -1414,6 +1582,12 @@ impl TunnelReporter for TunnelToListener {
 fn parse_rule_dtos(dtos: Vec<ForwardRuleDto>) -> Result<Vec<ForwardRule>, TunnelError> {
     let mut parsed = Vec::with_capacity(dtos.len());
     for r in dtos {
+        if r.port_from == 0 || r.port_from > r.port_to {
+            return Err(TunnelError::InvalidRule(format!(
+                "非法端口区间：{}:{}-{}",
+                r.host, r.port_from, r.port_to
+            )));
+        }
         let host = luciola_tunnel::forward::normalize_rule_host_text(&r.host).ok_or_else(|| {
             TunnelError::InvalidRule(format!(
                 "规则主机既不是合法 IP 也不是合法主机名：{}:{}-{}",
@@ -1431,6 +1605,18 @@ fn parse_rule_dtos(dtos: Vec<ForwardRuleDto>) -> Result<Vec<ForwardRule>, Tunnel
 }
 
 impl SecureSession {
+    fn disconnect_locked(&self) {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        *self.outbound_tx.lock().unwrap() = None;
+        self.connected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        // T3：消息链路断开 → 暂停隧道（拆除活跃转发；注册表/基址保留待恢复）。
+        self.tunnel.pause();
+    }
     /// T3 统一同步结果：Ok → true；Err → on_state(kind, to_state()) → false。
     fn tunnel_result(&self, r: Result<(), TunnelError>) -> bool {
         match r {
@@ -1449,36 +1635,45 @@ impl SecureSession {
     fn spawn_link(&self, role: LinkRole, listener: Box<dyn SecureSessionListener>) {
         use luciola::link::secure::SecureStream;
 
-        self.disconnect();
         let listener: std::sync::Arc<dyn SecureSessionListener> = listener.into();
-        // T3：把隧道事件流接给本 listener，并注入隧道基址（角色镜像本链路）。
-        // 顺序保证：上一行 disconnect() 已先发 pause，set_base 后到 → 解除暂停。
-        *self.tunnel_listener.lock().unwrap() = Some(listener.clone());
-        let tunnel_base = match &role {
-            LinkRole::Dial(addresses, port, pinned, _) => TunnelBase::Dial {
-                addresses: addresses.clone(),
-                secure_port: *port,
-                pinned_peer_public_key: pinned.clone(),
-            },
-            LinkRole::Listen(port, expected) => TunnelBase::Listen {
-                secure_port: *port,
-                expected_peer: expected.clone(),
-            },
-        };
-        let reporter: std::sync::Arc<dyn TunnelReporter> =
-            std::sync::Arc::new(TunnelToListener(listener.clone()));
-        self.tunnel.set_base(tunnel_base, reporter);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
         // Bounded outbound queue: a stalled peer must not grow our memory.
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(64);
-        *self.outbound_tx.lock().unwrap() = Some(out_tx);
+        let my_gen = {
+            let _life = self.lifecycle.lock().unwrap();
+            self.disconnect_locked();
+            let g = self
+                .generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            // T3：把隧道事件流接给本 listener，并注入隧道基址（角色镜像本链路）。
+            // 顺序保证：上一行 disconnect_locked() 已先发 pause，set_base 后到 → 解除暂停。
+            *self.tunnel_listener.lock().unwrap() = Some(listener.clone());
+            let tunnel_base = match &role {
+                LinkRole::Dial(addresses, port, pinned, _) => TunnelBase::Dial {
+                    addresses: addresses.clone(),
+                    secure_port: *port,
+                    pinned_peer_public_key: pinned.clone(),
+                },
+                LinkRole::Listen(port, expected) => TunnelBase::Listen {
+                    secure_port: *port,
+                    expected_peer: expected.clone(),
+                },
+            };
+            let reporter: std::sync::Arc<dyn TunnelReporter> =
+                std::sync::Arc::new(TunnelToListener(listener.clone()));
+            self.tunnel.set_base(tunnel_base, reporter);
+            *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
+            *self.outbound_tx.lock().unwrap() = Some(out_tx);
+            g
+        };
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
         let stats = self.stats.clone();
         let timings = self.timings.clone();
         let peer_public_key = self.peer_public_key.clone();
         let drop_slot = self.drop_channel_tx.clone();
+        let generation = self.generation.clone();
 
         std::thread::Builder::new()
             .name("luciola-secure-link".to_string())
@@ -1516,8 +1711,10 @@ impl SecureSession {
                         LinkRole::Listen(port, _) => match luciola::link::bind_dual_stack_listener(*port).await {
                             Ok(l) => Some(l),
                             Err(e) => {
-                                let info = ErrorInfo::new(ErrorCode::BindFailed, e.to_string());
-                                listener.on_state("error".into(), Some(info.wire_detail()));
+                                if generation.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                                    let info = ErrorInfo::new(ErrorCode::BindFailed, e.to_string());
+                                    listener.on_state("error".into(), Some(info.wire_detail()));
+                                }
                                 return;
                             }
                         },
@@ -1525,13 +1722,27 @@ impl SecureSession {
                     };
 
                     'outer: loop {
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                            break 'outer;
+                        }
                         // Establish the channel.
                         let stream: SecureStream = match role.clone() {
                             LinkRole::Dial(addresses, port, pinned, auto) => {
-                                let attempt = match pinned.as_deref() {
-                                    Some(k) => connect_secure_raced(addresses.clone(), port, &seed, k).await,
-                                    None => connect_secure_raced_tofu(addresses.clone(), port, &seed).await,
+                                let attempt = tokio::select! {
+                                    _ = &mut shutdown => break 'outer,
+                                    r = async {
+                                        match pinned.as_deref() {
+                                            Some(k) => connect_secure_raced(addresses.clone(), port, &seed, k).await,
+                                            None => connect_secure_raced_tofu(addresses.clone(), port, &seed).await,
+                                        }
+                                    } => r,
                                 };
+                                if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                                    if let Ok(mut s) = attempt {
+                                        let _ = s.shutdown().await;
+                                    }
+                                    break 'outer;
+                                }
                                 match attempt {
                                     Ok(s) => {
                                         backoff = min;
@@ -1556,7 +1767,7 @@ impl SecureSession {
                                             _ = tokio::time::sleep(jittered) => {}
                                             _ = &mut shutdown => break 'outer,
                                         }
-                                        backoff = std::cmp::min(backoff * 2, min.max(std::time::Duration::from_millis(
+                                        backoff = std::cmp::min(backoff.saturating_mul(2), min.max(std::time::Duration::from_millis(
                                             timings.reconnect_max_ms.load(std::sync::atomic::Ordering::Relaxed))));
                                         continue 'outer;
                                     }
@@ -1574,6 +1785,9 @@ impl SecureSession {
                                     r = accept_secure(l, &seed, expected.as_deref()) => match r {
                                         Ok(s) => s,
                                         Err(e) => {
+                                            if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                                                break 'outer;
+                                            }
                                             // A failed handshake (wrong initiator)
                                             // must not kill the listener; keep accepting.
                                             let info = ErrorInfo::from(&e);
@@ -1590,6 +1804,10 @@ impl SecureSession {
                             }
                         };
                         let mut stream = stream;
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                            let _ = stream.shutdown().await;
+                            break 'outer;
+                        }
                         stats.connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         *peer_public_key.lock().unwrap() = Some(stream.peer_public_key.clone());
@@ -1600,9 +1818,15 @@ impl SecureSession {
                         listener.on_state("connected".into(), Some(stream.peer_fingerprint()));
 
                         // Pump both directions; keepalive pings when idle.
-                        let mut keepalive = tokio::time::interval(std::time::Duration::from_millis(
-                            timings.keepalive_ms.load(std::sync::atomic::Ordering::Relaxed)));
-                        keepalive.reset();
+                        let ka_ms = timings
+                            .keepalive_ms
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let mut keepalive = (ka_ms > 0).then(|| {
+                            let mut iv = tokio::time::interval(std::time::Duration::from_millis(ka_ms));
+                            iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                            iv.reset();
+                            iv
+                        });
                         let mut awaiting_pong = false;
                         let dead_after = std::time::Duration::from_millis(
                             timings.dead_after_ms.load(std::sync::atomic::Ordering::Relaxed));
@@ -1633,7 +1857,11 @@ impl SecureSession {
                                     let _ = stream.shutdown().await;
                                     break;
                                 }
-                                _ = keepalive.tick() => {
+                                _ = async {
+                                    if let Some(ref mut iv) = keepalive {
+                                        iv.tick().await;
+                                    }
+                                }, if keepalive.is_some() => {
                                     if awaiting_pong {
                                         // Peer silent for 2 intervals: dead.
                                         break;
@@ -1646,7 +1874,9 @@ impl SecureSession {
                                 msg = out_rx.recv() => match msg {
                                     Some(m) => {
                                         stats.frames_dequeued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        keepalive.reset();
+                                        if let Some(ref mut iv) = keepalive {
+                                            iv.reset();
+                                        }
                                         awaiting_pong = false;
                                         if stream.send(&m).await.is_ok() {
                                             stats.frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1659,7 +1889,9 @@ impl SecureSession {
                                     None => break 'outer,
                                 },
                                 frame = stream.recv(&mut buf) => {
-                                    keepalive.reset();
+                                    if let Some(ref mut iv) = keepalive {
+                                        iv.reset();
+                                    }
                                     awaiting_pong = false;
                                     if frame.is_err() {
                                         break;
@@ -1674,8 +1906,12 @@ impl SecureSession {
                                 }
                             }
                         }
-                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                        listener.on_state("closed".into(), None);
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                            connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                            listener.on_state("closed".into(), None);
+                        } else {
+                            break 'outer;
+                        }
                         // Loop back: dial again (if auto) / accept next (listener).
                         if let LinkRole::Dial(_, _, _, false) = role {
                             break 'outer;
@@ -2096,6 +2332,15 @@ pub struct WanChannel {
     inner: Mutex<Option<luciola::link::secure::SecureStream>>,
 }
 
+impl WanChannel {
+    fn take_stream(&self) -> Result<Option<luciola::link::secure::SecureStream>, WanFfiError> {
+        let mut guard = self.inner.lock().map_err(|_| WanFfiError::Io {
+            detail: "WAN channel lock poisoned".into(),
+        })?;
+        Ok(guard.take())
+    }
+}
+
 #[uniffi::export]
 impl WanChannel {
     /// The data plane this channel actually uses.
@@ -2122,10 +2367,13 @@ impl WanChannel {
 
     /// Close the channel. Idempotent; a second call is a no-op.
     pub fn shutdown(&self) -> Result<(), WanFfiError> {
-        let mut guard = self.inner.lock().map_err(|_| WanFfiError::Io {
-            detail: "WAN channel lock poisoned".into(),
-        })?;
-        if let Some(mut stream) = guard.take() {
+        let stream = {
+            let mut guard = self.inner.lock().map_err(|_| WanFfiError::Io {
+                detail: "WAN channel lock poisoned".into(),
+            })?;
+            guard.take()
+        };
+        if let Some(mut stream) = stream {
             wan_runtime()
                 .block_on(stream.shutdown())
                 .map_err(|err| WanFfiError::Io {
@@ -2187,6 +2435,927 @@ pub fn wan_derive_room_id(
         });
     }
     Ok(room)
+}
+
+/// Route selection strategy for [`connect_with_policy`].
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoutePolicyKind {
+    /// Dial LAN candidates only; never contact signalling or relay.
+    LanOnly,
+    /// Race LAN candidates up to `lan_budget_ms`, falling back to WAN on connectivity failure.
+    /// Security failures (pin mismatch / tamper) fail immediately without WAN fallback.
+    LanThenWan,
+    /// Skip LAN and dial WAN directly.
+    WanOnly,
+}
+
+/// LAN dial parameters for [`connect_with_policy`] (pinned peer identity required; no TOFU).
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct LanDialConfigDto {
+    /// Candidate LAN IPv4 / IPv6 addresses.
+    pub addresses: Vec<String>,
+    /// Peer's secure TCP port.
+    pub port: u16,
+    /// Local 32-byte Ed25519 identity seed (zeroized after validation).
+    pub identity_seed: Vec<u8>,
+    /// Pinned 32-byte Ed25519 peer public key (mandatory; no TOFU).
+    pub peer_public_key: Vec<u8>,
+}
+
+impl LanDialConfigDto {
+    fn into_core(mut self) -> Result<luciola::wan::route::LanDialConfig, WanFfiError> {
+        let seed_res = require_key(&self.identity_seed, "lan.identity_seed");
+        zeroize::Zeroize::zeroize(&mut self.identity_seed);
+        let identity_seed = zeroize::Zeroizing::new(seed_res?);
+        let peer_public_key = require_key(&self.peer_public_key, "lan.peer_public_key")?;
+        Ok(luciola::wan::route::LanDialConfig {
+            addresses: self.addresses,
+            port: self.port,
+            identity_seed,
+            peer_public_key,
+        })
+    }
+}
+
+impl From<luciola::wan::route::ConnectPolicyError> for WanFfiError {
+    fn from(error: luciola::wan::route::ConnectPolicyError) -> Self {
+        use luciola::wan::route::ConnectPolicyError;
+        match error {
+            ConnectPolicyError::MissingConfig(field) => Self::InvalidConfig {
+                detail: format!("missing route configuration: {field}"),
+            },
+            ConnectPolicyError::Lan(detail) => {
+                if detail.contains("untrusted")
+                    || detail.contains("tamper")
+                    || detail.contains("handshake")
+                {
+                    Self::Handshake { detail }
+                } else {
+                    Self::NoRoute {
+                        detail: format!("lan connect failed: {detail}"),
+                    }
+                }
+            }
+            ConnectPolicyError::Wan(err) => Self::from(err),
+            ConnectPolicyError::BothFailed { lan, wan } => match Self::from(wan) {
+                Self::PolicyDenied { detail } => Self::PolicyDenied {
+                    detail: format!("lan failed ({lan}); {detail}"),
+                },
+                Self::Handshake { detail } => Self::Handshake {
+                    detail: format!("lan failed ({lan}); {detail}"),
+                },
+                Self::InvalidConfig { detail } => Self::InvalidConfig { detail },
+                other => Self::NoRoute {
+                    detail: format!("lan failed ({lan}); {other}"),
+                },
+            },
+            other => Self::NoRoute {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
+/// Establish an authenticated channel according to `policy` (`LanOnly`, `LanThenWan`, or `WanOnly`).
+///
+/// When `policy` is [`RoutePolicyKind::LanThenWan`], `lan_budget_ms == 0` uses a 1500 ms default
+/// budget. The returned [`WanChannel`] always reports the honest transport plane (`LanDirect`,
+/// `HolePunchedDirect`, or `RelayForwarded`). Call from a worker thread, never from the UI thread.
+#[uniffi::export]
+pub fn connect_with_policy(
+    policy: RoutePolicyKind,
+    lan_budget_ms: u64,
+    lan: Option<LanDialConfigDto>,
+    wan: Option<WanConfig>,
+) -> Result<Arc<WanChannel>, WanFfiError> {
+    let lan_core = match policy {
+        RoutePolicyKind::WanOnly => {
+            if let Some(mut unused) = lan {
+                zeroize::Zeroize::zeroize(&mut unused.identity_seed);
+            }
+            None
+        }
+        RoutePolicyKind::LanOnly | RoutePolicyKind::LanThenWan => {
+            lan.map(LanDialConfigDto::into_core).transpose()?
+        }
+    };
+    let wan_core = match policy {
+        RoutePolicyKind::LanOnly => {
+            if let Some(mut unused) = wan {
+                zeroize::Zeroize::zeroize(&mut unused.psk);
+                zeroize::Zeroize::zeroize(&mut unused.identity_seed);
+            }
+            None
+        }
+        RoutePolicyKind::WanOnly | RoutePolicyKind::LanThenWan => {
+            wan.map(WanConfig::into_core).transpose()?
+        }
+    };
+    let core_policy = match policy {
+        RoutePolicyKind::LanOnly => luciola::wan::route::RoutePolicy::LanOnly,
+        RoutePolicyKind::LanThenWan => luciola::wan::route::RoutePolicy::LanThenWan {
+            lan_budget: Duration::from_millis(if lan_budget_ms == 0 {
+                1_500
+            } else {
+                lan_budget_ms
+            }),
+        },
+        RoutePolicyKind::WanOnly => luciola::wan::route::RoutePolicy::WanOnly,
+    };
+    let stream = wan_runtime().block_on(luciola::wan::route::connect_with_policy(
+        core_policy,
+        lan_core,
+        wan_core,
+    ))?;
+    Ok(Arc::new(WanChannel {
+        inner: Mutex::new(Some(stream)),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// File transfer data plane exports (WP1.2 — pinned peers only, no TOFU)
+// ---------------------------------------------------------------------------
+
+/// Progress event delivered by [`transfer_send_lan`], [`transfer_recv_lan`],
+/// [`transfer_send_wan`], and [`transfer_recv_wan`].
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct TransferProgressDto {
+    /// Stable transfer identifier used for checkpoint matching.
+    pub transfer_id: String,
+    /// Contiguous acknowledged bytes so far.
+    pub bytes_done: u64,
+    /// Total expected bytes.
+    pub total_bytes: u64,
+    /// Active transport plane carrying the transfer.
+    pub channel_type: WanChannelKind,
+    /// True when this update reports a resumed checkpoint skip.
+    pub resumed: bool,
+}
+
+/// Verified final receipt returned when a file transfer completes.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct TransferReceiptDto {
+    /// Stable transfer identifier.
+    pub transfer_id: String,
+    /// Sanitized basename of the file.
+    pub file_name: String,
+    /// Total bytes transferred.
+    pub total_bytes: u64,
+    /// Lowercase hex SHA-256 checksum of the complete file.
+    pub sha256_hex: String,
+    /// Saved destination path on disk (receiver side only).
+    pub saved_path: Option<String>,
+    /// Final transport plane active on completion.
+    pub channel_type: WanChannelKind,
+}
+
+/// Errors returned by the FFI file transfer helpers.
+#[derive(uniffi::Error, Debug, thiserror::Error)]
+pub enum TransferFfiError {
+    /// Invalid key, path, or already-consumed channel.
+    #[error("invalid transfer configuration: {detail}")]
+    InvalidConfig {
+        /// Diagnostic description.
+        detail: String,
+    },
+    /// Transfer size exceeds the active channel quota (for example over relay).
+    #[error("transfer quota exceeded: {detail}")]
+    QuotaExceeded {
+        /// Diagnostic description.
+        detail: String,
+    },
+    /// Transfer was cancelled by the caller via [`TransferCancelHandle`].
+    #[error("transfer cancelled")]
+    Cancelled,
+    /// Network, handshake, or I/O failure during transfer.
+    #[error("transfer failed: {detail}")]
+    TransferFailed {
+        /// Diagnostic description.
+        detail: String,
+    },
+}
+
+impl From<luciola_transfer::TransferError> for TransferFfiError {
+    fn from(err: luciola_transfer::TransferError) -> Self {
+        match err {
+            luciola_transfer::TransferError::Cancelled => TransferFfiError::Cancelled,
+            luciola_transfer::TransferError::ChannelLimitExceeded { .. } => {
+                TransferFfiError::QuotaExceeded {
+                    detail: err.to_string(),
+                }
+            }
+            other => TransferFfiError::TransferFailed {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
+/// Callback receiving transfer progress updates.
+#[uniffi::export(callback_interface)]
+pub trait TransferListener: Send + Sync {
+    /// Called as contiguous acknowledged bytes advance.
+    fn on_progress(&self, progress: TransferProgressDto);
+}
+
+/// Cooperative cancellation handle shared with any `transfer_*` call.
+#[derive(uniffi::Object)]
+pub struct TransferCancelHandle {
+    tx: Mutex<tokio::sync::watch::Sender<bool>>,
+    rx: tokio::sync::watch::Receiver<bool>,
+}
+
+impl TransferCancelHandle {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.rx.clone()
+    }
+}
+
+#[uniffi::export]
+impl TransferCancelHandle {
+    /// Create a fresh non-cancelled handle.
+    #[uniffi::constructor]
+    pub fn new() -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        Self {
+            tx: Mutex::new(tx),
+            rx,
+        }
+    }
+
+    /// Signal cancellation to any transfer observing this handle.
+    pub fn cancel(&self) {
+        if let Ok(guard) = self.tx.lock() {
+            let _ = guard.send(true);
+        }
+    }
+
+    /// Whether [`Self::cancel`] has been called.
+    pub fn is_cancelled(&self) -> bool {
+        *self.rx.borrow()
+    }
+}
+
+impl Default for TransferCancelHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn to_receipt_dto(r: luciola_transfer::TransferReceipt) -> TransferReceiptDto {
+    TransferReceiptDto {
+        transfer_id: r.transfer_id,
+        file_name: r.file_name,
+        total_bytes: r.total_bytes,
+        sha256_hex: r.sha256_hex,
+        saved_path: r.saved_path.map(|p| p.to_string_lossy().into_owned()),
+        channel_type: r.channel_type.into(),
+    }
+}
+
+fn to_progress_dto(p: luciola_transfer::TransferProgress) -> TransferProgressDto {
+    TransferProgressDto {
+        transfer_id: p.transfer_id,
+        bytes_done: p.bytes_done,
+        total_bytes: p.total_bytes,
+        channel_type: p.channel_type.into(),
+        resumed: p.resumed,
+    }
+}
+
+/// Send one file over a pin-verified LAN connection (no TOFU).
+/// Call from a background worker thread.
+#[uniffi::export]
+#[allow(clippy::too_many_arguments)]
+pub fn transfer_send_lan(
+    identity_seed: Vec<u8>,
+    addresses: Vec<String>,
+    port: u16,
+    pinned_peer_public_key: Vec<u8>,
+    file_path: String,
+    listener: Option<Box<dyn TransferListener>>,
+    cancel: Option<Arc<TransferCancelHandle>>,
+) -> Result<TransferReceiptDto, TransferFfiError> {
+    let seed = require_key(&identity_seed, "identity_seed").map_err(|e| {
+        TransferFfiError::InvalidConfig {
+            detail: e.to_string(),
+        }
+    })?;
+    let peer_pk = require_key(&pinned_peer_public_key, "pinned_peer_public_key").map_err(|e| {
+        TransferFfiError::InvalidConfig {
+            detail: e.to_string(),
+        }
+    })?;
+    if addresses.is_empty() {
+        return Err(TransferFfiError::InvalidConfig {
+            detail: "addresses must not be empty".into(),
+        });
+    }
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+
+    let receipt = wan_runtime().block_on(async move {
+        let mut dial_cancel = cancel_rx.clone();
+        let stream = tokio::select! {
+            _ = async {
+                loop {
+                    if *dial_cancel.borrow() {
+                        break;
+                    }
+                    if dial_cancel.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            } => {
+                return Err(TransferFfiError::Cancelled);
+            }
+            res = connect_secure_raced(addresses, port, &seed, &peer_pk) => {
+                res.map_err(|e| TransferFfiError::TransferFailed {
+                    detail: e.to_string(),
+                })?
+            }
+        };
+        luciola::transfer_driver::send_file_over_stream(
+            stream,
+            std::path::Path::new(&file_path),
+            None,
+            None,
+            luciola_transfer::SenderConfig::default(),
+            cancel_rx,
+            |p| {
+                if let Some(ref l) = listener {
+                    l.on_progress(to_progress_dto(p));
+                }
+            },
+        )
+        .await
+        .map_err(TransferFfiError::from)
+    })?;
+    Ok(to_receipt_dto(receipt))
+}
+
+/// Accept one pin-verified LAN file transfer into `dest_dir` (no TOFU).
+/// Call from a background worker thread.
+#[uniffi::export]
+pub fn transfer_recv_lan(
+    identity_seed: Vec<u8>,
+    listen_port: u16,
+    accept_peer_public_key: Vec<u8>,
+    dest_dir: String,
+    listener: Option<Box<dyn TransferListener>>,
+    cancel: Option<Arc<TransferCancelHandle>>,
+) -> Result<TransferReceiptDto, TransferFfiError> {
+    let seed = require_key(&identity_seed, "identity_seed").map_err(|e| {
+        TransferFfiError::InvalidConfig {
+            detail: e.to_string(),
+        }
+    })?;
+    let peer_pk = require_key(&accept_peer_public_key, "accept_peer_public_key").map_err(|e| {
+        TransferFfiError::InvalidConfig {
+            detail: e.to_string(),
+        }
+    })?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+
+    let receipt = wan_runtime().block_on(async move {
+        let tcp_listener = luciola::link::bind_dual_stack_listener(listen_port)
+            .await
+            .map_err(|e| TransferFfiError::TransferFailed {
+                detail: e.to_string(),
+            })?;
+        let mut accept_cancel = cancel_rx.clone();
+        let stream = tokio::select! {
+            _ = async {
+                loop {
+                    if *accept_cancel.borrow() {
+                        break;
+                    }
+                    if accept_cancel.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            } => {
+                return Err(TransferFfiError::Cancelled);
+            }
+            res = accept_secure(&tcp_listener, &seed, Some(&peer_pk)) => {
+                res.map_err(|e| TransferFfiError::TransferFailed {
+                    detail: e.to_string(),
+                })?
+            }
+        };
+        luciola::transfer_driver::recv_file_over_stream(
+            stream,
+            std::path::Path::new(&dest_dir),
+            luciola_transfer::ReceiverConfig::default(),
+            Duration::from_millis(500),
+            cancel_rx,
+            |p| {
+                if let Some(ref l) = listener {
+                    l.on_progress(to_progress_dto(p));
+                }
+            },
+        )
+        .await
+        .map_err(TransferFfiError::from)
+    })?;
+    Ok(to_receipt_dto(receipt))
+}
+
+/// Send one file over an already-established [`WanChannel`] (consumes the channel).
+#[uniffi::export]
+pub fn transfer_send_wan(
+    channel: Arc<WanChannel>,
+    file_path: String,
+    max_relay_bytes: Option<u64>,
+    listener: Option<Box<dyn TransferListener>>,
+    cancel: Option<Arc<TransferCancelHandle>>,
+) -> Result<TransferReceiptDto, TransferFfiError> {
+    let stream = channel
+        .take_stream()
+        .map_err(|e| TransferFfiError::TransferFailed {
+            detail: e.to_string(),
+        })?
+        .ok_or_else(|| TransferFfiError::InvalidConfig {
+            detail: "WanChannel already consumed or shut down".into(),
+        })?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+    let mut cfg = luciola_transfer::SenderConfig::default();
+    if let Some(limit) = max_relay_bytes {
+        cfg.relay_max_bytes = Some(limit);
+    }
+
+    let receipt = wan_runtime().block_on(async move {
+        luciola::transfer_driver::send_file_over_stream(
+            stream,
+            std::path::Path::new(&file_path),
+            None,
+            None,
+            cfg,
+            cancel_rx,
+            |p| {
+                if let Some(ref l) = listener {
+                    l.on_progress(to_progress_dto(p));
+                }
+            },
+        )
+        .await
+        .map_err(TransferFfiError::from)
+    })?;
+    Ok(to_receipt_dto(receipt))
+}
+
+/// Receive one file over an already-established [`WanChannel`] (consumes the channel).
+#[uniffi::export]
+pub fn transfer_recv_wan(
+    channel: Arc<WanChannel>,
+    dest_dir: String,
+    listener: Option<Box<dyn TransferListener>>,
+    cancel: Option<Arc<TransferCancelHandle>>,
+) -> Result<TransferReceiptDto, TransferFfiError> {
+    let stream = channel
+        .take_stream()
+        .map_err(|e| TransferFfiError::TransferFailed {
+            detail: e.to_string(),
+        })?
+        .ok_or_else(|| TransferFfiError::InvalidConfig {
+            detail: "WanChannel already consumed or shut down".into(),
+        })?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+
+    let receipt = wan_runtime().block_on(async move {
+        luciola::transfer_driver::recv_file_over_stream(
+            stream,
+            std::path::Path::new(&dest_dir),
+            luciola_transfer::ReceiverConfig::default(),
+            Duration::from_millis(500),
+            cancel_rx,
+            |p| {
+                if let Some(ref l) = listener {
+                    l.on_progress(to_progress_dto(p));
+                }
+            },
+        )
+        .await
+        .map_err(TransferFfiError::from)
+    })?;
+    Ok(to_receipt_dto(receipt))
+}
+
+// ---------------------------------------------------------------------------
+// Standalone WAN tunnel session (WP1.3 — DirectTunnelSession over WanChannel)
+// ---------------------------------------------------------------------------
+
+/// Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+/// Does not alter the LAN dual-port `SecureSession` tunnel contract.
+#[derive(uniffi::Object)]
+pub struct WanTunnelSession {
+    inner: Mutex<Option<Arc<luciola_tunnel::DirectTunnelSession>>>,
+}
+
+impl WanTunnelSession {
+    fn active_session(&self) -> Result<Arc<luciola_tunnel::DirectTunnelSession>, WanFfiError> {
+        let guard = self.inner.lock().map_err(|_| WanFfiError::Io {
+            detail: "WAN tunnel lock poisoned".into(),
+        })?;
+        guard.clone().ok_or_else(|| WanFfiError::InvalidConfig {
+            detail: "WanTunnelSession has been shut down".into(),
+        })
+    }
+}
+
+#[uniffi::export]
+impl WanTunnelSession {
+    /// Consume `channel` and start a [`luciola_tunnel::DirectTunnelSession`] on `wan_runtime()`.
+    #[uniffi::constructor]
+    pub fn from_wan_channel(
+        channel: Arc<WanChannel>,
+        is_initiator: bool,
+    ) -> Result<Self, WanFfiError> {
+        let stream = channel
+            .take_stream()?
+            .ok_or_else(|| WanFfiError::InvalidConfig {
+                detail: "WanChannel already consumed or shut down".into(),
+            })?;
+        let role = if is_initiator {
+            luciola_tunnel::Role::Initiator
+        } else {
+            luciola_tunnel::Role::Responder
+        };
+        let session = Arc::new(wan_runtime().block_on(async move {
+            luciola_tunnel::DirectTunnelSession::start(
+                stream,
+                role,
+                luciola_tunnel::MuxConfig::default(),
+            )
+        }));
+        Ok(Self {
+            inner: Mutex::new(Some(session)),
+        })
+    }
+
+    /// Start a local TCP forward (`127.0.0.1:listen_port` → peer `host:port`).
+    /// Returns the actual bound local port (helpful when `listen_port == 0`).
+    pub fn start_local_forward(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<u16, WanFfiError> {
+        let target = luciola_tunnel::DialTarget::new(&host, port);
+        if !target.validate() {
+            return Err(WanFfiError::InvalidConfig {
+                detail: format!("invalid forward target: {host}:{port}"),
+            });
+        }
+        let session = self.active_session()?;
+        wan_runtime()
+            .block_on(async move { session.start_local_forward(listen_port, target) })
+            .map_err(|e| WanFfiError::Io {
+                detail: e.to_string(),
+            })
+    }
+
+    /// Stop a local TCP forward on `listen_port`.
+    pub fn stop_local_forward(&self, listen_port: u16) -> bool {
+        let session = self.inner.lock().ok().and_then(|g| g.clone());
+        match session {
+            Some(s) => wan_runtime().block_on(s.stop_local_forward(listen_port)),
+            None => false,
+        }
+    }
+
+    /// Start a local UDP forward (`127.0.0.1:listen_port` → peer `host:port`).
+    pub fn start_udp_forward(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<u16, WanFfiError> {
+        let target = luciola_tunnel::DialTarget::new(&host, port);
+        if !target.validate() {
+            return Err(WanFfiError::InvalidConfig {
+                detail: format!("invalid forward target: {host}:{port}"),
+            });
+        }
+        let session = self.active_session()?;
+        wan_runtime()
+            .block_on(async move { session.start_udp_forward(listen_port, target) })
+            .map_err(|e| WanFfiError::Io {
+                detail: e.to_string(),
+            })
+    }
+
+    /// Stop a local UDP forward on `listen_port`.
+    pub fn stop_udp_forward(&self, listen_port: u16) -> bool {
+        let session = self.inner.lock().ok().and_then(|g| g.clone());
+        match session {
+            Some(s) => wan_runtime().block_on(s.stop_udp_forward(listen_port)),
+            None => false,
+        }
+    }
+
+    /// Enable or replace the inbound ACL forward endpoint (`--allow`).
+    pub fn enable_forward_endpoint(&self, rules: Vec<ForwardRuleDto>) -> Result<(), WanFfiError> {
+        let parsed = parse_rule_dtos(rules).map_err(|e| WanFfiError::InvalidConfig {
+            detail: e.to_string(),
+        })?;
+        let session = self.active_session()?;
+        wan_runtime()
+            .block_on(session.enable_forward_endpoint(parsed))
+            .map_err(|e| WanFfiError::Io {
+                detail: e.to_string(),
+            })
+    }
+
+    /// Disable the inbound ACL forward endpoint.
+    pub fn disable_forward_endpoint(&self) {
+        let session = self.inner.lock().ok().and_then(|g| g.clone());
+        if let Some(s) = session {
+            wan_runtime().block_on(s.disable_forward_endpoint());
+        }
+    }
+
+    /// Whether the underlying mux session is still alive.
+    pub fn is_alive(&self) -> bool {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.is_alive()))
+            .unwrap_or(false)
+    }
+
+    /// Transport plane of the underlying channel.
+    pub fn channel_type(&self) -> WanChannelKind {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.channel_type().into()))
+            .unwrap_or(WanChannelKind::Unknown)
+    }
+
+    /// Snapshot active forward stats.
+    pub fn stats(&self) -> Vec<ForwardStatusDto> {
+        let Some(session) = self.inner.lock().ok().and_then(|g| g.clone()) else {
+            return Vec::new();
+        };
+        session
+            .stats()
+            .into_iter()
+            .map(|row| ForwardStatusDto {
+                kind: row.kind.as_str().to_string(),
+                listen_port: row.listen_port,
+                active: row.active,
+                channels_open: row.status.channels_open,
+                channels_total: row.status.channels_total,
+                dial_denied: row.status.dial_denied,
+                dial_failed: row.status.dial_failed,
+            })
+            .collect()
+    }
+
+    /// Stop all forwards and shut down the tunnel. Idempotent.
+    pub fn shutdown(&self) {
+        let session = self.inner.lock().ok().and_then(|mut g| g.take());
+        if let Some(s) = session {
+            wan_runtime().block_on(s.shutdown());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single-port multi-peer authenticated server (`SecureHub`)
+// ---------------------------------------------------------------------------
+
+/// Metadata for a peer currently authenticated with [`SecureHub`].
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct HubPeerInfoDto {
+    /// Verified `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
+    pub fingerprint: String,
+    /// Raw 32-byte Ed25519 public key of the peer.
+    pub public_key: Vec<u8>,
+    /// Peer's TCP socket address (`ip:port`).
+    pub remote_addr: String,
+}
+
+/// Callback interface receiving lifecycle and message events from [`SecureHub`].
+#[uniffi::export(callback_interface)]
+pub trait HubEventListener: Send + Sync {
+    /// A peer completed the authenticated handshake and passed the pre-sign allowlist check.
+    fn on_peer_connected(&self, peer: HubPeerInfoDto);
+    /// A decrypted application frame arrived from an authenticated peer.
+    fn on_message(&self, fingerprint: String, remote_addr: String, payload: Vec<u8>);
+    /// A connected peer disconnected or was kicked.
+    fn on_peer_disconnected(&self, fingerprint: String);
+    /// An inbound connection was rejected by the allowlist or failed handshake.
+    fn on_peer_rejected(&self, remote_addr: String, reason: String);
+}
+
+/// Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+///
+/// Peer keys are checked against an explicit allowlist **before** the server signs
+/// handshake message 2 (deny by default; untrusted initiators learn neither the hub's
+/// public key nor any signature).
+#[derive(uniffi::Object)]
+pub struct SecureHub {
+    inner: Mutex<Option<luciola::link::hub::SecureHub>>,
+    local_addr: std::net::SocketAddr,
+    allowlist: Arc<std::sync::RwLock<std::collections::HashSet<[u8; 32]>>>,
+}
+
+#[uniffi::export]
+impl SecureHub {
+    /// Bind `port` (`0` = OS ephemeral) and start accepting concurrent peers.
+    ///
+    /// `allowed_peer_public_keys` seeds the pre-sign allowlist (each entry must be 32 bytes;
+    /// an empty list starts in deny-all mode until [`Self::add_allowed_peer`] is called).
+    #[uniffi::constructor]
+    pub fn start(
+        port: u16,
+        mut identity_seed: Vec<u8>,
+        allowed_peer_public_keys: Vec<Vec<u8>>,
+        listener: Box<dyn HubEventListener>,
+    ) -> Result<Self, WanFfiError> {
+        if let Err(err) = require_key(&identity_seed, "identity_seed") {
+            zeroize::Zeroize::zeroize(&mut identity_seed);
+            return Err(err);
+        }
+        let mut set = std::collections::HashSet::with_capacity(allowed_peer_public_keys.len());
+        for (idx, pk) in allowed_peer_public_keys.iter().enumerate() {
+            match require_key(pk, &format!("allowed_peer_public_keys[{idx}]")) {
+                Ok(arr) => {
+                    set.insert(arr);
+                }
+                Err(err) => {
+                    zeroize::Zeroize::zeroize(&mut identity_seed);
+                    return Err(err);
+                }
+            }
+        }
+        let allowlist = Arc::new(std::sync::RwLock::new(set));
+        let allow_for_hub = allowlist.clone();
+        let seed_for_hub = std::mem::take(&mut identity_seed);
+
+        let (hub, mut event_rx) = wan_runtime()
+            .block_on(luciola::link::hub::SecureHub::start(
+                port,
+                seed_for_hub,
+                move |pk| {
+                    let Ok(arr): Result<[u8; 32], _> = pk.try_into() else {
+                        return false;
+                    };
+                    allow_for_hub
+                        .read()
+                        .map(|peers| peers.contains(&arr))
+                        .unwrap_or(false)
+                },
+            ))
+            .map_err(|e| WanFfiError::Io {
+                detail: e.to_string(),
+            })?;
+
+        let local_addr = hub.local_addr();
+        let listener_arc: Arc<Box<dyn HubEventListener>> = Arc::new(listener);
+        let cb = CallbackDispatcher::spawn("luciola-hub-cb");
+        wan_runtime().spawn(async move {
+            while let Some(ev) = event_rx.recv().await {
+                let l = listener_arc.clone();
+                match ev {
+                    luciola::link::hub::HubEvent::PeerConnected(info) => {
+                        let dto = HubPeerInfoDto {
+                            fingerprint: info.fingerprint,
+                            public_key: info.public_key,
+                            remote_addr: info.remote_addr.to_string(),
+                        };
+                        cb.dispatch(move || l.on_peer_connected(dto));
+                    }
+                    luciola::link::hub::HubEvent::Message {
+                        fingerprint,
+                        remote_addr,
+                        payload,
+                    } => {
+                        let addr = remote_addr.to_string();
+                        cb.dispatch(move || l.on_message(fingerprint, addr, payload));
+                    }
+                    luciola::link::hub::HubEvent::PeerDisconnected { fingerprint } => {
+                        cb.dispatch(move || l.on_peer_disconnected(fingerprint));
+                    }
+                    luciola::link::hub::HubEvent::PeerRejected {
+                        remote_addr,
+                        reason,
+                    } => {
+                        let addr = remote_addr.to_string();
+                        cb.dispatch(move || l.on_peer_rejected(addr, reason));
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            inner: Mutex::new(Some(hub)),
+            local_addr,
+            allowlist,
+        })
+    }
+
+    /// Actual listening TCP port (useful when started with `port == 0`).
+    pub fn local_port(&self) -> u16 {
+        self.local_addr.port()
+    }
+
+    /// Actual listening socket address (`ip:port`).
+    pub fn local_addr(&self) -> String {
+        self.local_addr.to_string()
+    }
+
+    /// Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+    /// Returns `true` if newly added, `false` if already present.
+    pub fn add_allowed_peer(&self, public_key: Vec<u8>) -> Result<bool, WanFfiError> {
+        let arr = require_key(&public_key, "public_key")?;
+        let mut guard = self.allowlist.write().map_err(|_| WanFfiError::Io {
+            detail: "hub allowlist lock poisoned".into(),
+        })?;
+        Ok(guard.insert(arr))
+    }
+
+    /// Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+    /// Does not disconnect an already-connected session; call [`Self::kick`] to drop an active peer.
+    pub fn remove_allowed_peer(&self, public_key: Vec<u8>) -> Result<bool, WanFfiError> {
+        let arr = require_key(&public_key, "public_key")?;
+        let mut guard = self.allowlist.write().map_err(|_| WanFfiError::Io {
+            detail: "hub allowlist lock poisoned".into(),
+        })?;
+        Ok(guard.remove(&arr))
+    }
+
+    /// Snapshot of currently connected peers.
+    pub fn connected_peers(&self) -> Vec<HubPeerInfoDto> {
+        let Ok(guard) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let Some(ref hub) = *guard else {
+            return Vec::new();
+        };
+        hub.connected_peers()
+            .into_iter()
+            .map(|p| HubPeerInfoDto {
+                fingerprint: p.fingerprint,
+                public_key: p.public_key,
+                remote_addr: p.remote_addr.to_string(),
+            })
+            .collect()
+    }
+
+    /// Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+    pub fn send_to(&self, fingerprint: String, payload: Vec<u8>) -> bool {
+        let Ok(guard) = self.inner.lock() else {
+            return false;
+        };
+        guard
+            .as_ref()
+            .is_some_and(|hub| hub.send_to(&fingerprint, payload))
+    }
+
+    /// Broadcast an encrypted frame to every connected peer.
+    /// Returns fingerprints whose outbound queue rejected the frame.
+    pub fn broadcast(&self, payload: Vec<u8>) -> Vec<String> {
+        let Ok(guard) = self.inner.lock() else {
+            return Vec::new();
+        };
+        match guard.as_ref() {
+            Some(hub) => hub.broadcast(&payload),
+            None => Vec::new(),
+        }
+    }
+
+    /// Disconnect one connected peer by fingerprint and emit `on_peer_disconnected`.
+    pub fn kick(&self, fingerprint: String) -> bool {
+        let Ok(guard) = self.inner.lock() else {
+            return false;
+        };
+        guard.as_ref().is_some_and(|hub| hub.kick(&fingerprint))
+    }
+
+    /// Stop accepting new peers and disconnect every active peer. Idempotent.
+    pub fn stop(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            if let Some(hub) = guard.take() {
+                hub.stop();
+            }
+        }
+    }
+}
+
+impl Drop for SecureHub {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 #[cfg(test)]
@@ -2268,6 +3437,434 @@ mod wan_ffi_tests {
             wan_derive_room_id(vec![1; 32], vec![2; 32], Vec::new(), 1),
             Err(WanFfiError::InvalidConfig { .. })
         ));
+    }
+
+    #[test]
+    fn attach_wan_channel_drives_messages_and_rejects_double_attach() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex as StdMutex;
+
+        let a = luciola::trust::generate_identity();
+        let b = luciola::trust::generate_identity();
+
+        let (client_stream, server_stream) = wan_runtime().block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let sb = b.seed.clone();
+            let pka = a.public_key.clone();
+            let srv = tokio::spawn(async move {
+                luciola::link::secure::accept_secure(&listener, &sb, Some(&pka))
+                    .await
+                    .unwrap()
+            });
+            let cli =
+                luciola::link::secure::connect_secure("127.0.0.1", port, &a.seed, &b.public_key)
+                    .await
+                    .unwrap();
+            (cli, srv.await.unwrap())
+        });
+
+        struct CaptureListener {
+            connected: AtomicBool,
+            messages: StdMutex<Vec<Vec<u8>>>,
+        }
+        impl SecureSessionListener for CaptureListener {
+            fn on_state(&self, state: String, _detail: Option<String>) {
+                if state == "connected" {
+                    self.connected.store(true, Ordering::SeqCst);
+                }
+            }
+            fn on_message(
+                &self,
+                message: Vec<u8>,
+                _peer_fingerprint: String,
+                _remote_addr: Option<String>,
+            ) {
+                self.messages.lock().unwrap().push(message);
+            }
+        }
+
+        let wan_a = Arc::new(WanChannel {
+            inner: Mutex::new(Some(client_stream)),
+        });
+        let wan_b = Arc::new(WanChannel {
+            inner: Mutex::new(Some(server_stream)),
+        });
+
+        let sess_a = Arc::new(SecureSession::new(a.seed.clone()));
+        let sess_b = Arc::new(SecureSession::new(b.seed.clone()));
+
+        let cap_a = Arc::new(CaptureListener {
+            connected: AtomicBool::new(false),
+            messages: StdMutex::new(Vec::new()),
+        });
+        let cap_b = Arc::new(CaptureListener {
+            connected: AtomicBool::new(false),
+            messages: StdMutex::new(Vec::new()),
+        });
+        struct ArcForward(Arc<CaptureListener>);
+        impl SecureSessionListener for ArcForward {
+            fn on_state(&self, state: String, detail: Option<String>) {
+                self.0.on_state(state, detail);
+            }
+            fn on_message(&self, message: Vec<u8>, fp: String, remote: Option<String>) {
+                self.0.on_message(message, fp, remote);
+            }
+        }
+
+        sess_a
+            .clone()
+            .attach_wan_channel(wan_a.clone(), Box::new(ArcForward(cap_a.clone())))
+            .expect("first attach succeeds");
+        // Second attach on an already-consumed WanChannel must fail cleanly.
+        assert!(matches!(
+            sess_a
+                .clone()
+                .attach_wan_channel(wan_a.clone(), Box::new(ArcForward(cap_a.clone()))),
+            Err(WanFfiError::InvalidConfig { .. })
+        ));
+        sess_b
+            .clone()
+            .attach_wan_channel(wan_b, Box::new(ArcForward(cap_b.clone())))
+            .expect("peer attach succeeds");
+
+        assert!(sess_a.is_connected());
+        assert_eq!(sess_a.peerPublicKey(), Some(b.public_key.clone()));
+        assert!(sess_a.send(b"hello-over-wan-attach".to_vec()));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while cap_b.messages.lock().unwrap().is_empty() {
+            assert!(std::time::Instant::now() < deadline, "message not received");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(cap_b.messages.lock().unwrap()[0], b"hello-over-wan-attach");
+
+        sess_a.disconnect();
+        sess_b.disconnect();
+    }
+
+    #[test]
+    fn wan_transfer_and_tunnel_sessions_roundtrip() {
+        let a = luciola::trust::generate_identity();
+        let b = luciola::trust::generate_identity();
+
+        let make_pair = || {
+            wan_runtime().block_on(async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let sb = b.seed.clone();
+                let pka = a.public_key.clone();
+                let srv = tokio::spawn(async move {
+                    luciola::link::secure::accept_secure(&listener, &sb, Some(&pka))
+                        .await
+                        .unwrap()
+                });
+                let cli = luciola::link::secure::connect_secure(
+                    "127.0.0.1",
+                    port,
+                    &a.seed,
+                    &b.public_key,
+                )
+                .await
+                .unwrap();
+                (
+                    Arc::new(WanChannel {
+                        inner: Mutex::new(Some(cli)),
+                    }),
+                    Arc::new(WanChannel {
+                        inner: Mutex::new(Some(srv.await.unwrap())),
+                    }),
+                )
+            })
+        };
+
+        // 1. File transfer over WanChannel with receipt verification.
+        let dir = std::env::temp_dir().join(format!(
+            "luciola_uniffi_xfer_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let src_dir = dir.join("src");
+        let dst_dir = dir.join("dst");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        let src = src_dir.join("payload.bin");
+        let payload: Vec<u8> = (0..(128 * 1024)).map(|i| (i % 199) as u8).collect();
+        std::fs::write(&src, &payload).unwrap();
+
+        let (wa, wb) = make_pair();
+        let dst_str = dst_dir.to_string_lossy().into_owned();
+        let recv_handle =
+            std::thread::spawn(move || transfer_recv_wan(wb, dst_str, None, None).unwrap());
+        let send_receipt =
+            transfer_send_wan(wa, src.to_string_lossy().into_owned(), None, None, None).unwrap();
+        let recv_receipt = recv_handle.join().unwrap();
+        assert_eq!(send_receipt.sha256_hex, recv_receipt.sha256_hex);
+        assert_eq!(recv_receipt.total_bytes, payload.len() as u64);
+
+        // Cancel handle rejects immediately when pre-cancelled.
+        let (wc, _wd) = make_pair();
+        let cancel = Arc::new(TransferCancelHandle::new());
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        assert!(matches!(
+            transfer_send_wan(
+                wc,
+                src.to_string_lossy().into_owned(),
+                None,
+                None,
+                Some(cancel),
+            ),
+            Err(TransferFfiError::Cancelled)
+        ));
+
+        // 2. Standalone WanTunnelSession forwards TCP over WanChannel.
+        let (ta, tb) = make_pair();
+        let echo_port = wan_runtime().block_on(async {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let p = l.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                if let Ok((mut s, _)) = l.accept().await {
+                    let mut buf = [0u8; 32];
+                    if let Ok(n) = s.read(&mut buf).await {
+                        let _ = s.write_all(&buf[..n]).await;
+                    }
+                }
+            });
+            p
+        });
+
+        let tun_init = WanTunnelSession::from_wan_channel(ta, true).unwrap();
+        let tun_resp = WanTunnelSession::from_wan_channel(tb, false).unwrap();
+        tun_resp
+            .enable_forward_endpoint(vec![ForwardRuleDto {
+                host: "127.0.0.1".into(),
+                port_from: echo_port,
+                port_to: echo_port,
+                udp: false,
+            }])
+            .unwrap();
+        let local_port = tun_init
+            .start_local_forward(0, "127.0.0.1".into(), echo_port)
+            .unwrap();
+        wan_runtime().block_on(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut s = tokio::net::TcpStream::connect(("127.0.0.1", local_port))
+                .await
+                .unwrap();
+            s.write_all(b"ffi-tunnel-ok").await.unwrap();
+            let mut got = [0u8; 13];
+            s.read_exact(&mut got).await.unwrap();
+            assert_eq!(&got, b"ffi-tunnel-ok");
+        });
+        assert!(tun_init.is_alive());
+        assert!(!tun_init.stats().is_empty());
+        tun_init.shutdown();
+        tun_resp.shutdown();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn secure_hub_and_route_policy_ffi_roundtrip() {
+        use std::sync::Mutex as StdMutex;
+
+        let hub_id = luciola::trust::generate_identity();
+        let alice = luciola::trust::generate_identity();
+        let bob = luciola::trust::generate_identity();
+        let wrong_peer = luciola::trust::generate_identity();
+
+        #[derive(Default)]
+        struct HubEvents {
+            connected: StdMutex<Vec<String>>,
+            messages: StdMutex<Vec<(String, Vec<u8>)>>,
+            disconnected: StdMutex<Vec<String>>,
+            rejected: StdMutex<Vec<String>>,
+        }
+        struct ArcHubListener(Arc<HubEvents>);
+        impl HubEventListener for ArcHubListener {
+            fn on_peer_connected(&self, peer: HubPeerInfoDto) {
+                self.0.connected.lock().unwrap().push(peer.fingerprint);
+            }
+            fn on_message(&self, fingerprint: String, _remote_addr: String, payload: Vec<u8>) {
+                self.0.messages.lock().unwrap().push((fingerprint, payload));
+            }
+            fn on_peer_disconnected(&self, fingerprint: String) {
+                self.0.disconnected.lock().unwrap().push(fingerprint);
+            }
+            fn on_peer_rejected(&self, _remote_addr: String, reason: String) {
+                self.0.rejected.lock().unwrap().push(reason);
+            }
+        }
+
+        let events = Arc::new(HubEvents::default());
+        let hub = SecureHub::start(
+            0,
+            hub_id.seed.clone(),
+            vec![alice.public_key.clone()],
+            Box::new(ArcHubListener(events.clone())),
+        )
+        .expect("hub starts on ephemeral port");
+        let port = hub.local_port();
+        assert!(port > 0);
+
+        // 1. Unallowed peer (bob) is rejected pre-sign.
+        let bob_unallowed = connect_with_policy(
+            RoutePolicyKind::LanOnly,
+            0,
+            Some(LanDialConfigDto {
+                addresses: vec!["127.0.0.1".into()],
+                port,
+                identity_seed: bob.seed.clone(),
+                peer_public_key: hub_id.public_key.clone(),
+            }),
+            None,
+        );
+        assert!(bob_unallowed.is_err());
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while events.rejected.lock().unwrap().is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "expected rejection event"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // 2. Pin mismatch under LanThenWan must NOT fall back to WAN (returns Handshake, not PolicyDenied).
+        let mut deny_wan = config();
+        deny_wan.relay.allow_wan_signaling = false;
+        let pin_mismatch = connect_with_policy(
+            RoutePolicyKind::LanThenWan,
+            1_000,
+            Some(LanDialConfigDto {
+                addresses: vec!["127.0.0.1".into()],
+                port,
+                identity_seed: alice.seed.clone(),
+                peer_public_key: wrong_peer.public_key.clone(),
+            }),
+            Some(deny_wan),
+        );
+        assert!(
+            matches!(pin_mismatch, Err(WanFfiError::Handshake { .. })),
+            "expected Handshake error on pin mismatch without WAN fallback"
+        );
+
+        // 3. Dynamically allow bob, then connect both alice (LanThenWan) and bob (LanOnly).
+        assert!(hub.add_allowed_peer(bob.public_key.clone()).unwrap());
+        assert!(!hub.add_allowed_peer(bob.public_key.clone()).unwrap());
+
+        let ch_alice = connect_with_policy(
+            RoutePolicyKind::LanThenWan,
+            1_500,
+            Some(LanDialConfigDto {
+                addresses: vec!["127.0.0.1".into()],
+                port,
+                identity_seed: alice.seed.clone(),
+                peer_public_key: hub_id.public_key.clone(),
+            }),
+            None,
+        )
+        .expect("alice connects via LanThenWan");
+        assert_eq!(ch_alice.channel_type(), WanChannelKind::LanDirect);
+
+        let ch_bob = connect_with_policy(
+            RoutePolicyKind::LanOnly,
+            0,
+            Some(LanDialConfigDto {
+                addresses: vec!["127.0.0.1".into()],
+                port,
+                identity_seed: bob.seed.clone(),
+                peer_public_key: hub_id.public_key.clone(),
+            }),
+            None,
+        )
+        .expect("bob connects via LanOnly");
+        assert_eq!(ch_bob.channel_type(), WanChannelKind::LanDirect);
+
+        struct MsgSink(Arc<StdMutex<Vec<Vec<u8>>>>);
+        impl SecureSessionListener for MsgSink {
+            fn on_state(&self, _state: String, _detail: Option<String>) {}
+            fn on_message(&self, message: Vec<u8>, _fp: String, _remote: Option<String>) {
+                self.0.lock().unwrap().push(message);
+            }
+        }
+
+        let inbox_alice = Arc::new(StdMutex::new(Vec::new()));
+        let inbox_bob = Arc::new(StdMutex::new(Vec::new()));
+        let sess_alice = Arc::new(SecureSession::new(alice.seed.clone()));
+        let sess_bob = Arc::new(SecureSession::new(bob.seed.clone()));
+        sess_alice
+            .clone()
+            .attach_wan_channel(ch_alice, Box::new(MsgSink(inbox_alice.clone())))
+            .unwrap();
+        sess_bob
+            .clone()
+            .attach_wan_channel(ch_bob, Box::new(MsgSink(inbox_bob.clone())))
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while hub.connected_peers().len() < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "both peers should connect"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Alice -> Hub
+        assert!(sess_alice.send(b"ping-from-alice".to_vec()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while events.messages.lock().unwrap().is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "hub did not receive alice msg"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            events.messages.lock().unwrap()[0],
+            (alice.fingerprint.clone(), b"ping-from-alice".to_vec())
+        );
+
+        // Hub -> Alice unicast + Hub -> all broadcast
+        assert!(hub.send_to(alice.fingerprint.clone(), b"pong-to-alice".to_vec()));
+        assert!(hub.broadcast(b"broadcast-all".to_vec()).is_empty());
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while inbox_alice.lock().unwrap().len() < 2 || inbox_bob.lock().unwrap().is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "peers did not receive hub frames"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(inbox_alice.lock().unwrap()[0], b"pong-to-alice");
+        assert_eq!(inbox_alice.lock().unwrap()[1], b"broadcast-all");
+        assert_eq!(inbox_bob.lock().unwrap()[0], b"broadcast-all");
+
+        // Kick Bob and verify disconnect event.
+        assert!(hub.remove_allowed_peer(bob.public_key.clone()).unwrap());
+        assert!(hub.kick(bob.fingerprint.clone()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !events
+            .disconnected
+            .lock()
+            .unwrap()
+            .contains(&bob.fingerprint)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bob disconnect event missing"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        sess_alice.disconnect();
+        sess_bob.disconnect();
+        hub.stop();
     }
 }
 

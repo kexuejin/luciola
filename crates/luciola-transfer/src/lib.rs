@@ -23,11 +23,16 @@
 #![deny(missing_docs)]
 
 pub mod checkpoint;
+pub mod driver;
 pub mod protocol;
 pub mod receiver;
 pub mod sender;
 
 pub use checkpoint::{meta_path_for, part_path_for, TransferMeta};
+pub use driver::{
+    admit_transfer, make_transfer_id, recv_file_over_transport, sanitize_file_name,
+    send_file_over_transport, TransferProgress, TransferReceipt, TransferTransport,
+};
 pub use protocol::{FileAck, FileChunk, FileIntro};
 pub use receiver::{FileReceiver, ReceiverConfig};
 pub use sender::{FileSender, SenderConfig};
@@ -65,6 +70,9 @@ pub enum TransferError {
         /// The channel type label over which transfer was attempted.
         channel: String,
     },
+    /// The transfer was cancelled by the local caller.
+    #[error("transfer cancelled")]
+    Cancelled,
 }
 
 impl From<&TransferError> for ErrorInfo {
@@ -75,6 +83,7 @@ impl From<&TransferError> for ErrorInfo {
             TransferError::State(_) => ErrorCode::StateError,
             TransferError::SizeMismatch { .. } => ErrorCode::SizeMismatch,
             TransferError::ChannelLimitExceeded { .. } => ErrorCode::QuotaExceeded,
+            TransferError::Cancelled => ErrorCode::Stopped,
         };
         Self::new(code, e.to_string())
     }

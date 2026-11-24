@@ -13,6 +13,14 @@ import {
   classifyError,
   DiscoverySession,
   SecureChannel,
+  SecureHub,
+  TransferCancelHandle,
+  WanChannel,
+  WanTunnelSession,
+  connectWithPolicy,
+  transferRecvLan,
+  transferSendLan,
+  transferSendWan,
 } from '../index';
 
 // DiscoverySession: the nine documented constructor slots, including the
@@ -98,3 +106,65 @@ setLogSink((event) => {
   const message: string = event.message;
   console.log(level, message);
 });
+
+// WanTunnelSession & transferSendWan: async call shapes.
+export async function checkWanTunnelTypes(ch: WanChannel): Promise<void> {
+  const tunnel: WanTunnelSession = await WanTunnelSession.fromWanChannel(ch, true);
+  const tcpPort: number = await tunnel.startLocalForward(0, '127.0.0.1', 8080);
+  const udpPort: number = await tunnel.startUdpForward(0, '127.0.0.1', 5353);
+  await tunnel.enableForwardEndpoint([
+    { host: '127.0.0.1', portFrom: 8080, portTo: 8080, udp: false },
+  ]);
+  await tunnel.disableForwardEndpoint();
+  await tunnel.stopLocalForward(tcpPort);
+  await tunnel.stopUdpForward(udpPort);
+  await tunnel.shutdown();
+
+  const cancel = new TransferCancelHandle();
+  const isCancelled: boolean = cancel.isCancelled();
+  cancel.cancel();
+  console.log(isCancelled);
+
+  await transferSendWan(
+    ch,
+    '/tmp/file.bin',
+    1024,
+    (p) => {
+      const done: number = p.bytesDone;
+      const total: number = p.totalBytes;
+      const resumed: boolean = p.resumed;
+      console.log(done, total, resumed);
+    },
+    cancel,
+  );
+  await transferSendLan(identity.seed, ['127.0.0.1'], 9000, identity.publicKey, '/tmp/f.bin', null, cancel);
+  await transferRecvLan(identity.seed, 0, identity.publicKey, '/tmp', undefined, cancel);
+
+  const routed: WanChannel = await connectWithPolicy(
+    'lan_then_wan',
+    1500,
+    {
+      addresses: ['127.0.0.1'],
+      port: 9000,
+      identitySeed: identity.seed,
+      peerPublicKey: identity.publicKey,
+    },
+    null,
+  );
+  await routed.shutdown();
+
+  const hub: SecureHub = await SecureHub.start(0, identity.seed, [identity.publicKey], (ev) => {
+    const kind: string = ev.type;
+    const fp: string | undefined = ev.fingerprint;
+    console.log(kind, fp);
+  });
+  const port: number = hub.localPort();
+  const added: boolean = hub.addAllowedPeer(identity.publicKey);
+  const removed: boolean = hub.removeAllowedPeer(identity.publicKey);
+  const peers = hub.connectedPeers();
+  const sent: boolean = hub.sendTo('sha256:00', identity.publicKey);
+  const failed: string[] = hub.broadcast(identity.publicKey);
+  const kicked: boolean = hub.kick('sha256:00');
+  console.log(port, added, removed, peers.length, sent, failed.length, kicked);
+  hub.stop();
+}

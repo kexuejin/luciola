@@ -300,6 +300,14 @@ export class SecureChannel {
     onEvent: (event: JsChannelEvent) => void,
   ): void;
   /**
+   * Take ownership of an established `WanChannel` and drive its authenticated
+   * stream through this channel's `send` / `onEvent` / `stats` / `close` surface.
+   */
+  attachWanChannel(
+    channel: WanChannel,
+    onEvent: (event: JsChannelEvent) => void,
+  ): void;
+  /**
    * Queue an encrypted frame. False when not connected OR the bounded queue
    * (64) is full because the peer stalled — back off and retry.
    */
@@ -523,6 +531,144 @@ export function wanDeriveRoomId(
   psk: Buffer,
   epoch: number,
 ): string;
+
+/** Route selection policy for `connectWithPolicy`. */
+export type RoutePolicyKind = 'lan_only' | 'lan_then_wan' | 'wan_only';
+
+/** LAN dial parameters for `connectWithPolicy` (pinned peer identity required; no TOFU). */
+export interface JsLanDialConfig {
+  addresses: string[];
+  port: number;
+  identitySeed: Buffer;
+  peerPublicKey: Buffer;
+}
+
+/**
+ * Establish an authenticated channel according to `policy`.
+ * Under `'lan_then_wan'`, `lanBudgetMs == 0` or `undefined` uses a 1500 ms default budget,
+ * and security failures (pin mismatch / tamper) fail immediately without WAN fallback.
+ */
+export function connectWithPolicy(
+  policy: RoutePolicyKind,
+  lanBudgetMs?: number | null,
+  lan?: JsLanDialConfig | null,
+  wan?: JsWanConfig | null,
+): Promise<WanChannel>;
+
+/** Progress event delivered during a file transfer. */
+export interface JsTransferProgress {
+  transferId: string;
+  bytesDone: number;
+  totalBytes: number;
+  channelType: string;
+  resumed: boolean;
+}
+
+/** Cooperative cancellation handle shared with any `transfer*` call. */
+export class TransferCancelHandle {
+  constructor();
+  cancel(): void;
+  isCancelled(): boolean;
+}
+
+/** Verified receipt returned when a file transfer finishes. */
+export interface JsTransferReceipt {
+  transferId: string;
+  fileName: string;
+  totalBytes: number;
+  sha256Hex: string;
+  savedPath?: string | null;
+  channelType: string;
+}
+
+/** Send one file over a pin-verified LAN connection (no TOFU). */
+export function transferSendLan(
+  identitySeed: Buffer,
+  addresses: string[],
+  port: number,
+  pinnedPeerPublicKey: Buffer,
+  filePath: string,
+  onProgress?: ((progress: JsTransferProgress) => void) | null,
+  cancel?: TransferCancelHandle | null,
+): Promise<JsTransferReceipt>;
+
+/** Accept one pin-verified LAN file transfer into `destDir` (no TOFU). */
+export function transferRecvLan(
+  identitySeed: Buffer,
+  listenPort: number,
+  acceptPeerPublicKey: Buffer,
+  destDir: string,
+  onProgress?: ((progress: JsTransferProgress) => void) | null,
+  cancel?: TransferCancelHandle | null,
+): Promise<JsTransferReceipt>;
+
+/** Send one file over an established `WanChannel` (consumes the channel). */
+export function transferSendWan(
+  channel: WanChannel,
+  filePath: string,
+  maxRelayBytes?: number | null,
+  onProgress?: ((progress: JsTransferProgress) => void) | null,
+  cancel?: TransferCancelHandle | null,
+): Promise<JsTransferReceipt>;
+
+/** Receive one file over an established `WanChannel` (consumes the channel). */
+export function transferRecvWan(
+  channel: WanChannel,
+  destDir: string,
+  onProgress?: ((progress: JsTransferProgress) => void) | null,
+  cancel?: TransferCancelHandle | null,
+): Promise<JsTransferReceipt>;
+
+/** Multiplexed TCP/UDP port-forwarding session running over one `WanChannel`. */
+export class WanTunnelSession {
+  static fromWanChannel(channel: WanChannel, isInitiator: boolean): Promise<WanTunnelSession>;
+  startLocalForward(listenPort: number, host: string, port: number): Promise<number>;
+  stopLocalForward(listenPort: number): Promise<boolean>;
+  startUdpForward(listenPort: number, host: string, port: number): Promise<number>;
+  stopUdpForward(listenPort: number): Promise<boolean>;
+  enableForwardEndpoint(rules: JsForwardRule[]): Promise<void>;
+  disableForwardEndpoint(): Promise<void>;
+  isAlive(): boolean;
+  channelType(): string;
+  stats(): JsForwardStatus[];
+  shutdown(): Promise<void>;
+}
+
+/** Metadata for a peer currently connected to `SecureHub`. */
+export interface JsHubPeerInfo {
+  fingerprint: string;
+  publicKey: Buffer;
+  remoteAddr: string;
+}
+
+/** Lifecycle or message event delivered by `SecureHub`. */
+export interface JsHubEvent {
+  type: 'peer_connected' | 'message' | 'peer_disconnected' | 'peer_rejected';
+  peer?: JsHubPeerInfo;
+  fingerprint?: string;
+  remoteAddr?: string;
+  payload?: Buffer;
+  reason?: string;
+}
+
+/** Concurrent multi-peer authenticated TCP server on a single dual-stack port. */
+export class SecureHub {
+  static start(
+    port: number,
+    identitySeed: Buffer,
+    allowedPeerPublicKeys: Buffer[],
+    onEvent: (event: JsHubEvent) => void,
+  ): Promise<SecureHub>;
+  localPort(): number;
+  localAddr(): string;
+  addAllowedPeer(publicKey: Buffer): boolean;
+  removeAllowedPeer(publicKey: Buffer): boolean;
+  connectedPeers(): JsHubPeerInfo[];
+  sendTo(fingerprint: string, payload: Buffer): boolean;
+  broadcast(payload: Buffer): string[];
+  kick(fingerprint: string): boolean;
+  stop(): void;
+}
 
 /**
  * NOTE: event callbacks are invoked from engine threads and MUST NOT throw —

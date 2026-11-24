@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "io.github.kexuejin"
-version = "0.11.0"
+version = "0.12.0"
 
 repositories {
     // Official registries are always authoritative and always resolved first:
@@ -117,6 +117,7 @@ kotlin {
             // 只在 native 编译时才需要，但放在 commonMain 也能被 JVM 解析到。
             dependencies {
                 implementation("org.jetbrains.kotlinx:atomicfu:0.26.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             }
         }
         val androidMain by getting {

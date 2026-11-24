@@ -146,6 +146,22 @@ typedef struct UniffiForeignFutureStructVoid {
 typedef void (*UniffiForeignFutureCompleteVoid)(int64_t, UniffiForeignFutureStructVoid
     );
 
+typedef void (*UniffiCallbackInterfaceHubEventListenerMethod0)(int64_t, RustBuffer, void *, 
+        UniffiRustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+typedef void (*UniffiCallbackInterfaceHubEventListenerMethod1)(int64_t, RustBuffer, RustBuffer, RustBuffer, void *, 
+        UniffiRustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+typedef void (*UniffiCallbackInterfaceHubEventListenerMethod2)(int64_t, RustBuffer, void *, 
+        UniffiRustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+typedef void (*UniffiCallbackInterfaceHubEventListenerMethod3)(int64_t, RustBuffer, RustBuffer, void *, 
+        UniffiRustCallStatus *_Nonnull uniffiCallStatus
+    );
+
 typedef void (*UniffiCallbackInterfaceLogSinkMethod0)(int64_t, RustBuffer, RustBuffer, void *, 
         UniffiRustCallStatus *_Nonnull uniffiCallStatus
     );
@@ -174,6 +190,18 @@ typedef void (*UniffiCallbackInterfaceSecureSessionListenerMethod1)(int64_t, Rus
         UniffiRustCallStatus *_Nonnull uniffiCallStatus
     );
 
+typedef void (*UniffiCallbackInterfaceTransferListenerMethod0)(int64_t, RustBuffer, void *, 
+        UniffiRustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+typedef struct UniffiVTableCallbackInterfaceHubEventListener {
+    UniffiCallbackInterfaceHubEventListenerMethod0 onPeerConnected;
+    UniffiCallbackInterfaceHubEventListenerMethod1 onMessage;
+    UniffiCallbackInterfaceHubEventListenerMethod2 onPeerDisconnected;
+    UniffiCallbackInterfaceHubEventListenerMethod3 onPeerRejected;
+    UniffiCallbackInterfaceFree uniffiFree;
+} UniffiVTableCallbackInterfaceHubEventListener;
+
 typedef struct UniffiVTableCallbackInterfaceLogSink {
     UniffiCallbackInterfaceLogSinkMethod0 log;
     UniffiCallbackInterfaceFree uniffiFree;
@@ -192,6 +220,11 @@ typedef struct UniffiVTableCallbackInterfaceSecureSessionListener {
     UniffiCallbackInterfaceSecureSessionListenerMethod1 onMessage;
     UniffiCallbackInterfaceFree uniffiFree;
 } UniffiVTableCallbackInterfaceSecureSessionListener;
+
+typedef struct UniffiVTableCallbackInterfaceTransferListener {
+    UniffiCallbackInterfaceTransferListenerMethod0 onProgress;
+    UniffiCallbackInterfaceFree uniffiFree;
+} UniffiVTableCallbackInterfaceTransferListener;
 
 void * uniffi_luciola_uniffi_fn_clone_discoverysession(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -215,11 +248,37 @@ void uniffi_luciola_uniffi_fn_method_discoverysession_start(void * ptr, int64_t 
 );
 void uniffi_luciola_uniffi_fn_method_discoverysession_stop(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
+void * uniffi_luciola_uniffi_fn_clone_securehub(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_free_securehub(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void * uniffi_luciola_uniffi_fn_constructor_securehub_start(int16_t port, RustBuffer identitySeed, RustBuffer allowedPeerPublicKeys, int64_t listener, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securehub_add_allowed_peer(void * ptr, RustBuffer publicKey, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_securehub_broadcast(void * ptr, RustBuffer payload, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_securehub_connected_peers(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securehub_kick(void * ptr, RustBuffer fingerprint, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_securehub_local_addr(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+int16_t uniffi_luciola_uniffi_fn_method_securehub_local_port(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securehub_remove_allowed_peer(void * ptr, RustBuffer publicKey, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_securehub_send_to(void * ptr, RustBuffer fingerprint, RustBuffer payload, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_method_securehub_stop(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
 void * uniffi_luciola_uniffi_fn_clone_securesession(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 void uniffi_luciola_uniffi_fn_free_securesession(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 void * uniffi_luciola_uniffi_fn_constructor_securesession_new(RustBuffer identitySeed, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_method_securesession_attach_wan_channel(void * ptr, void * channel, int64_t listener, UniffiRustCallStatus *_Nonnull out_status
 );
 void uniffi_luciola_uniffi_fn_method_securesession_closecurrentchannel(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -267,6 +326,17 @@ int8_t uniffi_luciola_uniffi_fn_method_securesession_stop_remote_forward(void * 
 );
 int8_t uniffi_luciola_uniffi_fn_method_securesession_stop_udp_forward(void * ptr, int16_t listenPort, UniffiRustCallStatus *_Nonnull out_status
 );
+void * uniffi_luciola_uniffi_fn_clone_transfercancelhandle(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_free_transfercancelhandle(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void * uniffi_luciola_uniffi_fn_constructor_transfercancelhandle_new(UniffiRustCallStatus *_Nonnull out_status
+    
+);
+void uniffi_luciola_uniffi_fn_method_transfercancelhandle_cancel(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_transfercancelhandle_is_cancelled(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
 void * uniffi_luciola_uniffi_fn_clone_truststore(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
 void uniffi_luciola_uniffi_fn_free_truststore(void * ptr, UniffiRustCallStatus *_Nonnull out_status
@@ -293,11 +363,41 @@ RustBuffer uniffi_luciola_uniffi_fn_method_wanchannel_remote_addr(void * ptr, Un
 );
 void uniffi_luciola_uniffi_fn_method_wanchannel_shutdown(void * ptr, UniffiRustCallStatus *_Nonnull out_status
 );
+void * uniffi_luciola_uniffi_fn_clone_wantunnelsession(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_free_wantunnelsession(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void * uniffi_luciola_uniffi_fn_constructor_wantunnelsession_from_wan_channel(void * channel, int8_t isInitiator, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_wantunnelsession_channel_type(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_method_wantunnelsession_disable_forward_endpoint(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_method_wantunnelsession_enable_forward_endpoint(void * ptr, RustBuffer rules, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_wantunnelsession_is_alive(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_method_wantunnelsession_shutdown(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+int16_t uniffi_luciola_uniffi_fn_method_wantunnelsession_start_local_forward(void * ptr, int16_t listenPort, RustBuffer host, int16_t port, UniffiRustCallStatus *_Nonnull out_status
+);
+int16_t uniffi_luciola_uniffi_fn_method_wantunnelsession_start_udp_forward(void * ptr, int16_t listenPort, RustBuffer host, int16_t port, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_method_wantunnelsession_stats(void * ptr, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_local_forward(void * ptr, int16_t listenPort, UniffiRustCallStatus *_Nonnull out_status
+);
+int8_t uniffi_luciola_uniffi_fn_method_wantunnelsession_stop_udp_forward(void * ptr, int16_t listenPort, UniffiRustCallStatus *_Nonnull out_status
+);
+void uniffi_luciola_uniffi_fn_init_callback_vtable_hubeventlistener(UniffiVTableCallbackInterfaceHubEventListener const * vtable
+);
 void uniffi_luciola_uniffi_fn_init_callback_vtable_logsink(UniffiVTableCallbackInterfaceLogSink const * vtable
 );
 void uniffi_luciola_uniffi_fn_init_callback_vtable_onpeerdiscovered(UniffiVTableCallbackInterfaceOnPeerDiscovered const * vtable
 );
 void uniffi_luciola_uniffi_fn_init_callback_vtable_securesessionlistener(UniffiVTableCallbackInterfaceSecureSessionListener const * vtable
+);
+void uniffi_luciola_uniffi_fn_init_callback_vtable_transferlistener(UniffiVTableCallbackInterfaceTransferListener const * vtable
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_advertised_addresses(UniffiRustCallStatus *_Nonnull out_status
     
@@ -311,6 +411,8 @@ RustBuffer uniffi_luciola_uniffi_fn_func_classify_error(RustBuffer codeOrDetail,
 RustBuffer uniffi_luciola_uniffi_fn_func_comparison_pin(RustBuffer localPk, RustBuffer remotePk, UniffiRustCallStatus *_Nonnull out_status
 );
 void * uniffi_luciola_uniffi_fn_func_connect_wan(RustBuffer config, UniffiRustCallStatus *_Nonnull out_status
+);
+void * uniffi_luciola_uniffi_fn_func_connect_with_policy(RustBuffer policy, int64_t lanBudgetMs, RustBuffer lan, RustBuffer wan, UniffiRustCallStatus *_Nonnull out_status
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_default_race_candidates(RustBuffer addresses, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -374,6 +476,14 @@ RustBuffer uniffi_luciola_uniffi_fn_func_sign_message(RustBuffer seed, RustBuffe
 );
 RustBuffer uniffi_luciola_uniffi_fn_func_subnet_broadcast_addresses(UniffiRustCallStatus *_Nonnull out_status
     
+);
+RustBuffer uniffi_luciola_uniffi_fn_func_transfer_recv_lan(RustBuffer identitySeed, int16_t listenPort, RustBuffer acceptPeerPublicKey, RustBuffer destDir, RustBuffer listener, RustBuffer cancel, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_func_transfer_recv_wan(void * channel, RustBuffer destDir, RustBuffer listener, RustBuffer cancel, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_func_transfer_send_lan(RustBuffer identitySeed, RustBuffer addresses, int16_t port, RustBuffer pinnedPeerPublicKey, RustBuffer filePath, RustBuffer listener, RustBuffer cancel, UniffiRustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_luciola_uniffi_fn_func_transfer_send_wan(void * channel, RustBuffer filePath, RustBuffer maxRelayBytes, RustBuffer listener, RustBuffer cancel, UniffiRustCallStatus *_Nonnull out_status
 );
 int8_t uniffi_luciola_uniffi_fn_func_verify_message(RustBuffer publicKey, RustBuffer message, RustBuffer signature, UniffiRustCallStatus *_Nonnull out_status
 );
@@ -512,6 +622,9 @@ int16_t uniffi_luciola_uniffi_checksum_func_comparison_pin(void
 int16_t uniffi_luciola_uniffi_checksum_func_connect_wan(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_func_connect_with_policy(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_func_default_race_candidates(void
     
 );
@@ -596,6 +709,18 @@ int16_t uniffi_luciola_uniffi_checksum_func_sign_message(void
 int16_t uniffi_luciola_uniffi_checksum_func_subnet_broadcast_addresses(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_func_transfer_recv_lan(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_func_transfer_recv_wan(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_func_transfer_send_lan(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_func_transfer_send_wan(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_func_verify_message(void
     
 );
@@ -627,6 +752,36 @@ int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_start(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_discoverysession_stop(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_add_allowed_peer(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_broadcast(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_connected_peers(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_kick(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_local_addr(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_local_port(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_remove_allowed_peer(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_send_to(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securehub_stop(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_securesession_attach_wan_channel(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_closecurrentchannel(void
@@ -698,6 +853,12 @@ int16_t uniffi_luciola_uniffi_checksum_method_securesession_stop_remote_forward(
 int16_t uniffi_luciola_uniffi_checksum_method_securesession_stop_udp_forward(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_method_transfercancelhandle_cancel(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_transfercancelhandle_is_cancelled(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_method_truststore_entries(void
     
 );
@@ -722,13 +883,64 @@ int16_t uniffi_luciola_uniffi_checksum_method_wanchannel_remote_addr(void
 int16_t uniffi_luciola_uniffi_checksum_method_wanchannel_shutdown(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_channel_type(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_disable_forward_endpoint(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_enable_forward_endpoint(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_is_alive(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_shutdown(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_local_forward(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_start_udp_forward(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_stats(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_local_forward(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_wantunnelsession_stop_udp_forward(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_constructor_discoverysession_new(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_constructor_securehub_start(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_constructor_securesession_new(void
     
 );
+int16_t uniffi_luciola_uniffi_checksum_constructor_transfercancelhandle_new(void
+    
+);
 int16_t uniffi_luciola_uniffi_checksum_constructor_truststore_new(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_constructor_wantunnelsession_from_wan_channel(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_connected(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_message(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_disconnected(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_hubeventlistener_on_peer_rejected(void
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_logsink_log(void
@@ -750,6 +962,9 @@ int16_t uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_state(voi
     
 );
 int16_t uniffi_luciola_uniffi_checksum_method_securesessionlistener_on_message(void
+    
+);
+int16_t uniffi_luciola_uniffi_checksum_method_transferlistener_on_progress(void
     
 );
 int32_t ffi_luciola_uniffi_uniffi_contract_version(void

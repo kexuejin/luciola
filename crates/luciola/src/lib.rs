@@ -19,6 +19,8 @@ pub use luciola_net as net;
 pub use luciola_proto as proto;
 #[cfg(feature = "transfer")]
 pub use luciola_transfer as transfer;
+#[cfg(feature = "transfer")]
+pub mod transfer_driver;
 pub use proto::{ChannelType, RelayConfig, TraversalCandidates};
 
 mod engine;

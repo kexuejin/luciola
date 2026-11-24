@@ -151,10 +151,9 @@ pub async fn bind_dual_stack_listener(port: u16) -> std::io::Result<TcpListener>
     TcpListener::bind(("0.0.0.0", port)).await
 }
 
-/// Race TCP dials across `addresses` on `port`; first connect wins.
-///
-/// The candidate sockets are dropped (closed) immediately — this function
-/// measures and selects, the caller connects on the winner.
+/// Concurrent multi-peer authenticated hub on one dual-stack port.
+pub mod hub;
+/// Authenticated encrypted channels (`SecureStream`).
 pub mod secure;
 
 /// Race TCP dials across `addresses` on `port`; the first connect wins and the

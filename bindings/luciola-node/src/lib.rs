@@ -705,6 +705,26 @@ pub struct SecureChannel {
     tunnel_event: std::sync::Mutex<Option<ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal>>>,
     /// T3：交给隧道的 reporter（close() 经它释放隧道持有的 tsfn 克隆）。
     tunnel_reporter: std::sync::Mutex<Option<std::sync::Arc<NodeReporter>>>,
+    /// Monotonic generation counter so an exiting old link/WAN pump cannot
+    /// clobber `connected` or emit a stale `"closed"` after a newer link or
+    /// `attach_wan_channel` has taken over.
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Serializes `close()`, `spawn_link()`, and `attach_wan_channel()`.
+    lifecycle: std::sync::Mutex<()>,
+}
+
+/// Upper bound (24 h) on keepalive/retry timers so `Instant::now() + period`
+/// can never overflow platform instant arithmetic.
+const MAX_LINK_TIMER_MS: u64 = 86_400_000;
+
+fn parse_timer_ms(value: f64, field: &str) -> Result<u64> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(Error::new(
+            napi::Status::InvalidArg,
+            format!("{field} must be a non-negative finite number"),
+        ));
+    }
+    Ok((value.min(MAX_LINK_TIMER_MS as f64)) as u64)
 }
 
 /// Link health counters (same six fields as the uniffi `LinkStats`).
@@ -820,33 +840,45 @@ impl SecureChannel {
             tunnel: TunnelLink::new(identity_seed.to_vec()),
             tunnel_event: std::sync::Mutex::new(None),
             tunnel_reporter: std::sync::Mutex::new(None),
+            generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            lifecycle: std::sync::Mutex::new(()),
         }
     }
 
     /// Retry policy for auto-reconnect: 2x exponential from minMs to maxMs,
     /// each delay jittered +-jitterPct percent.
     #[napi]
-    pub fn set_retry_policy(&self, min_ms: f64, max_ms: f64, jitter_pct: f64) {
+    pub fn set_retry_policy(&self, min_ms: f64, max_ms: f64, jitter_pct: f64) -> Result<()> {
         let t = &self.timings;
-        let (mn, mx, j) = (min_ms as u64, max_ms as u64, jitter_pct as u64);
+        let mn = parse_timer_ms(min_ms, "minMs")?;
+        let mx = parse_timer_ms(max_ms, "maxMs")?;
+        if !jitter_pct.is_finite() || jitter_pct < 0.0 {
+            return Err(Error::new(
+                napi::Status::InvalidArg,
+                "jitterPct must be a non-negative finite number",
+            ));
+        }
+        let j = (jitter_pct.min(90.0)) as u64;
         t.reconnect_min_ms
             .store(mn, std::sync::atomic::Ordering::Relaxed);
         t.reconnect_max_ms
             .store(mx.max(mn), std::sync::atomic::Ordering::Relaxed);
-        t.jitter_pct
-            .store(j.min(90), std::sync::atomic::Ordering::Relaxed);
+        t.jitter_pct.store(j, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Keepalive cadence: ping after intervalMs idle; dead after deadAfterMs
     /// of silence. Raise both under Android Doze.
     #[napi]
-    pub fn set_keepalive(&self, interval_ms: f64, dead_after_ms: f64) {
+    pub fn set_keepalive(&self, interval_ms: f64, dead_after_ms: f64) -> Result<()> {
         let t = &self.timings;
-        let (i, d) = (interval_ms as u64, dead_after_ms as u64);
+        let i = parse_timer_ms(interval_ms, "intervalMs")?;
+        let d = parse_timer_ms(dead_after_ms, "deadAfterMs")?;
         t.keepalive_ms
             .store(i, std::sync::atomic::Ordering::Relaxed);
         t.dead_after_ms
             .store(d.max(i), std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Link health counters (sent/received frames, connections, retries,
@@ -915,6 +947,155 @@ impl SecureChannel {
         )
     }
 
+    /// Take ownership of an established [`WanChannel`] and drive its
+    /// [`luciola::link::secure::SecureStream`] through this channel's existing
+    /// `send` / `onEvent` / `stats` / `close` surface. Stops any prior LAN link.
+    #[napi(
+        ts_args_type = "channel: WanChannel, onEvent: (event: { state?: string, detail?: string, message?: Buffer }) => void"
+    )]
+    pub fn attach_wan_channel(&self, channel: &WanChannel, on_event: JsFunction) -> Result<()> {
+        use napi::threadsafe_function::{
+            ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode,
+        };
+
+        let mut stream = channel
+            .take_stream()?
+            .ok_or_else(|| Error::from_reason("WanChannel already attached or shut down"))?;
+
+        let tsfn: ThreadsafeFunction<ChannelEvent, ErrorStrategy::Fatal> = on_event
+            .create_threadsafe_function(0, |ctx| {
+                let mut obj = ctx.env.create_object()?;
+                let (state, detail, message): &(Option<String>, Option<String>, Option<Vec<u8>>) =
+                    &ctx.value;
+                if let Some(s) = state {
+                    obj.set_named_property("state", s)?;
+                }
+                if let Some(d) = detail {
+                    obj.set_named_property("detail", d)?;
+                    if matches!(state.as_deref(), Some("error") | Some("retrying")) {
+                        let info = ErrorInfo::parse_detail(d);
+                        let mut err = ctx.env.create_object()?;
+                        err.set_named_property("code", info.code_str())?;
+                        err.set_named_property("message", &info.message)?;
+                        err.set_named_property("retryable", info.retryable())?;
+                        obj.set_named_property("error", err)?;
+                    }
+                }
+                if let Some(m) = message {
+                    let buf = ctx.env.create_buffer_copy(m.as_slice())?;
+                    obj.set_named_property("message", buf.into_raw())?;
+                }
+                Ok(vec![obj])
+            })?;
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+        let fp = stream.peer_fingerprint();
+
+        let my_gen = {
+            let _life = self.lifecycle.lock().unwrap();
+            self.close_locked();
+            let g = self
+                .generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
+            *self.outbound_tx.lock().unwrap() = Some(out_tx);
+            self.connections_established
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.connected
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            g
+        };
+
+        let connected = self.connected.clone();
+        let frames_sent = self.frames_sent.clone();
+        let frames_received = self.frames_received.clone();
+        let frames_dequeued = self.frames_dequeued.clone();
+        let timings = self.timings.clone();
+        let generation = self.generation.clone();
+
+        tsfn.call(
+            (Some("connected".to_string()), Some(fp), None),
+            ThreadsafeFunctionCallMode::NonBlocking,
+        );
+
+        napi::tokio::spawn(async move {
+            let ka_ms = timings
+                .keepalive_ms
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let mut keepalive = (ka_ms > 0).then(|| {
+                let mut iv = tokio::time::interval(std::time::Duration::from_millis(ka_ms));
+                iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                iv.reset();
+                iv
+            });
+            let mut awaiting_pong = false;
+            loop {
+                let mut buf = Vec::new();
+                tokio::select! {
+                    _ = &mut shutdown_rx => {
+                        let _ = stream.shutdown().await;
+                        break;
+                    }
+                    _ = async {
+                        if let Some(ref mut iv) = keepalive {
+                            iv.tick().await;
+                        }
+                    }, if keepalive.is_some() => {
+                        if awaiting_pong {
+                            break;
+                        }
+                        if stream.send(&[]).await.is_err() {
+                            break;
+                        }
+                        awaiting_pong = true;
+                    }
+                    msg = out_rx.recv() => match msg {
+                        Some(m) => {
+                            frames_dequeued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if let Some(ref mut iv) = keepalive {
+                                iv.reset();
+                            }
+                            awaiting_pong = false;
+                            if stream.send(&m).await.is_ok() {
+                                frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            } else {
+                                break;
+                            }
+                        }
+                        None => break,
+                    },
+                    frame = stream.recv(&mut buf) => {
+                        if let Some(ref mut iv) = keepalive {
+                            iv.reset();
+                        }
+                        awaiting_pong = false;
+                        if frame.is_err() {
+                            break;
+                        }
+                        if !buf.is_empty() {
+                            frames_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            tsfn.call(
+                                (None, None, Some(buf)),
+                                ThreadsafeFunctionCallMode::NonBlocking,
+                            );
+                        }
+                    }
+                }
+            }
+            if generation.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                tsfn.call(
+                    (Some("closed".to_string()), None, None),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
+            }
+        });
+
+        Ok(())
+    }
+
     /// Queue an encrypted frame; false when not connected.
     #[napi]
     pub fn send(&self, message: Buffer) -> bool {
@@ -943,22 +1124,8 @@ impl SecureChannel {
     #[napi]
     /// Close the channel, stop reconnecting and pause the tunnel.
     pub fn close(&self) {
-        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
-            let _ = tx.send(());
-        }
-        *self.outbound_tx.lock().unwrap() = None;
-        // 释放事件回调的全部持有路径：链路线程退出时丢弃自己的克隆，隧道的两条
-        // （tunnel_event 与 NodeReporter）在这里掐断。少放掉一个，被引用的
-        // ThreadsafeFunction 就会把 JS 事件循环钉住——contract 测试曾因此在打印
-        // "✅ passed" 之后永不退出。
-        *self.tunnel_event.lock().unwrap() = None;
-        if let Some(rep) = self.tunnel_reporter.lock().unwrap().take() {
-            *rep.tsfn.lock().unwrap() = None;
-        }
-        self.connected
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-        // T3：消息链路关闭 → 暂停隧道（注册表保留，重连后自动恢复）。
-        self.tunnel.pause();
+        let _life = self.lifecycle.lock().unwrap();
+        self.close_locked();
     }
 
     /// T3 本地转发（发起端）：本机 127.0.0.1:listenPort → 经隧道 → target。
@@ -1033,9 +1200,11 @@ impl SecureChannel {
 
     /// T4 隧道 mux keepalive：intervalMs=0 关闭；随下一次隧道链路重建生效。
     #[napi]
-    pub fn set_tunnel_keepalive(&self, interval_ms: f64, dead_after_ms: f64) {
-        self.tunnel
-            .set_keepalive(interval_ms as u64, dead_after_ms as u64);
+    pub fn set_tunnel_keepalive(&self, interval_ms: f64, dead_after_ms: f64) -> Result<()> {
+        let i = parse_timer_ms(interval_ms, "intervalMs")?;
+        let d = parse_timer_ms(dead_after_ms, "deadAfterMs")?;
+        self.tunnel.set_keepalive(i, d);
+        Ok(())
     }
 
     /// T3 撤下端点（隧道保持，仅停 accept 与转发）。
@@ -1074,6 +1243,12 @@ impl SecureChannel {
 fn parse_rule_objs(objs: Vec<JsForwardRule>) -> std::result::Result<Vec<ForwardRule>, TunnelError> {
     let mut parsed = Vec::with_capacity(objs.len());
     for r in objs {
+        if r.port_from == 0 || r.port_from > r.port_to {
+            return Err(TunnelError::InvalidRule(format!(
+                "非法端口区间：{}:{}-{}",
+                r.host, r.port_from, r.port_to
+            )));
+        }
         let host = luciola_tunnel::forward::normalize_rule_host_text(&r.host).ok_or_else(|| {
             TunnelError::InvalidRule(format!(
                 "规则主机既不是合法 IP 也不是合法主机名：{}:{}-{}",
@@ -1091,6 +1266,26 @@ fn parse_rule_objs(objs: Vec<JsForwardRule>) -> std::result::Result<Vec<ForwardR
 }
 
 impl SecureChannel {
+    fn close_locked(&self) {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        *self.outbound_tx.lock().unwrap() = None;
+        // 释放事件回调的全部持有路径：链路线程退出时丢弃自己的克隆，隧道的两条
+        // （tunnel_event 与 NodeReporter）在这里掐断。少放掉一个，被引用的
+        // ThreadsafeFunction 就会把 JS 事件循环钉住——contract 测试曾因此在打印
+        // "✅ passed" 之后永不退出。
+        *self.tunnel_event.lock().unwrap() = None;
+        if let Some(rep) = self.tunnel_reporter.lock().unwrap().take() {
+            *rep.tsfn.lock().unwrap() = None;
+        }
+        self.connected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        // T3：消息链路关闭 → 暂停隧道（注册表保留，重连后自动恢复）。
+        self.tunnel.pause();
+    }
     /// T3 同步控制面结果：Ok → true；Err → 转 (state, detail) 经 onEvent 上报
     /// "error" 后返回 false（不静默失败；onEvent 未注册时仅返回 false）。
     fn tunnel_result(&self, r: std::result::Result<(), TunnelError>) -> bool {
@@ -1145,32 +1340,40 @@ impl SecureChannel {
                 Ok(vec![obj])
             })?;
 
-        self.close();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
         // Bounded outbound queue: a stalled peer must not grow our memory.
         let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
-        *self.outbound_tx.lock().unwrap() = Some(out_tx);
-        // T3：把消息链路的角色翻成隧道基址。close() 已先发 Pause，随后 SetBase 在
-        // 同一条命令队列里 FIFO 生效；onEvent 的 tsfn 同时作为隧道 error/retrying
-        // 的上报通道（数据面仍走独立线程，不经 JS）。
-        let tunnel_base = match &role {
-            ChannelRole::Dial(addresses, port, pinned, _auto) => TunnelBase::Dial {
-                addresses: addresses.clone(),
-                secure_port: *port,
-                pinned_peer_public_key: pinned.clone(),
-            },
-            ChannelRole::Listen(port, expected) => TunnelBase::Listen {
-                secure_port: *port,
-                expected_peer: expected.clone(),
-            },
+        let my_gen = {
+            let _life = self.lifecycle.lock().unwrap();
+            self.close_locked();
+            let g = self
+                .generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            *self.shutdown_tx.lock().unwrap() = Some(shutdown_tx);
+            *self.outbound_tx.lock().unwrap() = Some(out_tx);
+            // T3：把消息链路的角色翻成隧道基址。close_locked() 已先发 Pause，随后 SetBase 在
+            // 同一条命令队列里 FIFO 生效；onEvent 的 tsfn 同时作为隧道 error/retrying
+            // 的上报通道（数据面仍走独立线程，不经 JS）。
+            let tunnel_base = match &role {
+                ChannelRole::Dial(addresses, port, pinned, _auto) => TunnelBase::Dial {
+                    addresses: addresses.clone(),
+                    secure_port: *port,
+                    pinned_peer_public_key: pinned.clone(),
+                },
+                ChannelRole::Listen(port, expected) => TunnelBase::Listen {
+                    secure_port: *port,
+                    expected_peer: expected.clone(),
+                },
+            };
+            *self.tunnel_event.lock().unwrap() = Some(tsfn.clone());
+            let reporter = std::sync::Arc::new(NodeReporter {
+                tsfn: std::sync::Mutex::new(Some(tsfn.clone())),
+            });
+            *self.tunnel_reporter.lock().unwrap() = Some(reporter.clone());
+            self.tunnel.set_base(tunnel_base, reporter);
+            g
         };
-        *self.tunnel_event.lock().unwrap() = Some(tsfn.clone());
-        let reporter = std::sync::Arc::new(NodeReporter {
-            tsfn: std::sync::Mutex::new(Some(tsfn.clone())),
-        });
-        *self.tunnel_reporter.lock().unwrap() = Some(reporter.clone());
-        self.tunnel.set_base(tunnel_base, reporter);
         let connected = self.connected.clone();
         let seed = self.identity_seed.clone();
         let timings = self.timings.clone();
@@ -1181,6 +1384,7 @@ impl SecureChannel {
             self.reconnect_attempts.clone(),
         );
         let frames_dequeued = self.frames_dequeued.clone();
+        let generation = self.generation.clone();
 
         std::thread::Builder::new()
             .name("luciola-node-secure-link".to_string())
@@ -1202,12 +1406,26 @@ impl SecureChannel {
                     let mut backoff = min;
 
                     'outer: loop {
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                            break 'outer;
+                        }
                         let stream = match role.clone() {
                             ChannelRole::Dial(addresses, port, pinned, auto) => {
-                                let attempt = match pinned.as_deref() {
-                                    Some(k) => connect_secure_raced(addresses.clone(), port, &seed, k).await,
-                                    None => connect_secure_raced_tofu(addresses.clone(), port, &seed).await,
+                                let attempt = tokio::select! {
+                                    _ = &mut shutdown => break 'outer,
+                                    r = async {
+                                        match pinned.as_deref() {
+                                            Some(k) => connect_secure_raced(addresses.clone(), port, &seed, k).await,
+                                            None => connect_secure_raced_tofu(addresses.clone(), port, &seed).await,
+                                        }
+                                    } => r,
                                 };
+                                if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                                    if let Ok(mut s) = attempt {
+                                        let _ = s.shutdown().await;
+                                    }
+                                    break 'outer;
+                                }
                                 match attempt {
                                     Ok(s) => {
                                         backoff = min;
@@ -1230,7 +1448,7 @@ impl SecureChannel {
                                         }
                                         let cap = std::time::Duration::from_millis(
                                             timings.reconnect_max_ms.load(std::sync::atomic::Ordering::Relaxed));
-                                        backoff = std::cmp::min(backoff * 2, cap.max(min));
+                                        backoff = std::cmp::min(backoff.saturating_mul(2), cap.max(min));
                                         continue 'outer;
                                     }
                                 }
@@ -1242,8 +1460,10 @@ impl SecureChannel {
                                     l = luciola::link::bind_dual_stack_listener(port) => match l {
                                         Ok(l) => l,
                                         Err(e) => {
-                                            let info = ErrorInfo::new(ErrorCode::BindFailed, e.to_string());
-                                            tsfn.call((Some("error".to_string()), Some(info.wire_detail()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            if generation.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                                                let info = ErrorInfo::new(ErrorCode::BindFailed, e.to_string());
+                                                tsfn.call((Some("error".to_string()), Some(info.wire_detail()), None), ThreadsafeFunctionCallMode::NonBlocking);
+                                            }
                                             return;
                                         }
                                     },
@@ -1253,6 +1473,9 @@ impl SecureChannel {
                                     r = accept_secure(&l, &seed, expected.as_deref()) => match r {
                                         Ok(s) => s,
                                         Err(e) => {
+                                            if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                                                break 'outer;
+                                            }
                                             // Handshake failures (wrong initiator) keep the listener alive.
                                             let info = ErrorInfo::from(&e);
                                             tsfn.call((Some("retrying".to_string()), Some(info.wire_detail()), None), ThreadsafeFunctionCallMode::NonBlocking);
@@ -1265,13 +1488,23 @@ impl SecureChannel {
                             }
                         };
                         let mut stream = stream;
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) != my_gen {
+                            let _ = stream.shutdown().await;
+                            break 'outer;
+                        }
                         connections_established.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         connected.store(true, std::sync::atomic::Ordering::SeqCst);
                         tsfn.call((Some("connected".to_string()), Some(stream.peer_fingerprint()), None), ThreadsafeFunctionCallMode::NonBlocking);
 
-                        let mut keepalive = tokio::time::interval(std::time::Duration::from_millis(
-                            timings.keepalive_ms.load(std::sync::atomic::Ordering::Relaxed)));
-                        keepalive.reset();
+                        let ka_ms = timings
+                            .keepalive_ms
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let mut keepalive = (ka_ms > 0).then(|| {
+                            let mut iv = tokio::time::interval(std::time::Duration::from_millis(ka_ms));
+                            iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                            iv.reset();
+                            iv
+                        });
                         let mut awaiting_pong = false;
                         loop {
                             let mut buf: Vec<u8> = Vec::new();
@@ -1280,7 +1513,11 @@ impl SecureChannel {
                                     let _ = stream.shutdown().await;
                                     break 'outer;
                                 }
-                                _ = keepalive.tick() => {
+                                _ = async {
+                                    if let Some(ref mut iv) = keepalive {
+                                        iv.tick().await;
+                                    }
+                                }, if keepalive.is_some() => {
                                     if awaiting_pong {
                                         break;
                                     }
@@ -1292,7 +1529,9 @@ impl SecureChannel {
                                 msg = out_rx.recv() => match msg {
                                     Some(m) => {
                                         frames_dequeued.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        keepalive.reset();
+                                        if let Some(ref mut iv) = keepalive {
+                                            iv.reset();
+                                        }
                                         awaiting_pong = false;
                                         if stream.send(&m).await.is_ok() {
                                             frames_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1303,7 +1542,9 @@ impl SecureChannel {
                                     None => break 'outer,
                                 },
                                 frame = stream.recv(&mut buf) => {
-                                    keepalive.reset();
+                                    if let Some(ref mut iv) = keepalive {
+                                        iv.reset();
+                                    }
                                     awaiting_pong = false;
                                     if frame.is_err() {
                                         break;
@@ -1315,8 +1556,12 @@ impl SecureChannel {
                                 }
                             }
                         }
-                        connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                        tsfn.call((Some("closed".to_string()), None, None), ThreadsafeFunctionCallMode::NonBlocking);
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) == my_gen {
+                            connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                            tsfn.call((Some("closed".to_string()), None, None), ThreadsafeFunctionCallMode::NonBlocking);
+                        } else {
+                            break 'outer;
+                        }
                         if let ChannelRole::Dial(_, _, _, false) = role {
                             break 'outer;
                         }
@@ -1627,6 +1872,16 @@ pub struct WanChannel {
     inner: std::sync::Mutex<Option<luciola::link::secure::SecureStream>>,
 }
 
+impl WanChannel {
+    fn take_stream(&self) -> Result<Option<luciola::link::secure::SecureStream>> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN channel lock poisoned"))?;
+        Ok(guard.take())
+    }
+}
+
 #[napi]
 impl WanChannel {
     /// The data plane this channel actually uses: `lan_direct`,
@@ -1723,4 +1978,979 @@ pub fn wan_derive_room_id(
         return Err(Error::from_reason("room derivation failed; check the PSK"));
     }
     Ok(room)
+}
+
+/// LAN dial configuration for [`connect_with_policy`] (pinned peer identity required; no TOFU).
+#[napi(object)]
+pub struct JsLanDialConfig {
+    /// Candidate LAN IPv4 / IPv6 addresses.
+    pub addresses: Vec<String>,
+    /// Peer's secure TCP port (`1..=65535`).
+    pub port: u32,
+    /// Local 32-byte Ed25519 identity seed (zeroized after validation).
+    pub identity_seed: Buffer,
+    /// Pinned 32-byte Ed25519 peer public key (mandatory; no TOFU).
+    pub peer_public_key: Buffer,
+}
+
+impl JsLanDialConfig {
+    fn into_core(self) -> Result<luciola::wan::route::LanDialConfig> {
+        let mut seed_vec = self.identity_seed.to_vec();
+        let port = match u16::try_from(self.port) {
+            Ok(p) if p > 0 => p,
+            _ => {
+                zeroize::Zeroize::zeroize(&mut seed_vec);
+                return Err(Error::new(
+                    napi::Status::InvalidArg,
+                    format!("lan.port {} is out of 1..=65535 range", self.port),
+                ));
+            }
+        };
+        let seed_res = require_key(&seed_vec, "lan.identitySeed");
+        zeroize::Zeroize::zeroize(&mut seed_vec);
+        let identity_seed = zeroize::Zeroizing::new(seed_res?);
+        let peer_public_key = require_key(&self.peer_public_key, "lan.peerPublicKey")?;
+        Ok(luciola::wan::route::LanDialConfig {
+            addresses: self.addresses,
+            port,
+            identity_seed,
+            peer_public_key,
+        })
+    }
+}
+
+/// Establish an authenticated channel according to `policy`:
+/// `'lan_only'`, `'lan_then_wan'`, or `'wan_only'`.
+///
+/// Under `'lan_then_wan'`, `lanBudgetMs == 0` or `undefined` uses a 1500 ms default budget,
+/// and security failures (pin mismatch / tamper) fail immediately without falling back to WAN.
+#[napi]
+pub async fn connect_with_policy(
+    policy: String,
+    lan_budget_ms: Option<f64>,
+    lan: Option<JsLanDialConfig>,
+    wan: Option<JsWanConfig>,
+) -> Result<WanChannel> {
+    let budget_ms = match lan_budget_ms {
+        Some(ms) => {
+            if !ms.is_finite() || ms < 0.0 || ms > (u64::MAX as f64) {
+                return Err(Error::new(
+                    napi::Status::InvalidArg,
+                    "lanBudgetMs must be a non-negative finite number",
+                ));
+            }
+            ms as u64
+        }
+        None => 0,
+    };
+
+    let core_policy = match policy.as_str() {
+        "lan_only" => luciola::wan::route::RoutePolicy::LanOnly,
+        "lan_then_wan" => luciola::wan::route::RoutePolicy::LanThenWan {
+            lan_budget: std::time::Duration::from_millis(if budget_ms == 0 {
+                1_500
+            } else {
+                budget_ms
+            }),
+        },
+        "wan_only" => luciola::wan::route::RoutePolicy::WanOnly,
+        other => {
+            return Err(Error::new(
+                napi::Status::InvalidArg,
+                format!(
+                    "unknown route policy '{other}'; expected 'lan_only', 'lan_then_wan', or 'wan_only'"
+                ),
+            ));
+        }
+    };
+
+    let lan_core = match core_policy {
+        luciola::wan::route::RoutePolicy::WanOnly => {
+            if let Some(mut unused) = lan {
+                zeroize::Zeroize::zeroize(unused.identity_seed.as_mut());
+            }
+            None
+        }
+        _ => lan.map(JsLanDialConfig::into_core).transpose()?,
+    };
+    let wan_core = match core_policy {
+        luciola::wan::route::RoutePolicy::LanOnly => {
+            if let Some(mut unused) = wan {
+                zeroize::Zeroize::zeroize(unused.psk.as_mut());
+                zeroize::Zeroize::zeroize(unused.identity_seed.as_mut());
+            }
+            None
+        }
+        _ => wan.map(JsWanConfig::into_core).transpose()?,
+    };
+
+    let stream = luciola::wan::route::connect_with_policy(core_policy, lan_core, wan_core)
+        .await
+        .map_err(|err| Error::from_reason(err.to_string()))?;
+    Ok(WanChannel {
+        inner: std::sync::Mutex::new(Some(stream)),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// File transfer & standalone WAN tunnel exports (WP1.2 / WP1.3)
+// ---------------------------------------------------------------------------
+
+/// Progress update emitted during a file transfer.
+#[napi(object)]
+#[derive(Clone)]
+pub struct JsTransferProgress {
+    /// Stable transfer identifier used for checkpoint matching.
+    pub transfer_id: String,
+    /// Contiguous acknowledged bytes so far.
+    pub bytes_done: f64,
+    /// Total expected file size in bytes.
+    pub total_bytes: f64,
+    /// Active transport plane (`lan_direct`, `hole_punched_direct`, `relay_forwarded`, `usb_adb_direct`).
+    pub channel_type: String,
+    /// True when this update reports a resumed checkpoint skip.
+    pub resumed: bool,
+}
+
+/// Cooperative cancellation handle shared with any `transfer*` call.
+#[napi]
+pub struct TransferCancelHandle {
+    tx: std::sync::Mutex<tokio::sync::watch::Sender<bool>>,
+    rx: tokio::sync::watch::Receiver<bool>,
+}
+
+impl TransferCancelHandle {
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.rx.clone()
+    }
+}
+
+#[napi]
+impl TransferCancelHandle {
+    /// Create a fresh non-cancelled handle.
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        Self {
+            tx: std::sync::Mutex::new(tx),
+            rx,
+        }
+    }
+
+    /// Signal cancellation to any transfer observing this handle.
+    #[napi]
+    pub fn cancel(&self) {
+        if let Ok(guard) = self.tx.lock() {
+            let _ = guard.send(true);
+        }
+    }
+
+    /// Whether [`Self::cancel`] has been called.
+    #[napi]
+    pub fn is_cancelled(&self) -> bool {
+        *self.rx.borrow()
+    }
+}
+
+impl Default for TransferCancelHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn to_js_progress(p: luciola_transfer::TransferProgress) -> JsTransferProgress {
+    JsTransferProgress {
+        transfer_id: p.transfer_id,
+        bytes_done: p.bytes_done as f64,
+        total_bytes: p.total_bytes as f64,
+        channel_type: p.channel_type.as_str().to_string(),
+        resumed: p.resumed,
+    }
+}
+
+fn build_progress_tsfn(
+    cb: napi::JsFunction,
+) -> Result<
+    napi::threadsafe_function::ThreadsafeFunction<
+        JsTransferProgress,
+        napi::threadsafe_function::ErrorStrategy::Fatal,
+    >,
+> {
+    cb.create_threadsafe_function(0, |ctx| {
+        let p: &JsTransferProgress = &ctx.value;
+        let mut obj = ctx.env.create_object()?;
+        obj.set_named_property("transferId", &p.transfer_id)?;
+        obj.set_named_property("bytesDone", p.bytes_done)?;
+        obj.set_named_property("totalBytes", p.total_bytes)?;
+        obj.set_named_property("channelType", &p.channel_type)?;
+        obj.set_named_property("resumed", p.resumed)?;
+        Ok(vec![obj])
+    })
+}
+
+/// Verified final receipt returned by Node file transfer functions.
+#[napi(object)]
+pub struct JsTransferReceipt {
+    pub transfer_id: String,
+    pub file_name: String,
+    pub total_bytes: f64,
+    pub sha256_hex: String,
+    pub saved_path: Option<String>,
+    pub channel_type: String,
+}
+
+fn to_js_receipt(r: luciola_transfer::TransferReceipt) -> JsTransferReceipt {
+    JsTransferReceipt {
+        transfer_id: r.transfer_id,
+        file_name: r.file_name,
+        total_bytes: r.total_bytes as f64,
+        sha256_hex: r.sha256_hex,
+        saved_path: r.saved_path.map(|p| p.to_string_lossy().into_owned()),
+        channel_type: r.channel_type.as_str().to_string(),
+    }
+}
+
+/// Send one file over a pin-verified LAN connection (no TOFU).
+#[napi(ts_return_type = "Promise<JsTransferReceipt>")]
+#[allow(clippy::too_many_arguments)]
+pub fn transfer_send_lan(
+    env: Env,
+    identity_seed: Buffer,
+    addresses: Vec<String>,
+    port: u16,
+    pinned_peer_public_key: Buffer,
+    file_path: String,
+    #[napi(ts_arg_type = "((progress: JsTransferProgress) => void) | undefined | null")]
+    on_progress: Option<JsFunction>,
+    cancel: Option<&TransferCancelHandle>,
+) -> Result<napi::JsObject> {
+    let tsfn = on_progress.map(build_progress_tsfn).transpose()?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+    let mut seed_vec = identity_seed.to_vec();
+    let peer_vec = pinned_peer_public_key.to_vec();
+
+    env.execute_tokio_future(
+        async move {
+            let seed_res = require_key(&seed_vec, "identitySeed");
+            zeroize::Zeroize::zeroize(&mut seed_vec);
+            let seed = zeroize::Zeroizing::new(seed_res?);
+            let peer_pk = require_key(&peer_vec, "pinnedPeerPublicKey")?;
+            if addresses.is_empty() {
+                return Err(Error::from_reason("addresses must not be empty"));
+            }
+            let mut dial_cancel = cancel_rx.clone();
+            let stream = tokio::select! {
+                _ = async {
+                    loop {
+                        if *dial_cancel.borrow() {
+                            break;
+                        }
+                        if dial_cancel.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                } => {
+                    return Err(Error::from_reason("transfer cancelled"));
+                }
+                res = luciola::link::secure::connect_secure_raced(addresses, port, seed.as_slice(), &peer_pk) => {
+                    res.map_err(|e| Error::from_reason(e.to_string()))?
+                }
+            };
+            let receipt = luciola::transfer_driver::send_file_over_stream(
+                stream,
+                std::path::Path::new(&file_path),
+                None,
+                None,
+                luciola_transfer::SenderConfig::default(),
+                cancel_rx,
+                |p| {
+                    if let Some(ref cb) = tsfn {
+                        cb.call(
+                            to_js_progress(p),
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    }
+                },
+            )
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(to_js_receipt(receipt))
+        },
+        |_env, receipt| Ok(receipt),
+    )
+}
+
+/// Accept one pin-verified LAN file transfer into `destDir` (no TOFU).
+#[napi(ts_return_type = "Promise<JsTransferReceipt>")]
+pub fn transfer_recv_lan(
+    env: Env,
+    identity_seed: Buffer,
+    listen_port: u16,
+    accept_peer_public_key: Buffer,
+    dest_dir: String,
+    #[napi(ts_arg_type = "((progress: JsTransferProgress) => void) | undefined | null")]
+    on_progress: Option<JsFunction>,
+    cancel: Option<&TransferCancelHandle>,
+) -> Result<napi::JsObject> {
+    let tsfn = on_progress.map(build_progress_tsfn).transpose()?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+    let mut seed_vec = identity_seed.to_vec();
+    let peer_vec = accept_peer_public_key.to_vec();
+
+    env.execute_tokio_future(
+        async move {
+            let seed_res = require_key(&seed_vec, "identitySeed");
+            zeroize::Zeroize::zeroize(&mut seed_vec);
+            let seed = zeroize::Zeroizing::new(seed_res?);
+            let peer_pk = require_key(&peer_vec, "acceptPeerPublicKey")?;
+            let tcp_listener = luciola::link::bind_dual_stack_listener(listen_port)
+                .await
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            let mut accept_cancel = cancel_rx.clone();
+            let stream = tokio::select! {
+                _ = async {
+                    loop {
+                        if *accept_cancel.borrow() {
+                            break;
+                        }
+                        if accept_cancel.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                } => {
+                    return Err(Error::from_reason("transfer cancelled"));
+                }
+                res = luciola::link::secure::accept_secure(&tcp_listener, seed.as_slice(), Some(&peer_pk)) => {
+                    res.map_err(|e| Error::from_reason(e.to_string()))?
+                }
+            };
+            let receipt = luciola::transfer_driver::recv_file_over_stream(
+                stream,
+                std::path::Path::new(&dest_dir),
+                luciola_transfer::ReceiverConfig::default(),
+                std::time::Duration::from_millis(500),
+                cancel_rx,
+                |p| {
+                    if let Some(ref cb) = tsfn {
+                        cb.call(
+                            to_js_progress(p),
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    }
+                },
+            )
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(to_js_receipt(receipt))
+        },
+        |_env, receipt| Ok(receipt),
+    )
+}
+
+/// Send one file over an established [`WanChannel`] (consumes the channel).
+#[napi(ts_return_type = "Promise<JsTransferReceipt>")]
+pub fn transfer_send_wan(
+    env: Env,
+    channel: &WanChannel,
+    file_path: String,
+    max_relay_bytes: Option<f64>,
+    #[napi(ts_arg_type = "((progress: JsTransferProgress) => void) | undefined | null")]
+    on_progress: Option<JsFunction>,
+    cancel: Option<&TransferCancelHandle>,
+) -> Result<napi::JsObject> {
+    let tsfn = on_progress.map(build_progress_tsfn).transpose()?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+
+    let cfg_res: Result<luciola_transfer::SenderConfig> = (|| {
+        let mut cfg = luciola_transfer::SenderConfig::default();
+        if let Some(limit) = max_relay_bytes {
+            if !limit.is_finite()
+                || limit < 0.0
+                || limit.fract() != 0.0
+                || limit > 9_007_199_254_740_991.0
+            {
+                return Err(Error::new(
+                    napi::Status::InvalidArg,
+                    "maxRelayBytes must be a non-negative safe integer",
+                ));
+            }
+            cfg.relay_max_bytes = Some(limit as u64);
+        }
+        Ok(cfg)
+    })();
+
+    let stream_res = if cfg_res.is_ok() {
+        Some(channel.take_stream().and_then(|opt| {
+            opt.ok_or_else(|| Error::from_reason("WanChannel already consumed or shut down"))
+        }))
+    } else {
+        None
+    };
+
+    env.execute_tokio_future(
+        async move {
+            let cfg = cfg_res?;
+            let stream = stream_res.expect("stream taken when cfg_res is Ok")?;
+            let receipt = luciola::transfer_driver::send_file_over_stream(
+                stream,
+                std::path::Path::new(&file_path),
+                None,
+                None,
+                cfg,
+                cancel_rx,
+                |p| {
+                    if let Some(ref cb) = tsfn {
+                        cb.call(
+                            to_js_progress(p),
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    }
+                },
+            )
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(to_js_receipt(receipt))
+        },
+        |_env, receipt| Ok(receipt),
+    )
+}
+
+/// Receive one file over an established [`WanChannel`] (consumes the channel).
+#[napi(ts_return_type = "Promise<JsTransferReceipt>")]
+pub fn transfer_recv_wan(
+    env: Env,
+    channel: &WanChannel,
+    dest_dir: String,
+    #[napi(ts_arg_type = "((progress: JsTransferProgress) => void) | undefined | null")]
+    on_progress: Option<JsFunction>,
+    cancel: Option<&TransferCancelHandle>,
+) -> Result<napi::JsObject> {
+    let tsfn = on_progress.map(build_progress_tsfn).transpose()?;
+    let cancel_rx = cancel
+        .map(|h| h.subscribe())
+        .unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+    let stream_res = channel.take_stream().and_then(|opt| {
+        opt.ok_or_else(|| Error::from_reason("WanChannel already consumed or shut down"))
+    });
+
+    env.execute_tokio_future(
+        async move {
+            let stream = stream_res?;
+            let receipt = luciola::transfer_driver::recv_file_over_stream(
+                stream,
+                std::path::Path::new(&dest_dir),
+                luciola_transfer::ReceiverConfig::default(),
+                std::time::Duration::from_millis(500),
+                cancel_rx,
+                |p| {
+                    if let Some(ref cb) = tsfn {
+                        cb.call(
+                            to_js_progress(p),
+                            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                        );
+                    }
+                },
+            )
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+            Ok(to_js_receipt(receipt))
+        },
+        |_env, receipt| Ok(receipt),
+    )
+}
+
+/// Multiplexed TCP/UDP port-forwarding session running over one [`WanChannel`].
+#[napi]
+pub struct WanTunnelSession {
+    inner: std::sync::Mutex<Option<std::sync::Arc<luciola_tunnel::DirectTunnelSession>>>,
+}
+
+#[napi]
+impl WanTunnelSession {
+    /// Consume `channel` and start a direct mux tunnel session inside the Tokio runtime.
+    #[napi(factory)]
+    pub async fn from_wan_channel(channel: &WanChannel, is_initiator: bool) -> Result<Self> {
+        let stream = channel
+            .take_stream()?
+            .ok_or_else(|| Error::from_reason("WanChannel already consumed or shut down"))?;
+        let role = if is_initiator {
+            luciola_tunnel::Role::Initiator
+        } else {
+            luciola_tunnel::Role::Responder
+        };
+        let session = std::sync::Arc::new(luciola_tunnel::DirectTunnelSession::start(
+            stream,
+            role,
+            luciola_tunnel::MuxConfig::default(),
+        ));
+        Ok(Self {
+            inner: std::sync::Mutex::new(Some(session)),
+        })
+    }
+
+    #[napi]
+    pub async fn start_local_forward(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<u16> {
+        let target = luciola_tunnel::DialTarget::new(&host, port);
+        if !target.validate() {
+            return Err(Error::from_reason(format!(
+                "invalid forward target: {host}:{port}"
+            )));
+        }
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .clone()
+            .ok_or_else(|| Error::from_reason("WanTunnelSession has been shut down"))?;
+        session
+            .start_local_forward(listen_port, target)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn stop_local_forward(&self, listen_port: u16) -> Result<bool> {
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .clone();
+        match session {
+            Some(s) => Ok(s.stop_local_forward(listen_port).await),
+            None => Ok(false),
+        }
+    }
+
+    #[napi]
+    pub async fn start_udp_forward(
+        &self,
+        listen_port: u16,
+        host: String,
+        port: u16,
+    ) -> Result<u16> {
+        let target = luciola_tunnel::DialTarget::new(&host, port);
+        if !target.validate() {
+            return Err(Error::from_reason(format!(
+                "invalid forward target: {host}:{port}"
+            )));
+        }
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .clone()
+            .ok_or_else(|| Error::from_reason("WanTunnelSession has been shut down"))?;
+        session
+            .start_udp_forward(listen_port, target)
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn stop_udp_forward(&self, listen_port: u16) -> Result<bool> {
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .clone();
+        match session {
+            Some(s) => Ok(s.stop_udp_forward(listen_port).await),
+            None => Ok(false),
+        }
+    }
+
+    #[napi]
+    pub async fn enable_forward_endpoint(&self, rules: Vec<JsForwardRule>) -> Result<()> {
+        let parsed = parse_rule_objs(rules).map_err(|e| Error::from_reason(e.to_string()))?;
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .clone()
+            .ok_or_else(|| Error::from_reason("WanTunnelSession has been shut down"))?;
+        session
+            .enable_forward_endpoint(parsed)
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn disable_forward_endpoint(&self) -> Result<()> {
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .clone();
+        if let Some(s) = session {
+            s.disable_forward_endpoint().await;
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn is_alive(&self) -> bool {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.is_alive()))
+            .unwrap_or(false)
+    }
+
+    #[napi]
+    pub fn channel_type(&self) -> String {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.channel_type().as_str().to_string()))
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    #[napi]
+    pub fn stats(&self) -> Vec<JsForwardStatus> {
+        let Ok(guard) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let Some(session) = guard.as_ref() else {
+            return Vec::new();
+        };
+        session
+            .stats()
+            .into_iter()
+            .map(|s| JsForwardStatus {
+                active: s.active,
+                listen_port: s.listen_port,
+                channels_open: s.status.channels_open as i64,
+                channels_total: s.status.channels_total as i64,
+                dial_denied: s.status.dial_denied as i64,
+                dial_failed: s.status.dial_failed as i64,
+                kind: s.kind.as_str().to_string(),
+            })
+            .collect()
+    }
+
+    #[napi]
+    pub async fn shutdown(&self) -> Result<()> {
+        let session = self
+            .inner
+            .lock()
+            .map_err(|_| Error::from_reason("WAN tunnel lock poisoned"))?
+            .take();
+        if let Some(s) = session {
+            s.shutdown().await;
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single-port multi-peer authenticated server (`SecureHub`)
+// ---------------------------------------------------------------------------
+
+/// Metadata for a peer currently connected to [`SecureHub`].
+#[napi(object)]
+pub struct JsHubPeerInfo {
+    /// Verified `sha256:<hex>` fingerprint of the peer's Ed25519 identity key.
+    pub fingerprint: String,
+    /// Raw 32-byte Ed25519 public key of the peer.
+    pub public_key: Buffer,
+    /// Peer's TCP socket address (`ip:port`).
+    pub remote_addr: String,
+}
+
+/// Lifecycle or message event delivered by [`SecureHub`].
+#[napi(object)]
+pub struct JsHubEvent {
+    /// `'peer_connected' | 'message' | 'peer_disconnected' | 'peer_rejected'`
+    #[napi(js_name = "type")]
+    pub kind: String,
+    /// Connected peer metadata (`'peer_connected'`).
+    pub peer: Option<JsHubPeerInfo>,
+    /// Peer fingerprint (`'peer_connected' | 'message' | 'peer_disconnected'`).
+    pub fingerprint: Option<String>,
+    /// Peer socket endpoint (`'peer_connected' | 'message' | 'peer_rejected'`).
+    pub remote_addr: Option<String>,
+    /// Decrypted payload (`'message'`).
+    pub payload: Option<Buffer>,
+    /// Rejection reason (`'peer_rejected'`).
+    pub reason: Option<String>,
+}
+
+fn to_js_hub_event(ev: luciola::link::hub::HubEvent) -> JsHubEvent {
+    match ev {
+        luciola::link::hub::HubEvent::PeerConnected(info) => {
+            let remote = info.remote_addr.to_string();
+            let fp = info.fingerprint;
+            JsHubEvent {
+                kind: "peer_connected".to_string(),
+                peer: Some(JsHubPeerInfo {
+                    fingerprint: fp.clone(),
+                    public_key: Buffer::from(info.public_key),
+                    remote_addr: remote.clone(),
+                }),
+                fingerprint: Some(fp),
+                remote_addr: Some(remote),
+                payload: None,
+                reason: None,
+            }
+        }
+        luciola::link::hub::HubEvent::Message {
+            fingerprint,
+            remote_addr,
+            payload,
+        } => JsHubEvent {
+            kind: "message".to_string(),
+            peer: None,
+            fingerprint: Some(fingerprint),
+            remote_addr: Some(remote_addr.to_string()),
+            payload: Some(Buffer::from(payload)),
+            reason: None,
+        },
+        luciola::link::hub::HubEvent::PeerDisconnected { fingerprint } => JsHubEvent {
+            kind: "peer_disconnected".to_string(),
+            peer: None,
+            fingerprint: Some(fingerprint),
+            remote_addr: None,
+            payload: None,
+            reason: None,
+        },
+        luciola::link::hub::HubEvent::PeerRejected {
+            remote_addr,
+            reason,
+        } => JsHubEvent {
+            kind: "peer_rejected".to_string(),
+            peer: None,
+            fingerprint: None,
+            remote_addr: Some(remote_addr.to_string()),
+            payload: None,
+            reason: Some(reason),
+        },
+    }
+}
+
+/// Concurrent multi-peer authenticated TCP server on a single dual-stack port.
+///
+/// Peer keys are checked against an explicit allowlist **before** the server signs
+/// handshake message 2 (deny by default).
+#[napi]
+pub struct SecureHub {
+    inner: std::sync::Mutex<Option<luciola::link::hub::SecureHub>>,
+    local_addr: std::net::SocketAddr,
+    allowlist: std::sync::Arc<std::sync::RwLock<std::collections::HashSet<[u8; 32]>>>,
+    stop_tx: std::sync::Mutex<tokio::sync::watch::Sender<bool>>,
+}
+
+#[napi]
+impl SecureHub {
+    /// Bind `port` (`0` = OS ephemeral) and start accepting concurrent peers.
+    ///
+    /// `allowedPeerPublicKeys` seeds the pre-sign allowlist (each entry must be 32 bytes;
+    /// an empty array starts in deny-all mode until [`Self::add_allowed_peer`] is called).
+    #[napi(factory)]
+    pub async fn start(
+        port: u16,
+        identity_seed: Buffer,
+        allowed_peer_public_keys: Vec<Buffer>,
+        #[napi(ts_arg_type = "(event: JsHubEvent) => void")]
+        on_event: napi::threadsafe_function::ThreadsafeFunction<
+            JsHubEvent,
+            napi::threadsafe_function::ErrorStrategy::Fatal,
+        >,
+    ) -> Result<Self> {
+        let mut seed_vec = identity_seed.to_vec();
+        let pk_vecs: Vec<Vec<u8>> = allowed_peer_public_keys
+            .into_iter()
+            .map(|b| b.to_vec())
+            .collect();
+
+        if let Err(err) = require_key(&seed_vec, "identitySeed") {
+            zeroize::Zeroize::zeroize(&mut seed_vec);
+            return Err(err);
+        }
+        let mut set = std::collections::HashSet::with_capacity(pk_vecs.len());
+        for (idx, pk) in pk_vecs.iter().enumerate() {
+            match require_key(pk, &format!("allowedPeerPublicKeys[{idx}]")) {
+                Ok(arr) => {
+                    set.insert(arr);
+                }
+                Err(err) => {
+                    zeroize::Zeroize::zeroize(&mut seed_vec);
+                    return Err(err);
+                }
+            }
+        }
+        let allowlist = std::sync::Arc::new(std::sync::RwLock::new(set));
+        let allow_for_hub = allowlist.clone();
+        let seed_for_hub = std::mem::take(&mut seed_vec);
+
+        let (hub, mut event_rx) =
+            luciola::link::hub::SecureHub::start(port, seed_for_hub, move |pk| {
+                let Ok(arr): std::result::Result<[u8; 32], _> = pk.try_into() else {
+                    return false;
+                };
+                allow_for_hub
+                    .read()
+                    .map(|peers| peers.contains(&arr))
+                    .unwrap_or(false)
+            })
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        let local_addr = hub.local_addr();
+        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+        let tsfn = on_event;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = stop_rx.changed() => {
+                        if *stop_rx.borrow() {
+                            while let Ok(Some(ev)) = tokio::time::timeout(
+                                std::time::Duration::from_millis(50),
+                                event_rx.recv(),
+                            )
+                            .await
+                            {
+                                tsfn.call(
+                                    to_js_hub_event(ev),
+                                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                                );
+                            }
+                            break;
+                        }
+                    }
+                    maybe_ev = event_rx.recv() => {
+                        match maybe_ev {
+                            Some(ev) => {
+                                tsfn.call(
+                                    to_js_hub_event(ev),
+                                    napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                                );
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            inner: std::sync::Mutex::new(Some(hub)),
+            local_addr,
+            allowlist,
+            stop_tx: std::sync::Mutex::new(stop_tx),
+        })
+    }
+
+    /// Actual listening TCP port (useful when started with `port === 0`).
+    #[napi]
+    pub fn local_port(&self) -> u16 {
+        self.local_addr.port()
+    }
+
+    /// Actual listening socket address (`ip:port`).
+    #[napi]
+    pub fn local_addr(&self) -> String {
+        self.local_addr.to_string()
+    }
+
+    /// Add a 32-byte Ed25519 peer public key to the pre-sign allowlist.
+    #[napi]
+    pub fn add_allowed_peer(&self, public_key: Buffer) -> Result<bool> {
+        let arr = require_key(&public_key, "publicKey")?;
+        let mut guard = self
+            .allowlist
+            .write()
+            .map_err(|_| Error::from_reason("hub allowlist lock poisoned"))?;
+        Ok(guard.insert(arr))
+    }
+
+    /// Remove a 32-byte Ed25519 peer public key from the pre-sign allowlist.
+    #[napi]
+    pub fn remove_allowed_peer(&self, public_key: Buffer) -> Result<bool> {
+        let arr = require_key(&public_key, "publicKey")?;
+        let mut guard = self
+            .allowlist
+            .write()
+            .map_err(|_| Error::from_reason("hub allowlist lock poisoned"))?;
+        Ok(guard.remove(&arr))
+    }
+
+    /// Snapshot of currently connected peers.
+    #[napi]
+    pub fn connected_peers(&self) -> Vec<JsHubPeerInfo> {
+        let Ok(guard) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let Some(ref hub) = *guard else {
+            return Vec::new();
+        };
+        hub.connected_peers()
+            .into_iter()
+            .map(|p| JsHubPeerInfo {
+                fingerprint: p.fingerprint,
+                public_key: Buffer::from(p.public_key),
+                remote_addr: p.remote_addr.to_string(),
+            })
+            .collect()
+    }
+
+    /// Queue an encrypted frame for one connected peer (`false` if disconnected or backpressured).
+    #[napi]
+    pub fn send_to(&self, fingerprint: String, payload: Buffer) -> bool {
+        let Ok(guard) = self.inner.lock() else {
+            return false;
+        };
+        guard
+            .as_ref()
+            .is_some_and(|hub| hub.send_to(&fingerprint, payload.to_vec()))
+    }
+
+    /// Broadcast an encrypted frame to every connected peer.
+    /// Returns fingerprints whose outbound queue rejected the frame.
+    #[napi]
+    pub fn broadcast(&self, payload: Buffer) -> Vec<String> {
+        let Ok(guard) = self.inner.lock() else {
+            return Vec::new();
+        };
+        match guard.as_ref() {
+            Some(hub) => hub.broadcast(&payload),
+            None => Vec::new(),
+        }
+    }
+
+    /// Disconnect one connected peer by fingerprint and emit `peer_disconnected`.
+    #[napi]
+    pub fn kick(&self, fingerprint: String) -> bool {
+        let Ok(guard) = self.inner.lock() else {
+            return false;
+        };
+        guard.as_ref().is_some_and(|hub| hub.kick(&fingerprint))
+    }
+
+    /// Stop accepting new peers, disconnect every active peer, and release the event callback.
+    #[napi]
+    pub fn stop(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            if let Some(hub) = guard.take() {
+                hub.stop();
+            }
+        }
+        if let Ok(guard) = self.stop_tx.lock() {
+            let _ = guard.send(true);
+        }
+    }
+}
+
+impl Drop for SecureHub {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }

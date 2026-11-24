@@ -20,12 +20,29 @@ function cargoTargetDirectory() {
 function cargoCandidateDirs() {
   const dir = cargoTargetDirectory();
   if (!dir) return [];
-  const names = ['libluciola_node.dylib', 'libluciola_node.so', 'libluciola_node.dll'];
+  const names = [
+    'libluciola_node.dylib',
+    'libluciola_node.so',
+    'luciola_node.dll',
+    'libluciola_node.dll',
+  ];
   const out = [];
   for (const profile of ['debug', 'release']) {
     for (const n of names) out.push(path.join(dir, profile, n));
   }
   return out;
+}
+
+function prebuiltPackageName() {
+  const key = `${process.platform}-${process.arch}`;
+  const map = {
+    'darwin-arm64': '@luciola/core-darwin-arm64',
+    'darwin-x64': '@luciola/core-darwin-x64',
+    'linux-x64': '@luciola/core-linux-x64-gnu',
+    'linux-arm64': '@luciola/core-linux-arm64-gnu',
+    'win32-x64': '@luciola/core-win32-x64-msvc',
+  };
+  return map[key] || null;
 }
 
 function loadNative() {
@@ -65,6 +82,17 @@ function loadNative() {
       // try next candidate
     }
   }
+
+  // Packaged npm install fallback: optional platform prebuild package.
+  const pkg = prebuiltPackageName();
+  if (pkg) {
+    try {
+      return require(pkg);
+    } catch (_e) {
+      // fall through to explicit error
+    }
+  }
+
   throw new Error('Failed to load @luciola/core native binary from candidate paths.');
 }
 

@@ -166,6 +166,52 @@ class LuciolaIosBindingSmokeTest {
         assertNotNull(meta.os)
         assertNotNull(meta.arch)
     }
+
+    @Test
+    fun secureHubAndConnectWithPolicyExecuteOnSimulator() {
+        val hubSeed = ByteArray(32) { 0x31 }
+        val peerSeed = ByteArray(32) { 0x32 }
+        val hubId = identityFromSeed(hubSeed)
+        val peerId = identityFromSeed(peerSeed)
+
+        val lock = SynchronizedObject()
+        val messages = ArrayList<String>()
+        val listener = object : HubEventListener {
+            override fun onPeerConnected(peer: HubPeerInfoDto) {}
+            override fun onMessage(fingerprint: String, remoteAddr: String, payload: ByteArray) {
+                synchronized(lock) { messages.add("$fingerprint:${payload.decodeToString()}") }
+            }
+            override fun onPeerDisconnected(fingerprint: String) {}
+            override fun onPeerRejected(remoteAddr: String, reason: String) {}
+        }
+
+        SecureHub.start(0u, hubSeed, listOf(peerId.publicKey), listener).use { hub ->
+            val port = hub.localPort()
+            assertTrue(port > 0u, "hub must bind ephemeral port")
+            val ch = connectWithPolicy(
+                RoutePolicyKind.LAN_THEN_WAN,
+                1500uL,
+                LanDialConfigDto(
+                    addresses = listOf("127.0.0.1"),
+                    port = port,
+                    identitySeed = peerSeed,
+                    peerPublicKey = hubId.publicKey,
+                ),
+                null,
+            )
+            assertEquals(WanChannelKind.LAN_DIRECT, ch.channelType())
+            SecureSession(peerSeed).use { sess ->
+                sess.attachWanChannel(ch, Collector())
+                assertTrue(sess.send("ios-hub-ping".encodeToByteArray()))
+                awaitTrue(3000, "hub receives ios message") {
+                    synchronized(lock) { messages.isNotEmpty() }
+                }
+                assertEquals("${peerId.fingerprint}:ios-hub-ping", synchronized(lock) { messages.first() })
+                sess.disconnect()
+            }
+            hub.stop()
+        }
+    }
 }
 
 /** IosNetworkMonitor：Network.framework path monitor 在模拟器上的真实运行。 */
