@@ -14,8 +14,12 @@ primary one is cited.
 
 > **Release state (checked 2026-11-25).** The repository and all four version
 > homes are at **0.12.0** (workspace `Cargo.toml`, path-dep requirements, KMP
-> `version`, npm `version`). This version is **published to mavenLocal only**:
+> `version`, npm `version`). `origin/main` was pushed first and tag `v0.12.0`
+> points at the release commit; the published state is:
 >
+> - **crates.io — 0.12.0 published and verified.** All seven crates
+>   (`luciola`, `luciola-ip`, `luciola-proto`, `luciola-net`, `luciola-transfer`,
+>   `luciola-tunnel`, `luciola-cli`) answer `0.12.0` from the registry API.
 > - **mavenLocal — 0.12.0 published.** `scripts/publish-maven-local.sh` rebuilt
 >   the Android `libluciola_uniffi.so` from this source and verified that the
 >   `.so` inside `~/.m2/.../luciola-android-0.12.0.aar` has sha256
@@ -23,38 +27,38 @@ primary one is cited.
 >   All five Gradle modules (`luciola`, `luciola-android`, `luciola-jvm`,
 >   `luciola-iosarm64`, `luciola-iossimulatorarm64`) are installed at `0.12.0`.
 >   Use `mavenLocal()` only in a local consumer — never in a packaged one.
-> - **crates.io — 0.11.0 remains the latest published version.** `luciola`,
->   `luciola-ip`, `luciola-proto`, `luciola-net`, `luciola-transfer`,
->   `luciola-tunnel`, `luciola-cli` all answered `0.11.0` from the registry API
->   when checked on 2026-11-16.
-> - **Maven Central — 0.11.0 remains the latest published version.** The
->   deployment reached `PUBLISHED` on the Central Portal; repo1 serves the root
->   Gradle module metadata (`io.github.kexuejin:luciola:0.11.0`), the
->   `luciola-android` AAR, `luciola-jvm`, and the `luciola-iosarm64` /
->   `luciola-iossimulatorarm64` klibs.
-> - **iOS — 0.11.0 remains the latest published release asset.**
->   `LuciolaUniFFI-0.11.0.zip` (33,722,527 bytes; xcframework for device and
->   simulator plus `luciola_uniffi.swift`) with sha256
->   `1d75c9e8221aa0a38057dd4b8cfdd2910047acfcd4782434fbc8abf77e457f83`
->   and its `.sha256` are release assets on tag `v0.11.0`.
-> - `@luciola/core` **remains unpublished on npm** — for Node, build
->   `bindings/luciola-node` from source.
+> - **Maven Central — NOT published.** The Portal accepted upload
+>   `8df12837-eb7b-4699-92bc-4a23f07f3405` but the deployment went `FAILED`:
+>   "your organization has reached its monthly release size limit. Grace period
+>   ended 2026-11-24. Usage resets 2026-12-01." repo1 still reports `0.11.0`
+>   as `latest`/`release`. Retrying before the reset would only create another
+>   failed deployment; re-run `scripts/publish-central.sh` from this commit
+>   after 2026-12-01. Do not document a Central `0.12.0` coordinate as available.
+> - **iOS — 0.12.0 published.** `LuciolaUniFFI-0.12.0.zip` (34,288,083 bytes;
+>   xcframework for device and simulator plus `luciola_uniffi.swift`) with
+>   sha256 `220d1437e5a7e495d46e0548675e392ce2adb8cdcf76653511ea9ba796c35149`
+>   and its `.sha256` are release assets on tag `v0.12.0`.
+> - `@luciola/core` **remains unpublished on npm** (registry returns 404) — for
+>   Node, build `bindings/luciola-node` from source.
 >
-> The `0.11.0-local.*` coordinates remain in `~/.m2` from the earlier
-> validation cycle; they are superseded and must not be used by normal
-> consumers. A consumer that needs an engine change that is not released on a
-> public registry must pin the **git commit**, not a version number:
-> `{ git = "https://github.com/kexuejin/luciola", rev = "<sha>" }`. Naming an
-> unpublished version in a dependency is how a consumer repo ends up with
-> `path = "../../luciola/..."` and stops being buildable from a clean clone.
+> A packaging-only fix, `96d1bf3` (declare `tokio/rt` and `tokio/macros` in the
+> crates that use `tokio::select!`), landed on `main` after the tag because
+> `cargo publish` verifies each crate in isolation and workspace feature
+> unification had hidden the missing features. The tag was not rewritten; the
+> crates.io artifacts were built from that fix. The `0.11.0-local.*` coordinates
+> remain in `~/.m2` from the earlier validation cycle and are superseded. A
+> consumer that needs an engine change that is not released on a public
+> registry must pin the **git commit**, not a version number:
+> `{ git = "https://github.com/kexuejin/luciola", rev = "<sha>" }`.
 
-## [0.12.0] — 2026-11-25 (mavenLocal only; not on public registries)
+## [0.12.0] — 2026-11-25
 
 Changes landed on top of `0.11.0`, carried by c524ebc (hardening), a971e0e
-(FFI and version bump), abf0e96 (signaling) and e14415e (CI). Not yet published
-to crates.io / Maven Central / npm.
+(FFI and version bump), abf0e96 (signaling), e14415e (CI) and 96d1bf3
+(packaging fix). Published to crates.io, mavenLocal and the `v0.12.0` GitHub
+release; Maven Central is blocked by the org's monthly release-size quota.
 
-### Verification before the local publish (2026-11-25)
+### Verification (2026-11-25)
 
 - Full local gate green: `cargo fmt --all -- --check`, `cargo clippy
   --all-targets --all-features -- -D warnings`, `cargo test --all-targets
@@ -66,10 +70,14 @@ to crates.io / Maven Central / npm.
 - KMP and Swift bindings were regenerated into a temporary directory and
   diffed against the committed sources: byte-identical; the generated
   `nativeMain` still uses `kotlinx.cinterop`.
+- Every crate was re-checked with `cargo package --allow-dirty` in isolation
+  after the manifest fix; all seven published successfully, and the registry
+  API was read back for each version.
 - mavenLocal publication rebuilt the arm64 `.so` and compared its sha256 with
-  the copy embedded in the published AAR (value recorded above). Compilation
-  and unit/integration tests are what was proven; no real Android/iOS device
-  run, real-NAT two-peer WAN session or external audit backs this version.
+  the copy embedded in the published AAR (value recorded above). Compilation,
+  packaging and unit/integration tests are what was proven; no real
+  Android/iOS device run, real-NAT two-peer WAN session or external audit
+  backs this version.
 
 ### Fixed (security & WAN hardening — `docs/audit-scope.md` self-audit & 2-round review)
 

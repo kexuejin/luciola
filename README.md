@@ -69,13 +69,16 @@ node server.js       # then open http://localhost:3000
 
 ## Quick Start
 
-> **Local-only 0.12.0.** The source tree is at `0.12.0`: it adds the WAN message
-> data plane, a shared file-transfer driver, a multi-peer hub, explicit route
-> policy and a standalone WAN tunnel to **all three binding surfaces**. It is
-> published to `mavenLocal()` on this machine only — not to crates.io, Maven
-> Central, npm or a release tag. The install snippets below stay at the latest
-> public version, `0.11.0`; do not document `0.12.0` as installable from a
-> public registry. See [CHANGELOG.md](CHANGELOG.md) §0.12.0.
+> **0.12.0 release state.** The source tree is at `0.12.0`: it adds the WAN
+> message data plane, a shared file-transfer driver, a multi-peer hub, explicit
+> route policy and a standalone WAN tunnel to **all three binding surfaces**.
+> All seven crates are published on crates.io, the iOS xcframework is attached
+> to tag `v0.12.0`, and the KMP modules are in local `~/.m2`. **Maven Central
+> publication is blocked** by the org's monthly release-size quota (grace period
+> ended 2026-11-24, resets 2026-12-01), so the Maven snippets below still use the
+> last Central version, `0.11.0`; do not document a Central `0.12.0` coordinate
+> as available. `@luciola/core` is still source-only on npm. See
+> [CHANGELOG.md](CHANGELOG.md) §0.12.0.
 
 ### Install
 
@@ -87,9 +90,9 @@ implementation("io.github.kexuejin:luciola:0.11.0") // root coordinate; the andr
 ```
 
 ```toml
-# Rust — crates.io (all seven crates at 0.11.0)
-luciola = "0.11.0"        # engine, secure channels, trust primitives
-luciola-tunnel = "0.11.0" # mux v2 forwarding (the tunnel section below)
+# Rust — crates.io (all seven crates at 0.12.0)
+luciola = "0.12.0"        # engine, secure channels, trust primitives
+luciola-tunnel = "0.12.0" # mux v2 forwarding (the tunnel section below)
 # CLI: cargo install luciola-cli
 ```
 
@@ -120,7 +123,7 @@ luciola-tunnel = "0.11.0" # mux v2 forwarding (the tunnel section below)
 > `io.github.kexuejin:luciola:0.11.0`; do **not** add `mavenLocal()` to a
 > normal consumer — a stale local build can silently shadow the artifact.
 
-> **Since 0.11.0 (0.12.0, local only):** the uniffi (KMP/Swift) and Node
+> **Since 0.11.0 (0.12.0, on crates.io):** the uniffi (KMP/Swift) and Node
 > surfaces now also carry the WAN message data plane, file transfer and tunnel
 > sessions. The "Rust-core + CLI only" restriction above describes the published
 > 0.11.0 line, not this source tree.
