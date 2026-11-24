@@ -11,13 +11,18 @@ export const EPOCH_SECONDS = 600;
 export const MAX_MESSAGE_BYTES = 32 * 1024;
 export const MAX_JOINS_PER_MINUTE = 20;
 export const MAX_MESSAGES_PER_SECOND = 256;
-export const ROOM_TTL_MS = 15 * 60 * 1000;
+/**
+ * Room storage TTL must exceed the full `epoch +/- 1` admission window
+ * (`3 * EPOCH_SECONDS = 30 min`) so the Durable Object alarm cannot wipe the
+ * `nonce:*` replay store while a captured signed URL is still within window.
+ */
+export const ROOM_TTL_MS = 35 * 60 * 1000;
 
 const ROOM_RE = /^[0-9a-f]{32}$/;
 const PEER_RE = /^[0-9a-f]{64}$/;
 const NONCE_RE = /^[0-9a-f]{32}$/;
 const SIG_RE = /^[0-9a-f]{128}$/;
-const EPOCH_RE = /^\d{1,20}$/;
+const EPOCH_RE = /^(?:0|[1-9]\d{0,19})$/;
 
 /** Current 10-minute rendezvous epoch; must match Rust `current_epoch()`. */
 export function currentEpoch(nowMs = Date.now()) {

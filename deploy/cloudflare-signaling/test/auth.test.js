@@ -13,6 +13,7 @@ import {
   MAX_MESSAGES_PER_SECOND,
   nextJoinBudget,
   nextMessageBudget,
+  ROOM_TTL_MS,
   validateParams,
   verifyEd25519,
 } from "../src/auth.js";
@@ -68,6 +69,8 @@ test("malformed shapes are rejected before any crypto", () => {
     { nonce: "cd" },
     { sig: "ef" },
     { epoch: "not-a-number" },
+    { epoch: `0${EPOCH}` },
+    { epoch: `00${EPOCH}` },
     { epoch: "999999999999999999999999" },
   ];
   for (const bad of cases) {
@@ -150,4 +153,11 @@ test("message and join budgets roll over with their time window", () => {
   }
   assert.equal(nextJoinBudget(state, NOW).allowed, false);
   assert.equal(nextJoinBudget(state, NOW + 60_000).allowed, true);
+});
+
+test("room TTL outlives the full epoch +/-1 acceptance window", () => {
+  assert.ok(
+    ROOM_TTL_MS > 3 * EPOCH_SECONDS * 1000,
+    `ROOM_TTL_MS (${ROOM_TTL_MS}) must exceed 3 * EPOCH_SECONDS (${3 * EPOCH_SECONDS * 1000}) so replay keys cannot expire while a signed URL is still valid`,
+  );
 });
