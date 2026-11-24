@@ -19,18 +19,26 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 /// ordering fixes the second.
 const CHECKPOINT_WRITES_TARGET: u32 = 64;
 
+/// Default safety ceiling on an accepted inbound file size (16 GiB).
+/// Callers needing larger transfers can raise or clear [`ReceiverConfig::max_file_size`].
+pub const DEFAULT_MAX_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024;
+
 /// Tunables for [`FileReceiver`].
 #[derive(Debug, Clone)]
 pub struct ReceiverConfig {
     /// How long after completion a retransmitted tail chunk still earns the
     /// final ACK back (guards the sender against a lost last ACK).
     pub answer_cache_ttl: Duration,
+    /// Optional ceiling on `total_size` accepted by [`FileReceiver::create`].
+    /// Guards against a hostile intro forcing huge disk preallocation or bitmap RAM.
+    pub max_file_size: Option<u64>,
 }
 
 impl Default for ReceiverConfig {
     fn default() -> Self {
         Self {
             answer_cache_ttl: Duration::from_secs(30),
+            max_file_size: Some(DEFAULT_MAX_FILE_SIZE),
         }
     }
 }
@@ -49,7 +57,9 @@ pub struct FileReceiver {
     dest: std::path::PathBuf,
     part_path: std::path::PathBuf,
     meta_path: std::path::PathBuf,
-    file: File,
+    /// Open write handle to `part_path`; closed and dropped before atomic rename
+    /// to `dest` so Windows volumes never hit `ERROR_SHARING_VIOLATION`.
+    file: Option<File>,
     /// Merged, sorted received intervals. `[0, acked)` is always fully
     /// covered by the first interval when it starts at 0.
     intervals: Vec<Interval>,
@@ -67,6 +77,20 @@ impl FileReceiver {
         total_size: u64,
         config: ReceiverConfig,
     ) -> Result<Self, TransferError> {
+        if let Some(limit) = config.max_file_size {
+            if total_size > limit {
+                return Err(TransferError::State(format!(
+                    "declared file size ({total_size} bytes) exceeds receiver limit ({limit} bytes)"
+                )));
+            }
+        }
+        let max_bitmap_bytes =
+            (checkpoint::MAX_CHUNK_COUNT as u64) * (checkpoint::DEFAULT_CHUNK_SIZE as u64);
+        if total_size > max_bitmap_bytes {
+            return Err(TransferError::State(format!(
+                "declared file size ({total_size} bytes) exceeds checkpoint bitmap capacity ({max_bitmap_bytes} bytes)"
+            )));
+        }
         let dest = dest.into();
         let part_path = checkpoint::part_path_for(&dest);
         let meta_path = checkpoint::meta_path_for(&dest);
@@ -79,10 +103,13 @@ impl FileReceiver {
 
         let mut resumed_meta: Option<TransferMeta> = None;
         if meta_path.exists() && part_path.exists() {
-            if let Ok(data) = tokio::fs::read(&meta_path).await {
-                if let Some(meta) = TransferMeta::decode(&data, transfer_id) {
-                    if meta.total_bytes == total_size {
-                        resumed_meta = Some(meta);
+            let part_len = tokio::fs::metadata(&part_path).await.ok().map(|m| m.len());
+            if part_len == Some(total_size) {
+                if let Ok(data) = tokio::fs::read(&meta_path).await {
+                    if let Some(meta) = TransferMeta::decode(&data, transfer_id) {
+                        if meta.total_bytes == total_size {
+                            resumed_meta = Some(meta);
+                        }
                     }
                 }
             }
@@ -118,19 +145,38 @@ impl FileReceiver {
             (file, meta, Vec::new())
         };
 
-        Ok(Self {
+        let mut rx = Self {
             transfer_id: transfer_id.to_string(),
             total_size,
             dest,
             part_path,
             meta_path,
-            file,
+            file: Some(file),
             intervals,
             completed_at: None,
             config,
             meta,
             chunks_since_checkpoint: 0,
-        })
+        };
+        // Zero-byte files and 100%-resumed checkpoints are already complete
+        // without receiving any further chunks: flush, close the write handle,
+        // and commit the atomic rename now so `dest` exists on disk.
+        if rx.is_complete() {
+            rx.commit_rename().await?;
+        }
+        Ok(rx)
+    }
+
+    async fn commit_rename(&mut self) -> Result<(), TransferError> {
+        if let Some(file) = self.file.take() {
+            file.sync_data().await?;
+            drop(file);
+        }
+        self.chunks_since_checkpoint = 0;
+        tokio::fs::rename(&self.part_path, &self.dest).await?;
+        let _ = tokio::fs::remove_file(&self.meta_path).await;
+        self.completed_at = Some(Instant::now());
+        Ok(())
     }
 
     /// Identifier of the transfer being received.
@@ -196,10 +242,11 @@ impl FileReceiver {
         }
 
         if !chunk.payload.is_empty() {
-            self.file
-                .seek(std::io::SeekFrom::Start(chunk.offset))
-                .await?;
-            self.file.write_all(&chunk.payload).await?;
+            let file = self.file.as_mut().ok_or_else(|| {
+                TransferError::State("receiver file handle already closed".into())
+            })?;
+            file.seek(std::io::SeekFrom::Start(chunk.offset)).await?;
+            file.write_all(&chunk.payload).await?;
         }
 
         self.insert_interval(chunk.offset, end);
@@ -213,14 +260,9 @@ impl FileReceiver {
         }
 
         if self.is_complete() {
-            // Durability point: the final ACK may now be credited honestly.
-            self.file.sync_data().await?;
-            self.chunks_since_checkpoint = 0;
-            // Atomic rename of in-progress .part file to destination
-            tokio::fs::rename(&self.part_path, &self.dest).await?;
-            // Remove meta checkpoint file
-            let _ = tokio::fs::remove_file(&self.meta_path).await;
-            self.completed_at = Some(Instant::now());
+            // Durability point: sync and close write handle before atomic rename
+            // so Windows volumes never fail with sharing violations.
+            self.commit_rename().await?;
             tracing::info!(
                 transfer = %self.transfer_id,
                 size = self.total_size,
@@ -236,7 +278,9 @@ impl FileReceiver {
     /// that a power loss will erase, and a resumed transfer would then skip
     /// them, leaving a hole that no checksum covers.
     async fn persist_checkpoint(&mut self) -> Result<(), TransferError> {
-        self.file.sync_data().await?;
+        if let Some(file) = self.file.as_ref() {
+            file.sync_data().await?;
+        }
         let _ = tokio::fs::write(&self.meta_path, self.meta.encode()).await;
         self.chunks_since_checkpoint = 0;
         Ok(())
@@ -346,6 +390,7 @@ mod tests {
         let dest = dir.join("cache.bin");
         let cfg = ReceiverConfig {
             answer_cache_ttl: Duration::from_secs(30),
+            ..Default::default()
         };
         let mut rx = FileReceiver::create("t", &dest, 8, cfg).await.unwrap();
         rx.on_chunk(&chunk(0, &[9u8; 8])).await.unwrap();
@@ -468,6 +513,28 @@ mod tests {
         let written_bytes = tokio::fs::read(&dest).await.unwrap();
         assert_eq!(written_bytes, full_payload);
 
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn create_rejects_file_size_exceeding_receiver_limit() {
+        let dir = std::env::temp_dir().join(format!(
+            "luciola_xfer_limit_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dest = dir.join("huge.bin");
+        let cfg = ReceiverConfig {
+            max_file_size: Some(1024),
+            ..Default::default()
+        };
+        let Err(err) = FileReceiver::create("huge_id", &dest, 2048, cfg).await else {
+            panic!("oversized file must be rejected before disk allocation");
+        };
+        assert!(err.to_string().contains("exceeds receiver limit"), "{err}");
+        assert!(!checkpoint::part_path_for(&dest).exists());
         tokio::fs::remove_dir_all(&dir).await.ok();
     }
 }

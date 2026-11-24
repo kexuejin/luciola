@@ -36,7 +36,7 @@ use super::bridge::{bridge_pair, BridgeEnds, StreamBridge};
 use super::signaling::{seal, to_hex, SignalingClient, RELAY_CHUNK};
 use super::udp::{
     build_packet, parse_packet, punch, ACK_EVERY, DUP_ACK_FAST_RETRANSMIT, KIND_ACK, KIND_CLOSE,
-    KIND_DATA, KIND_PUNCH, MAX_PAYLOAD,
+    KIND_DATA, KIND_PUNCH, MAX_OOO_PACKETS, MAX_PAYLOAD,
 };
 use super::{role_for, WanConfig, WanRole};
 use crate::proto::{ChannelType, TraversalCandidates};
@@ -64,6 +64,8 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_RETRANSMIT_ROUNDS: u32 = 8;
 /// Longest a migration may park the writer waiting for the peer's ACK.
 const MIGRATION_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Idle cap after local half-close so a disappeared peer never leaks the driver.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
 const HEADER_LEN: usize = 24;
 
 /// Paces relay writes to stay inside the signalling server's message budget.
@@ -171,6 +173,7 @@ pub(crate) fn start_progressive_relay(
         config,
         ends,
         tracker.clone(),
+        punching_done.clone(),
         stats.clone(),
         cand_rx,
         peer_cand_tx,
@@ -185,15 +188,27 @@ pub(crate) fn start_progressive_relay(
     }
 }
 
-/// Guarantees `punching_done` is set the moment `discover_and_punch` returns,
-/// on every branch (success, timeout, strategy reject, symmetric NAT). Callers
-/// (and `wait_channel_settle`) rely on this to stop waiting for a routing
-/// decision that will never arrive.
-struct PunchDoneGuard(Arc<AtomicBool>);
+/// Guarantees `punching_done` is set on every failure/early-exit branch, while
+/// allowing a successful punch to hand off ownership to `run_progressive` so
+/// `wait_channel_settle` does not observe `punching_done == true` before
+/// `migrate_propose`/`migrate_ack` actually updates `tracker`.
+struct PunchDoneGuard(Option<Arc<AtomicBool>>);
+
+impl PunchDoneGuard {
+    fn new(flag: Arc<AtomicBool>) -> Self {
+        Self(Some(flag))
+    }
+
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
 
 impl Drop for PunchDoneGuard {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Release);
+        if let Some(flag) = &self.0 {
+            flag.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -211,7 +226,7 @@ async fn discover_and_punch(
     punch_tx: mpsc::Sender<(Arc<UdpSocket>, SocketAddr)>,
     punching_done: Arc<AtomicBool>,
 ) {
-    let _done = PunchDoneGuard(punching_done);
+    let mut done = PunchDoneGuard::new(punching_done);
     let my_hex = to_hex(&config.my_public_key);
     let session =
         match gather_traversal_session(&my_hex, config.tcp_port, config.stun_server.as_deref())
@@ -268,7 +283,11 @@ async fn discover_and_punch(
             // srflx address can differ by two orders of magnitude in
             // throughput, and this is the only place that knows.
             tracing::info!("punched a direct UDP path to {peer_addr}");
-            let _ = punch_tx.send((socket, peer_addr)).await;
+            if punch_tx.send((socket, peer_addr)).await.is_ok() {
+                // Hand off `punching_done` completion to `run_progressive` so
+                // it flips only after the WS migration barrier updates `tracker`.
+                done.disarm();
+            }
         }
         Err(err) => tracing::debug!("udp punch failed: {err}"),
     }
@@ -303,11 +322,13 @@ async fn run_progressive(
     config: Arc<WanConfig>,
     mut ends: BridgeEnds,
     tracker: Arc<AtomicU8>,
+    punching_done: Arc<AtomicBool>,
     stats: Arc<DriverStats>,
     mut cand_rx: mpsc::Receiver<TraversalCandidates>,
     peer_cand_tx: mpsc::Sender<TraversalCandidates>,
     mut punch_res_rx: mpsc::Receiver<(Arc<UdpSocket>, SocketAddr)>,
 ) {
+    let _driver_done = PunchDoneGuard::new(punching_done.clone());
     let SignalingClient {
         mut sink,
         mut stream,
@@ -326,10 +347,17 @@ async fn run_progressive(
     let mut direct_write = false;
     let mut direct_read = false;
     let mut awaiting_ack: Option<Instant> = None;
+    let mut migration_aborted = false;
     let mut ws_open = true;
     let mut candidates_open = true;
     let mut outbound_done = false;
+    let mut local_closed_at: Option<Instant> = None;
+    let mut last_close_sent: Option<Instant> = None;
     let mut peer_eof = false;
+    let mut peer_final: Option<u64> = None;
+    // Dropping `inbound_tx` surfaces clean EOF to the local reader on half-close
+    // without terminating our write direction.
+    let mut inbound_tx = Some(ends.inbound_tx);
 
     let mut direct_socket: Option<Arc<UdpSocket>> = None;
     let mut direct_peer: Option<SocketAddr> = None;
@@ -341,7 +369,8 @@ async fn run_progressive(
     let mut retransmit_rounds: u32 = 0;
     let mut retransmit_every: u32 = 1;
     let mut backoff_ticks: u32 = 0;
-    let mut last_udp_activity = Instant::now();
+    let mut last_peer_udp_rx = Instant::now();
+    let mut last_keepalive_tx = Instant::now();
     let mut last_ack_seen: u64 = 0;
     let mut dup_acks: u32 = 0;
     let mut inorder_since_ack: u32 = 0;
@@ -351,13 +380,25 @@ async fn run_progressive(
     let mut aimd = AimdWindow::new();
 
     let mut udp_tick = interval(RETRANSMIT_INTERVAL);
+    udp_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut udp_buf = vec![0u8; 65536];
     let mut relay_pace = RelayPacer::new();
 
     loop {
         stats.ticks.fetch_add(1, Ordering::Relaxed);
 
-        if outbound_done && (peer_eof || (!ws_open && !direct_write)) {
+        if direct_write {
+            // Wait until every direct DATA packet is ACKed AND either the peer
+            // finished every packet up to its `KIND_CLOSE` marker or the idle
+            // close deadline elapsed with no peer packets.
+            if outbound_done && sent_udp.is_empty() {
+                let idle = local_closed_at.is_some_and(|t| t.elapsed() >= CLOSE_TIMEOUT)
+                    && last_peer_udp_rx.elapsed() >= CLOSE_TIMEOUT;
+                if peer_eof || idle {
+                    break;
+                }
+            }
+        } else if outbound_done && (peer_eof || !ws_open) {
             break;
         }
 
@@ -369,15 +410,12 @@ async fn run_progressive(
                 match outbound {
                     None => {
                         outbound_done = true;
+                        local_closed_at = Some(Instant::now());
                         if direct_write {
                             if let (Some(sock), Some(peer)) = (&direct_socket, direct_peer) {
                                 let close = build_packet(KIND_CLOSE, next_udp_seq, recv_udp_next, &[]);
                                 let _ = sock.send_to(&close, peer).await;
-                                // Track it like DATA so the retransmit/backoff
-                                // tick keeps it alive until the peer ACKs its
-                                // own close; a single lost CLOSE would otherwise
-                                // wedge the half-close forever.
-                                sent_udp.insert(next_udp_seq, close);
+                                last_close_sent = Some(Instant::now());
                             }
                         } else if relay_write_open
                             && !send_frame(
@@ -396,11 +434,12 @@ async fn run_progressive(
                     }
                     Some(bytes) if bytes.is_empty() => {
                         outbound_done = true;
+                        local_closed_at = Some(Instant::now());
                         if direct_write {
                             if let (Some(sock), Some(peer)) = (&direct_socket, direct_peer) {
                                 let close = build_packet(KIND_CLOSE, next_udp_seq, recv_udp_next, &[]);
                                 let _ = sock.send_to(&close, peer).await;
-                                sent_udp.insert(next_udp_seq, close);
+                                last_close_sent = Some(Instant::now());
                             }
                         } else if relay_write_open
                             && !send_frame(
@@ -427,7 +466,7 @@ async fn run_progressive(
                                     let _ = sock.send_to(&packet, peer).await;
                                     sent_udp.insert(seq, packet);
                                 }
-                                last_udp_activity = Instant::now();
+                                last_keepalive_tx = Instant::now();
                             }
                         } else if relay_write_open {
                             let mut ok = true;
@@ -470,12 +509,17 @@ async fn run_progressive(
                         "relay" => {
                             if pt.is_empty() {
                                 peer_eof = true;
+                                inbound_tx = None;
                                 continue;
                             }
                             // After the barrier the peer has no relay frames
                             // left; anything arriving now would be a duplicate.
-                            if !direct_read && ends.inbound_tx.send(pt).is_err() {
-                                break;
+                            if !direct_read {
+                                if let Some(tx) = inbound_tx.as_ref() {
+                                    if tx.send(pt).is_err() {
+                                        break;
+                                    }
+                                }
                             }
                         }
                         "candidate" => {
@@ -498,6 +542,7 @@ async fn run_progressive(
                                         break;
                                     }
                                     tracker.store(ChannelType::HolePunchedDirect as u8, Ordering::Release);
+                                    punching_done.store(true, Ordering::Release);
                                 }
                                 _ => {
                                     // Punching failed on this side: tell the
@@ -506,17 +551,19 @@ async fn run_progressive(
                                     if !send_frame(&mut sink, &key, &room, epoch, &mut send_seq, "migrate_reject", &[]).await {
                                         break;
                                     }
+                                    punching_done.store(true, Ordering::Release);
                                 }
                             }
                         }
                         "migrate_ack" => {
-                            if role != WanRole::Initiator {
+                            if role != WanRole::Initiator || migration_aborted || awaiting_ack.is_none() {
                                 continue;
                             }
                             awaiting_ack = None;
                             direct_write = true;
                             direct_read = true;
                             tracker.store(ChannelType::HolePunchedDirect as u8, Ordering::Release);
+                            punching_done.store(true, Ordering::Release);
                         }
                         "migrate_reject" => {
                             if role != WanRole::Initiator {
@@ -524,6 +571,7 @@ async fn run_progressive(
                             }
                             awaiting_ack = None;
                             relay_write_open = true;
+                            punching_done.store(true, Ordering::Release);
                             tracing::info!("peer declined migration; staying on the relay");
                         }
                         _ => {}
@@ -578,7 +626,7 @@ async fn run_progressive(
                     if from == peer {
                         let parsed = parse_packet(&udp_buf[..n]);
                         if let Some((kind, seq, ack, payload)) = parsed {
-                            last_udp_activity = Instant::now();
+                            last_peer_udp_rx = Instant::now();
 
                             let acked: Vec<u64> = sent_udp.keys().copied().filter(|s| *s < ack).collect();
                             let mut freed = 0usize;
@@ -623,14 +671,22 @@ async fn run_progressive(
                                 // clean in-order packet shares one ACK per
                                 // [`ACK_EVERY`] packets.
                                 let ack_now = seq != recv_udp_next || !recv_ooo.is_empty();
-                                if seq >= recv_udp_next
-                                    && recv_ooo.insert(seq, payload.to_vec()).is_none()
-                                {
+                                let within_ooo_bound = seq >= recv_udp_next
+                                    && seq < recv_udp_next.saturating_add(MAX_OOO_PACKETS as u64)
+                                    && (seq == recv_udp_next || recv_ooo.len() < MAX_OOO_PACKETS);
+                                if within_ooo_bound && !recv_ooo.contains_key(&seq) {
+                                    recv_ooo.insert(seq, payload.to_vec());
                                     while let Some(seg) = recv_ooo.remove(&recv_udp_next) {
                                         recv_udp_next += 1;
-                                        if ends.inbound_tx.send(seg).is_err() {
-                                            return;
+                                        if let Some(tx) = inbound_tx.as_ref() {
+                                            if tx.send(seg).is_err() {
+                                                return;
+                                            }
                                         }
+                                    }
+                                    if peer_final.is_some_and(|f| recv_udp_next >= f) {
+                                        peer_eof = true;
+                                        inbound_tx = None;
                                     }
                                 }
                                 if !ack_now {
@@ -648,13 +704,15 @@ async fn run_progressive(
                                 let ack_packet = build_packet(KIND_ACK, 0, recv_udp_next, &[]);
                                 let _ = sock.send_to(&ack_packet, peer).await;
                             } else if kind == KIND_CLOSE {
-                                // Post-migration EOF marker over the direct
-                                // path. Without this the driver can never set
-                                // `peer_eof`, so the termination condition
-                                // (`outbound_done && peer_eof`) is never met and
-                                // the task leaks after every successful
-                                // migration. Mirrors `udp::drive`'s half-close.
-                                peer_eof = true;
+                                // `seq` carries the sender's final DATA sequence
+                                // (exclusive). Wait until `recv_udp_next >= seq`
+                                // before surfacing EOF so a CLOSE overtaking a
+                                // reordered tail DATA packet never truncates it.
+                                peer_final = Some(peer_final.map_or(seq, |prev| prev.max(seq)));
+                                if peer_final.is_some_and(|f| recv_udp_next >= f) {
+                                    peer_eof = true;
+                                    inbound_tx = None;
+                                }
                                 let ack_packet = build_packet(KIND_ACK, 0, recv_udp_next, &[]);
                                 let _ = sock.send_to(&ack_packet, peer).await;
                             }
@@ -663,23 +721,39 @@ async fn run_progressive(
                 }
             }
 
-            _ = udp_tick.tick(), if direct_write => {
+            _ = udp_tick.tick(), if direct_write || awaiting_ack.is_some() => {
                 // A migration that never gets its ACK must not park the writer
                 // forever: fall back to the relay we never stopped listening on.
                 if let Some(since) = awaiting_ack {
                     if since.elapsed() >= MIGRATION_ACK_TIMEOUT {
                         awaiting_ack = None;
+                        migration_aborted = true;
                         relay_write_open = true;
+                        punching_done.store(true, Ordering::Release);
                         tracing::warn!("migration ACK timed out; resuming the relay");
                         continue;
                     }
                 }
+                if !direct_write {
+                    continue;
+                }
                 if let (Some(sock), Some(peer)) = (&direct_socket, direct_peer) {
+                    // Re-advertise KIND_CLOSE periodically after local write close
+                    // (matching `wan::udp`) instead of inserting it into `sent_udp`.
+                    if outbound_done
+                        && last_close_sent.is_none_or(|t| t.elapsed() >= KEEPALIVE_INTERVAL)
+                    {
+                        let close = build_packet(KIND_CLOSE, next_udp_seq, recv_udp_next, &[]);
+                        let _ = sock.send_to(&close, peer).await;
+                        last_close_sent = Some(Instant::now());
+                    }
                     if sent_udp.is_empty() {
-                        if last_udp_activity.elapsed() >= KEEPALIVE_INTERVAL {
+                        if last_peer_udp_rx.elapsed() >= KEEPALIVE_INTERVAL
+                            && last_keepalive_tx.elapsed() >= KEEPALIVE_INTERVAL
+                        {
                             let probe = build_packet(KIND_PUNCH, 0, recv_udp_next, &[]);
                             let _ = sock.send_to(&probe, peer).await;
-                            last_udp_activity = Instant::now();
+                            last_keepalive_tx = Instant::now();
                         }
                     } else {
                         // Exponential backoff: flooding a 4 MiB window every
@@ -784,7 +858,7 @@ mod tests {
         SignalingClient {
             sink,
             stream,
-            key,
+            key: zeroize::Zeroizing::new(key),
             room: ROOM.to_string(),
             epoch: EPOCH,
             send_seq: 0,
@@ -973,6 +1047,7 @@ mod tests {
             Arc::new(cfg),
             ends,
             tracker.clone(),
+            Arc::new(AtomicBool::new(false)),
             stats,
             cand_rx,
             peer_cand_tx,
@@ -1151,6 +1226,7 @@ mod tests {
             Arc::new(cfg),
             ends,
             tracker.clone(),
+            Arc::new(AtomicBool::new(false)),
             stats.clone(),
             cand_rx,
             peer_cand_tx,
@@ -1315,6 +1391,7 @@ mod tests {
             Arc::new(cfg),
             ends,
             tracker.clone(),
+            Arc::new(AtomicBool::new(false)),
             stats,
             cand_rx,
             peer_cand_tx,
@@ -1364,12 +1441,12 @@ mod tests {
                 let Ok((n, from)) = peer_udp.recv_from(&mut buf).await else {
                     break;
                 };
-                if let Some((kind, _, _, _)) = parse_packet(&buf[..n]) {
+                if let Some((kind, seq, _, _)) = parse_packet(&buf[..n]) {
                     if kind == KIND_CLOSE {
-                        let close = build_packet(KIND_CLOSE, 0, 0, &[]);
+                        let close = build_packet(KIND_CLOSE, 1, seq, &[]);
                         let _ = peer_udp.send_to(&close, from).await;
                     } else if kind == KIND_DATA {
-                        let ack = build_packet(KIND_ACK, 0, 0, &[]);
+                        let ack = build_packet(KIND_ACK, 0, seq + 1, &[]);
                         let _ = peer_udp.send_to(&ack, from).await;
                     }
                 }
@@ -1402,6 +1479,111 @@ mod tests {
             .await
             .expect("migrated driver must terminate after close (P0 leak)");
         let _ = (finished, ws_peer, udp_peer);
+        fwd.abort();
+    }
+
+    /// Regression for audit question #3: if the responder dies or drops
+    /// `migrate_ack` after `migrate_propose`, `MIGRATION_ACK_TIMEOUT` must
+    /// still fire while `direct_write` is false and resume relay writes
+    /// instead of parking the writer forever.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn migration_ack_timeout_resumes_relay_when_responder_silent() {
+        let (port, fwd) = forwarder().await;
+        let key = [0x66u8; AEAD_KEY_LEN];
+        let mut cfg = base_config(port);
+        cfg.my_public_key = [1u8; 32]; // initiator so it sends migrate_propose
+        cfg.peer_public_key = [2u8; 32];
+
+        let driver_ws = ws_side(port).await;
+        let driver = client_from(driver_ws, key);
+        let (mut bridge, ends) = bridge_pair();
+        let tracker = Arc::new(AtomicU8::new(ChannelType::RelayForwarded as u8));
+        let stats = Arc::new(DriverStats::default());
+        let (_cand_tx, cand_rx) = mpsc::channel::<TraversalCandidates>(1);
+        let (peer_cand_tx, _peer_cand_rx) = mpsc::channel::<TraversalCandidates>(4);
+        let (punch_tx, punch_rx) = mpsc::channel::<(Arc<UdpSocket>, SocketAddr)>(1);
+
+        let driver_task = tokio::spawn(run_progressive(
+            driver,
+            Arc::new(cfg),
+            ends,
+            tracker.clone(),
+            Arc::new(AtomicBool::new(false)),
+            stats,
+            cand_rx,
+            peer_cand_tx,
+            punch_rx,
+        ));
+
+        let peer_ws = ws_side(port).await;
+        let (_peer_sink, mut peer_stream) = peer_ws.split();
+
+        let peer_udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let sock_driver = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let _ = punch_tx
+            .send((sock_driver, peer_udp.local_addr().unwrap()))
+            .await;
+
+        // Wait until the initiator emits `migrate_propose` on the relay, and
+        // deliberately never send `migrate_ack`.
+        let mut saw_propose = false;
+        let mut last = 0u64;
+        let propose_deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < propose_deadline {
+            if let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(Duration::from_millis(200), peer_stream.next()).await
+            {
+                let bytes = match msg {
+                    Message::Binary(b) => b.to_vec(),
+                    Message::Text(t) => t.as_bytes().to_vec(),
+                    _ => continue,
+                };
+                if let Ok(Some((kind, _))) =
+                    super::super::signaling::open(&key, ROOM, EPOCH, &mut last, &bytes)
+                {
+                    if kind == "migrate_propose" {
+                        saw_propose = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(saw_propose, "initiator must send migrate_propose");
+
+        // Queue application bytes while `awaiting_ack` is active; they must
+        // flow over the relay once MIGRATION_ACK_TIMEOUT (5s) elapses.
+        bridge.write_all(b"after-ack-timeout").await.unwrap();
+        let mut saw_relay_after_timeout = false;
+        let resume_deadline = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < resume_deadline {
+            if let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(Duration::from_millis(500), peer_stream.next()).await
+            {
+                let bytes = match msg {
+                    Message::Binary(b) => b.to_vec(),
+                    Message::Text(t) => t.as_bytes().to_vec(),
+                    _ => continue,
+                };
+                if let Ok(Some((kind, payload))) =
+                    super::super::signaling::open(&key, ROOM, EPOCH, &mut last, &bytes)
+                {
+                    if kind == "relay" && payload == b"after-ack-timeout" {
+                        saw_relay_after_timeout = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            saw_relay_after_timeout,
+            "initiator must resume relay writes after MIGRATION_ACK_TIMEOUT"
+        );
+        assert_eq!(
+            tracker.load(Ordering::Acquire),
+            ChannelType::RelayForwarded as u8
+        );
+
+        driver_task.abort();
         fwd.abort();
     }
 }

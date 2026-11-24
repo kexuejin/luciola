@@ -19,6 +19,12 @@ use std::path::{Path, PathBuf};
 pub const MAGIC_META: &[u8; 8] = b"LUCMETA1";
 /// Default chunk size for bitmap resolution (64 KiB).
 pub const DEFAULT_CHUNK_SIZE: u32 = 64 * 1024;
+/// Upper bound on checkpoint bitmap allocation (1 MiB = 8,388,608 chunks =
+/// 512 GiB at the default 64 KiB chunk size). Prevents a hostile or corrupted
+/// metadata header / intro size from forcing unbounded heap allocation.
+pub const MAX_BITMAP_BYTES: usize = 1024 * 1024;
+/// Maximum number of chunks representable within [`MAX_BITMAP_BYTES`].
+pub const MAX_CHUNK_COUNT: u32 = (MAX_BITMAP_BYTES as u32) * 8;
 
 /// Pure Rust IEEE 802.3 CRC-32 (polynomial `0xEDB88320`).
 pub fn crc32(data: &[u8]) -> u32 {
@@ -105,8 +111,13 @@ impl TransferMeta {
         for c in first_covered..last_exclusive.min(self.chunk_count as u64) {
             self.mark_chunk(c as u32);
         }
+        // Final chunk may be shorter than `chunk_size`, so it is complete only
+        // when the range covers it from its start boundary all the way to EOF.
         if end >= self.total_bytes && self.chunk_count > 0 {
-            self.mark_chunk(self.chunk_count - 1);
+            let last_chunk_start = (self.chunk_count as u64 - 1) * size;
+            if offset <= last_chunk_start {
+                self.mark_chunk(self.chunk_count - 1);
+            }
         }
     }
 
@@ -172,8 +183,19 @@ impl TransferMeta {
         let total_bytes = u64::from_le_bytes(buf[40..48].try_into().ok()?);
         let chunk_size = u32::from_le_bytes(buf[48..52].try_into().ok()?);
         let chunk_count = u32::from_le_bytes(buf[52..56].try_into().ok()?);
+        if chunk_size < 1024 || chunk_count > MAX_CHUNK_COUNT {
+            return None;
+        }
+        let expected_chunks = if total_bytes == 0 {
+            0u64
+        } else {
+            total_bytes.div_ceil(chunk_size as u64)
+        };
+        if expected_chunks != chunk_count as u64 {
+            return None;
+        }
         let expected_bitmap_len = chunk_count.div_ceil(8) as usize;
-        if buf.len() < 64 + expected_bitmap_len {
+        if expected_bitmap_len > MAX_BITMAP_BYTES || buf.len() < 64 + expected_bitmap_len {
             return None;
         }
         let bitmap = buf[64..64 + expected_bitmap_len].to_vec();
@@ -243,7 +265,8 @@ mod tests {
         assert!(!meta.is_chunk_completed(2));
     }
 
-    /// The short tail chunk counts once the range reaches EOF.
+    /// The short tail chunk counts once the range covers it from its chunk
+    /// start boundary to EOF (partial tail writes must NOT mark it complete).
     #[test]
     fn reaching_eof_marks_the_short_tail_chunk() {
         let chunk = 64 * 1024u64;
@@ -252,6 +275,13 @@ mod tests {
         assert_eq!(meta.chunk_count, 4);
         meta.mark_range(0, (3 * chunk) as usize);
         assert!(!meta.is_chunk_completed(3));
+        // Partial tail write (last 50 bytes only) must NOT mark chunk 3 complete.
+        meta.mark_range(3 * chunk + 50, 50);
+        assert!(
+            !meta.is_chunk_completed(3),
+            "partial tail write leaving gap at start of final chunk must not mark it complete"
+        );
+        // Full coverage of final chunk from its start boundary to EOF marks it complete.
         meta.mark_range(3 * chunk, 100);
         assert!(meta.is_chunk_completed(3));
         assert_eq!(meta.contiguous_bytes(), total);
@@ -284,5 +314,20 @@ mod tests {
         let mut corrupted = encoded.clone();
         corrupted[10] ^= 0xFF;
         assert!(TransferMeta::decode(&corrupted, "xfer_123").is_none());
+    }
+
+    #[test]
+    fn decode_rejects_oversized_or_mismatched_bitmap_header() {
+        // Craft a syntactically valid CRC header claiming an excessive chunk_count.
+        let mut header = Vec::with_capacity(64);
+        header.extend_from_slice(MAGIC_META);
+        header.extend_from_slice(&sha256_digest(b"evil"));
+        header.extend_from_slice(&(1024u64).to_le_bytes()); // total_bytes
+        header.extend_from_slice(&(DEFAULT_CHUNK_SIZE).to_le_bytes()); // chunk_size
+        header.extend_from_slice(&(MAX_CHUNK_COUNT + 1).to_le_bytes()); // bogus chunk_count
+        let crc = crc32(&header[0..56]);
+        header.extend_from_slice(&crc.to_le_bytes());
+        header.extend_from_slice(&[0u8; 4]);
+        assert!(TransferMeta::decode(&header, "evil").is_none());
     }
 }

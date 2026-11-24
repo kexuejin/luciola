@@ -3,9 +3,10 @@
 
 use crate::protocol::FileChunk;
 use crate::TransferError;
+use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 use tokio::fs::File;
-use tokio::io::AsyncSeekExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// Tunables for [`FileSender`].
 #[derive(Debug, Clone)]
@@ -63,11 +64,18 @@ impl FileSender {
         src: impl AsRef<std::path::Path>,
         config: SenderConfig,
     ) -> Result<Self, TransferError> {
+        let transfer_id = transfer_id.into();
+        if transfer_id.len() > u8::MAX as usize {
+            return Err(TransferError::Decode(format!(
+                "transfer_id length {} exceeds 255-byte wire limit",
+                transfer_id.len()
+            )));
+        }
         let path = src.as_ref();
-        let total_size = tokio::fs::metadata(path).await?.len();
         let file = File::open(path).await?;
+        let total_size = file.metadata().await?.len();
         Ok(Self {
-            transfer_id: transfer_id.into(),
+            transfer_id,
             file,
             total_size,
             next_offset: 0,
@@ -75,6 +83,29 @@ impl FileSender {
             in_flight: Vec::new(),
             config,
         })
+    }
+
+    /// Compute the SHA-256 digest of the first `total_size` bytes using the
+    /// already-open source file descriptor (avoids path-based TOCTOU / `ENOENT`
+    /// if the file is renamed or unlinked while sending).
+    pub async fn sha256(&mut self) -> Result<[u8; 32], TransferError> {
+        self.file.seek(std::io::SeekFrom::Start(0)).await?;
+        let mut hasher = Sha256::new();
+        let mut remaining = self.total_size;
+        let mut buf = vec![0u8; 64 * 1024];
+        while remaining > 0 {
+            let want = remaining.min(buf.len() as u64) as usize;
+            let n = self.file.read(&mut buf[..want]).await?;
+            if n == 0 {
+                return Err(TransferError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "source file truncated while computing SHA-256",
+                )));
+            }
+            hasher.update(&buf[..n]);
+            remaining -= n as u64;
+        }
+        Ok(hasher.finalize().into())
     }
 
     /// Identifier of the transfer being sent.

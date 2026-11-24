@@ -145,6 +145,12 @@ async fn punch_inner(socket: &UdpSocket, targets: &[SocketAddr]) -> Result<Socke
     }
 }
 
+/// Upper bound on out-of-order buffered packets (`recv_ooo`) per stream.
+/// 512 × `MAX_PAYLOAD` (~614 KiB) exceeds 2× `MAX_UNACKED_BYTES` (256 KiB), so
+/// an honest sender's entire window fits with room to spare while a hostile
+/// peer jumping `seq` forward cannot cause unbounded heap growth.
+pub(crate) const MAX_OOO_PACKETS: usize = 512;
+
 /// Start the ARQ driver over a punched socket and return the ordered stream.
 pub(crate) fn start_stream(socket: Arc<UdpSocket>, peer: SocketAddr) -> StreamBridge {
     let (bridge, ends) = bridge_pair();
@@ -168,13 +174,15 @@ async fn drive(
     let mut retransmit_rounds: u32 = 0;
     let mut retransmit_every: u32 = 1;
     let mut ticks: u32 = 0;
-    let mut last_activity = Instant::now();
+    let mut last_peer_rx = Instant::now();
+    let mut last_keepalive_tx = Instant::now();
     let mut last_ack_seen: u64 = 0;
     let mut dup_acks: u32 = 0;
     let mut inorder_since_ack: u32 = 0;
     let mut aimd = AimdWindow::new();
     ends.flow.set_cap(aimd.value());
     let mut tick = interval(RETRANSMIT_INTERVAL);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut buf = [0u8; MAX_DATAGRAM];
     // Half-close state. CLOSE carries the sender's final DATA sequence in its
     // `seq` field: the receiver must keep delivering (and ACKing) until every
@@ -189,11 +197,13 @@ async fn drive(
     loop {
         // Both directions must be finished before the driver may drop the
         // inbound channel (which would surface as EOF to the secure channel).
-        // A peer that disappears instead of closing is bounded by the idle cap.
+        // A peer that disappears instead of closing is bounded by the idle cap
+        // measured strictly from the last inbound peer packet (never reset by
+        // our own keepalive probes).
         if local_write_closed && sent.is_empty() {
             let peer_done = peer_final.is_some_and(|final_seq| recv_next >= final_seq);
             let idle = local_closed_at.is_some_and(|t| t.elapsed() >= CLOSE_TIMEOUT)
-                && last_activity.elapsed() >= CLOSE_TIMEOUT;
+                && last_peer_rx.elapsed() >= CLOSE_TIMEOUT;
             if peer_done || idle {
                 break;
             }
@@ -224,7 +234,7 @@ async fn drive(
                             socket.send_to(&packet, peer).await?;
                             sent.insert(seq, packet);
                         }
-                        last_activity = Instant::now();
+                        last_keepalive_tx = Instant::now();
                     }
                 }
             }
@@ -237,7 +247,7 @@ async fn drive(
                 let Some((kind, seq, ack, payload)) = parse_packet(&buf[..n]) else {
                     continue;
                 };
-                last_activity = Instant::now();
+                last_peer_rx = Instant::now();
                 if kind == KIND_CLOSE {
                     // Do NOT break here: the marker can overtake DATA packets.
                     peer_final = Some(peer_final.map_or(seq, |f| f.max(seq)));
@@ -258,7 +268,7 @@ async fn drive(
                     retransmit_rounds = 0;
                     retransmit_every = 1;
                     ticks = 0;
-                    last_activity = Instant::now();
+                    last_peer_rx = Instant::now();
                 }
 
                 // Fast retransmit: repeated ACKs at the same cumulative
@@ -286,7 +296,10 @@ async fn drive(
                     // once, a clean in-order packet shares one ACK per
                     // [`ACK_EVERY`] packets.
                     let ack_now = seq != recv_next || !recv_ooo.is_empty();
-                    if seq >= recv_next && recv_ooo.insert(seq, payload.to_vec()).is_none() {
+                    let within_ooo_bound = seq >= recv_next
+                        && seq < recv_next.saturating_add(MAX_OOO_PACKETS as u64)
+                        && (seq == recv_next || recv_ooo.len() < MAX_OOO_PACKETS);
+                    if within_ooo_bound && recv_ooo.insert(seq, payload.to_vec()).is_none() {
                         while let Some(seg) = recv_ooo.remove(&recv_next) {
                             recv_next += 1;
                             if ends.inbound_tx.send(seg).is_err() {
@@ -308,7 +321,7 @@ async fn drive(
                     // ends here.
                     let ack_packet = build_packet(KIND_ACK, 0, recv_next, &[]);
                     socket.send_to(&ack_packet, peer).await?;
-                    last_activity = Instant::now();
+                    last_peer_rx = Instant::now();
                 }
             }
             _ = tick.tick() => {
@@ -323,10 +336,12 @@ async fn drive(
                     last_close_sent = Some(Instant::now());
                 }
                 if sent.is_empty() {
-                    if last_activity.elapsed() >= KEEPALIVE_INTERVAL {
+                    if last_peer_rx.elapsed() >= KEEPALIVE_INTERVAL
+                        && last_keepalive_tx.elapsed() >= KEEPALIVE_INTERVAL
+                    {
                         let probe = build_packet(KIND_PUNCH, 0, recv_next, &[]);
                         socket.send_to(&probe, peer).await?;
-                        last_activity = Instant::now();
+                        last_keepalive_tx = Instant::now();
                     }
                 } else {
                     // Exponential backoff. Resending the whole window every
@@ -599,5 +614,62 @@ mod tests {
         );
 
         proxy.abort();
+    }
+
+    /// Regression for audit question #1: ARQ retransmissions must resend the
+    /// exact already-sealed wire bytes stored in `sent`, never re-sealing
+    /// plaintext under a new counter.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn arq_retransmit_resends_exact_wire_bytes_without_resealing() {
+        let sock_a = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let blackhole = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let bh_addr = blackhole.local_addr().unwrap();
+
+        let mut a = start_stream(sock_a, bh_addr);
+        a.write_all(b"opaque-ciphertext-slice").await.unwrap();
+
+        let mut first = [0u8; MAX_DATAGRAM];
+        let mut second = [0u8; MAX_DATAGRAM];
+        let (n1, _) = tokio::time::timeout(Duration::from_secs(2), blackhole.recv_from(&mut first))
+            .await
+            .expect("initial packet")
+            .unwrap();
+        let (n2, _) =
+            tokio::time::timeout(Duration::from_secs(2), blackhole.recv_from(&mut second))
+                .await
+                .expect("retransmitted packet")
+                .unwrap();
+
+        assert_eq!(&first[..n1], &second[..n2]);
+    }
+
+    /// Regression for audit question #2: a hostile peer jumping `seq` far
+    /// ahead of `recv_next` must not cause unbounded `recv_ooo` growth; once
+    /// `seq = 0` arrives, honest in-order delivery still works cleanly.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn arq_recv_ooo_drops_far_future_seq_to_bound_memory() {
+        let sock_b = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let attacker = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let b_addr = sock_b.local_addr().unwrap();
+        let atk_addr = attacker.local_addr().unwrap();
+
+        let mut b = start_stream(sock_b, atk_addr);
+
+        // Flood far-future out-of-order packets beyond MAX_OOO_PACKETS.
+        for offset in 0..64u64 {
+            let far_seq = (MAX_OOO_PACKETS as u64) + 100 + offset;
+            let pkt = build_packet(KIND_DATA, far_seq, 0, b"junk");
+            attacker.send_to(&pkt, b_addr).await.unwrap();
+        }
+        // Now deliver honest seq=0; it must still be delivered cleanly.
+        let pkt0 = build_packet(KIND_DATA, 0, 0, b"ok0");
+        attacker.send_to(&pkt0, b_addr).await.unwrap();
+
+        let mut got = [0u8; 3];
+        tokio::time::timeout(Duration::from_secs(2), b.read_exact(&mut got))
+            .await
+            .expect("honest seq=0 delivered")
+            .unwrap();
+        assert_eq!(&got, b"ok0");
     }
 }

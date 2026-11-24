@@ -203,7 +203,7 @@ pub(crate) fn open(
 pub(crate) struct SignalingClient {
     pub(crate) sink: SplitSink<WsStream, Message>,
     pub(crate) stream: SplitStream<WsStream>,
-    pub(crate) key: [u8; AEAD_KEY_LEN],
+    pub(crate) key: Zeroizing<[u8; AEAD_KEY_LEN]>,
     pub(crate) room: String,
     pub(crate) epoch: u64,
     pub(crate) send_seq: u64,
@@ -277,11 +277,24 @@ impl SignalingClient {
                 "public keys must be 32 bytes".into(),
             ));
         }
-        if !(p.endpoint.starts_with("wss://")
-            || p.endpoint.starts_with("ws://127.0.0.1")
-            || p.endpoint.starts_with("ws://localhost")
-            || p.endpoint.starts_with("ws://[::1]"))
-        {
+        // Validate scheme and exact host (not a string prefix, which could be
+        // bypassed by `ws://localhost.attacker.com/ws` or `ws://localhost@evil`).
+        let endpoint_uri: tokio_tungstenite::tungstenite::http::Uri = p
+            .endpoint
+            .parse()
+            .map_err(|e| WanError::InvalidConfig(format!("invalid signalling endpoint: {e}")))?;
+        let scheme = endpoint_uri.scheme_str().unwrap_or("");
+        let (endpoint_host, _) = proxy::uri_authority(&endpoint_uri)
+            .map_err(|e| WanError::InvalidConfig(e.to_string()))?;
+        let has_userinfo = endpoint_uri
+            .authority()
+            .is_some_and(|a| a.as_str().contains('@'));
+        let is_loopback_host = endpoint_host.eq_ignore_ascii_case("localhost")
+            || endpoint_host == "127.0.0.1"
+            || endpoint_host == "::1";
+        let endpoint_allowed =
+            !has_userinfo && (scheme == "wss" || (scheme == "ws" && is_loopback_host));
+        if !endpoint_allowed {
             return Err(WanError::InvalidConfig(
                 "signalling endpoint must use wss:// (plain ws is loopback-only)".into(),
             ));
@@ -352,7 +365,7 @@ impl SignalingClient {
         Ok(Self {
             sink,
             stream,
-            key: signaling_key(p.psk, p.room, p.my_pk, p.peer_pk),
+            key: Zeroizing::new(signaling_key(p.psk, p.room, p.my_pk, p.peer_pk)),
             room: p.room.to_string(),
             epoch: p.epoch,
             send_seq: 0,
@@ -539,6 +552,7 @@ impl SignalingClient {
 }
 
 #[cfg(test)]
+#[allow(clippy::result_large_err)]
 mod tests {
     use super::*;
 
@@ -716,7 +730,7 @@ mod tests {
             SignalingClient {
                 sink,
                 stream,
-                key: [3u8; AEAD_KEY_LEN],
+                key: Zeroizing::new([3u8; AEAD_KEY_LEN]),
                 room: ROOM.to_string(),
                 epoch: EPOCH,
                 send_seq: 0,
@@ -963,5 +977,51 @@ mod tests {
         .expect("a rejected CONNECT tunnel must fail the handshake");
         assert!(err.to_string().contains("407"), "{err}");
         proxy_task.abort();
+    }
+
+    /// Regression for audit question #4: even though `derive_rendezvous_room_id_flexible`
+    /// hashes non-32-byte PSKs with SHA-256 for room derivation, `signaling_key`
+    /// feeds the raw PSK bytes directly into HKDF, so a raw passphrase and its
+    /// 32-byte SHA-256 digest never produce the same AEAD traffic key.
+    #[test]
+    fn signaling_key_separates_raw_psk_from_its_sha256_digest() {
+        use sha2::{Digest, Sha256};
+
+        let raw_psk = b"short-passphrase";
+        let digest_psk: [u8; 32] = Sha256::digest(raw_psk).into();
+        let k1 = signaling_key(raw_psk, ROOM, &[1u8; 32], &[2u8; 32]);
+        let k2 = signaling_key(&digest_psk, ROOM, &[1u8; 32], &[2u8; 32]);
+        assert_ne!(k1, k2);
+    }
+
+    #[tokio::test]
+    async fn plain_ws_rejects_loopback_prefix_spoofing() {
+        let seed = [1u8; 32];
+        let my_pk = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        for bad in [
+            "ws://localhost.attacker.com/ws",
+            "ws://127.0.0.1.nip.io/ws",
+            "ws://localhost@attacker.com/ws",
+            "http://127.0.0.1:8787/ws",
+        ] {
+            let err = SignalingClient::connect(SignalParams {
+                endpoint: bad,
+                room: ROOM,
+                epoch: 7,
+                identity_seed: &seed,
+                my_pk: &my_pk,
+                peer_pk: &[2u8; 32],
+                psk: b"psk",
+                timeout: Duration::from_secs(1),
+                proxy: None,
+            })
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("must reject spoofed ws endpoint: {bad}"));
+            assert!(
+                matches!(err, WanError::InvalidConfig(_)),
+                "expected InvalidConfig for {bad}, got {err:?}"
+            );
+        }
     }
 }
