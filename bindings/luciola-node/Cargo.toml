@@ -23,7 +23,7 @@ luciola-proto = { path = "../../crates/luciola-proto" }
 luciola = { path = "../../crates/luciola", features = ["transfer"] }
 luciola-transfer = { path = "../../crates/luciola-transfer" }
 luciola-tunnel = { path = "../../crates/luciola-tunnel" }
-tokio = { workspace = true, features = ["rt", "sync", "time", "net", "io-util"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "net", "io-util", "macros"] }
 zeroize.workspace = true
 rand = { workspace = true }
 qrcode = "0.14"

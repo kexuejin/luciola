@@ -14,7 +14,7 @@ description = "LAN TCP multiplexing (mux v2 with per-channel flow control, keepa
 [dependencies]
 luciola = { path = "../luciola", version = "0.12.0" }
 luciola-proto = { path = "../luciola-proto", version = "0.12.0" }
-tokio = { workspace = true, features = ["rt", "net", "time", "sync", "io-util"] }
+tokio = { workspace = true, features = ["rt", "net", "time", "sync", "io-util", "macros"] }
 tokio-util.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
