@@ -1,0 +1,76 @@
+name: Build N-API Prebuilds (@luciola/core)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-napi:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: luciola.darwin-arm64.node
+            lib: libluciola_node.dylib
+            smoke: true
+          - os: macos-14
+            target: x86_64-apple-darwin
+            artifact: luciola.darwin-x64.node
+            lib: libluciola_node.dylib
+            smoke: false
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: luciola.linux-x64-gnu.node
+            lib: libluciola_node.so
+            smoke: true
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: luciola.linux-arm64-gnu.node
+            lib: libluciola_node.so
+            smoke: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: luciola.win32-x64-msvc.node
+            lib: luciola_node.dll
+            smoke: true
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build luciola-node (${{ matrix.target }})
+        shell: bash
+        run: |
+          cargo build --release -p luciola-node --target ${{ matrix.target }}
+          TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0,"utf8")).target_directory)')}"
+          mkdir -p prebuilds
+          cp "${TARGET_DIR}/${{ matrix.target }}/release/${{ matrix.lib }}" "prebuilds/${{ matrix.artifact }}"
+
+      - name: Smoke test native module
+        if: ${{ matrix.smoke }}
+        shell: bash
+        run: |
+          cp "prebuilds/${{ matrix.artifact }}" bindings/luciola-node/luciola.node
+          node bindings/luciola-node/test.js
+          node bindings/luciola-node/test/forward.test.mjs
+          node bindings/luciola-node/test/contract.test.mjs
+          node --test bindings/luciola-node/test/wan.test.mjs
+          node --test bindings/luciola-node/test/transfer.test.mjs
+
+      - name: Upload prebuilt binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: prebuilds/${{ matrix.artifact }}

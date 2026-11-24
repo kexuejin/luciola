@@ -117,6 +117,10 @@ jobs:
         run: node bindings/luciola-node/test/forward.test.mjs
       - name: Run runtime contract test
         run: node bindings/luciola-node/test/contract.test.mjs
+      - name: Run WAN & transfer binding tests
+        run: |
+          node --test bindings/luciola-node/test/wan.test.mjs
+          node --test bindings/luciola-node/test/transfer.test.mjs
       # Type-level contract: the .d.ts must match the documented call shapes.
       # typescript comes via npx (no devDependency / lockfile in the package).
       - name: Type-check the documented API surface
