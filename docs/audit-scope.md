@@ -75,7 +75,7 @@ the claim rather than take it on faith.
     `{"v":1,"t":…,"s":…,"ct":…}`; candidate addresses, route decisions and relay
     bytes are sealed end to end.
 12. **Bounded abuse surface.** Nonce replay store per room, 20 joins/min,
-    256 messages/s, 2-peer cap, 32 KiB frame cap, 15-minute room TTL.
+    256 messages/s, 2-peer cap, 32 KiB frame cap, 35-minute room TTL.
 13. **A CONNECT proxy cannot decrypt or forge signalling.** The client opens
     its own TLS with the Worker's hostname as SNI after CONNECT; the proxy sees
     only the hostname/timing. The CONNECT header read is bounded to 8 KiB and
@@ -86,24 +86,22 @@ the claim rather than take it on faith.
 
 ## Questions worth answering explicitly
 
-- Does the ARQ's retransmission ever re-seal the same plaintext under a new
-  counter, and is that safe? (It should re-send the same sealed frame, not
-  re-seal.)
-- Can a malicious peer force unbounded memory through the pre-join buffer, the
-  bitmap, or the AIMD window?
-- Does the migration barrier hold if one side dies between propose and ack?
-- Is `derive_rendezvous_room_id_flexible`'s SHA-256 normalisation of non-32-byte
-  keys safe, or does it open a collision path between a 32-byte PSK and its
-  hash?
-- Can the `x-luciola-epoch` header be spoofed by a MITM to move a client into a
-  room an attacker can observe? (The room id is still PSK-derived, so the
-  attacker learns nothing; confirm that reasoning.)
-- Does the Durable Object's hibernation path preserve the replay store and the
-  peer cap across eviction?
-- Can a hostile `HTTPS_PROXY` value (or a proxy that answers CONNECT with a
-  truncated/oversized header block) do more than delay the connection? Confirm
-  the SNI/certificate check still binds to the Worker hostname and that Basic
-  credentials never reach the Worker or a log.
+Internal code-level answers below were verified and locked with regression tests on 2026-11-24; an external auditor should still verify each claim independently.
+
+- **Does the ARQ's retransmission ever re-seal the same plaintext under a new counter, and is that safe?**
+  - *Internal finding*: No. `SecureStream` seals frames above `StreamBridge`, before bytes enter `wan::udp` or `wan::adaptive`. Both ARQ drivers store already-sealed wire datagrams in `sent` / `sent_udp` and re-send those exact bytes without touching the AEAD counter. Locked by `wan::udp::tests::arq_retransmit_resends_exact_wire_bytes_without_resealing`.
+- **Can a malicious peer force unbounded memory through the pre-join buffer, the bitmap, `recv_ooo`, or the AIMD window?**
+  - *Internal finding*: Pre-join buffer is capped at `PENDING_MAX = 32` × `MAX_MESSAGE_BYTES = 32 KiB` (1 MiB); AIMD is capped at `MAX_UNACKED_BYTES = 256 KiB`. Two gaps were found and fixed: (1) `recv_ooo` in `wan::udp` and `wan::adaptive` is now capped by `MAX_OOO_PACKETS = 512` (`wan::udp::tests::arq_recv_ooo_drops_far_future_seq_to_bound_memory`); (2) `TransferMeta::decode` now enforces `MAX_BITMAP_BYTES = 1 MiB` and `chunk_count` consistency (`checkpoint::tests::decode_rejects_oversized_or_mismatched_bitmap_header`), and `FileReceiver::create` enforces `ReceiverConfig::max_file_size` (default 16 GiB) before disk/bitmap allocation (`receiver::tests::create_rejects_file_size_exceeding_receiver_limit`).
+- **Does the migration barrier hold if one side dies between propose and ack?**
+  - *Internal finding*: A real bug was found in `wan::adaptive::drive_progressive`: the `udp_tick` select arm was guarded by `if direct_write`, which is always `false` while `awaiting_ack.is_some()`, so `MIGRATION_ACK_TIMEOUT` could never fire. Fixed to `if direct_write || awaiting_ack.is_some()` and locked by `wan::adaptive::tests::migration_ack_timeout_resumes_relay_when_responder_silent`.
+- **Is `derive_rendezvous_room_id_flexible`'s SHA-256 normalisation of non-32-byte keys safe, or does it open a collision path between a 32-byte PSK and its hash?**
+  - *Internal finding*: Room IDs alone can collide if one peer passes non-32-byte `P` and another passes `SHA256(P)`, kept as-is to preserve v0.11 wire compatibility for string PSKs. However, `signaling_key` feeds the raw `psk` directly into HKDF without SHA-256 normalization (`wan::signaling::tests::signaling_key_separates_raw_psk_from_its_sha256_digest`), so `SHA256(P)` cannot derive the AEAD key or decrypt/forge frames.
+- **Can the `x-luciola-epoch` header be spoofed by a MITM to move a client into a room an attacker can observe?**
+  - *Internal finding*: `connect_wan` realigns at most once (non-looping), only when the caller left `epoch == 0` and used a derived room, and re-derives the new room from the PSK — an attacker without the PSK cannot compute or join the target room.
+- **Does the Durable Object's hibernation path preserve the replay store and the peer cap across eviction?**
+  - *Internal finding*: `nonce:*` replay keys, `joinRate`, and `pend:*` live in Durable Storage (`ctx.storage`) and sockets use the Hibernatable WebSocket API (`acceptWebSocket` / `getWebSockets` / `serializeAttachment`), so hibernation preserves both. A TTL gap was found and fixed: `ROOM_TTL_MS` was 15 min while `epoch ± 1` admits signed URLs for up to 30 min (`3 * EPOCH_SECONDS`); raised `ROOM_TTL_MS` to 35 min and locked in `deploy/cloudflare-signaling/test/auth.test.js`.
+- **Can a hostile `HTTPS_PROXY` value (or a proxy that answers CONNECT with a truncated/oversized header block) do more than delay the connection?**
+  - *Internal finding*: `proxy::open_socket` caps CONNECT headers at `MAX_CONNECT_HEADERS = 8 KiB` and reads byte-by-byte until `\r\n\r\n`; TLS is established afterwards by `client_async_tls_with_config(request, socket, ...)` against the Worker's original hostname/SNI; credentials live in `Zeroizing<String>` and are never logged or forwarded to the Worker.
 
 ## Evidence available
 

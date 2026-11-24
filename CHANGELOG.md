@@ -12,33 +12,84 @@ Entries are newest-first. Short hashes in parentheses are the commits that carry
 change, taken from the repository history; where one change needed several commits the
 primary one is cited.
 
-> **Release state.** The repository and all four version homes are at
-> **0.11.0** (workspace `Cargo.toml`, path-dep requirements, KMP `version`,
-> npm `version`). Release state, checked 2026-11-16 against the registries
-> rather than assumed:
+> **Release state (checked 2026-11-25).** The repository and all four version
+> homes are at **0.12.0** (workspace `Cargo.toml`, path-dep requirements, KMP
+> `version`, npm `version`). This version is **published to mavenLocal only**:
 >
-> - **crates.io — 0.11.0 published and verified.** `luciola`, `luciola-ip`,
->   `luciola-proto`, `luciola-net`, `luciola-transfer`, `luciola-tunnel`,
->   `luciola-cli` all answer `0.11.0` from the registry API.
-> - **Maven Central — 0.11.0 published and verified.** The deployment reached
->   `PUBLISHED` on the Central Portal; repo1 serves the root Gradle module
->   metadata (`io.github.kexuejin:luciola:0.11.0`), the `luciola-android` AAR,
->   `luciola-jvm`, and the `luciola-iosarm64` / `luciola-iossimulatorarm64`
->   klibs.
-> - **iOS — 0.11.0 published.** `LuciolaUniFFI-0.11.0.zip` (33,722,527 bytes;
->   xcframework for device and simulator plus `luciola_uniffi.swift`) with
->   sha256 `1d75c9e8221aa0a38057dd4b8cfdd2910047acfcd4782434fbc8abf77e457f83`
+> - **mavenLocal — 0.12.0 published.** `scripts/publish-maven-local.sh` rebuilt
+>   the Android `libluciola_uniffi.so` from this source and verified that the
+>   `.so` inside `~/.m2/.../luciola-android-0.12.0.aar` has sha256
+>   `35df82cf03eb485b6e4061b893d7388afb0a7f34a4376a126f5c4a5ff0c038d5`.
+>   All five Gradle modules (`luciola`, `luciola-android`, `luciola-jvm`,
+>   `luciola-iosarm64`, `luciola-iossimulatorarm64`) are installed at `0.12.0`.
+>   Use `mavenLocal()` only in a local consumer — never in a packaged one.
+> - **crates.io — 0.11.0 remains the latest published version.** `luciola`,
+>   `luciola-ip`, `luciola-proto`, `luciola-net`, `luciola-transfer`,
+>   `luciola-tunnel`, `luciola-cli` all answered `0.11.0` from the registry API
+>   when checked on 2026-11-16.
+> - **Maven Central — 0.11.0 remains the latest published version.** The
+>   deployment reached `PUBLISHED` on the Central Portal; repo1 serves the root
+>   Gradle module metadata (`io.github.kexuejin:luciola:0.11.0`), the
+>   `luciola-android` AAR, `luciola-jvm`, and the `luciola-iosarm64` /
+>   `luciola-iossimulatorarm64` klibs.
+> - **iOS — 0.11.0 remains the latest published release asset.**
+>   `LuciolaUniFFI-0.11.0.zip` (33,722,527 bytes; xcframework for device and
+>   simulator plus `luciola_uniffi.swift`) with sha256
+>   `1d75c9e8221aa0a38057dd4b8cfdd2910047acfcd4782434fbc8abf77e457f83`
 >   and its `.sha256` are release assets on tag `v0.11.0`.
 > - `@luciola/core` **remains unpublished on npm** — for Node, build
 >   `bindings/luciola-node` from source.
 >
-> The `0.11.0-local.*` coordinates remain in `~/.m2` from the validation
-> cycle; they are superseded and must not be used by normal consumers. A
-> consumer that needs an engine change that is not released yet must pin the
-> **git commit**, not a version number: `{ git =
-> "https://github.com/kexuejin/luciola", rev = "<sha>" }`. Naming an
+> The `0.11.0-local.*` coordinates remain in `~/.m2` from the earlier
+> validation cycle; they are superseded and must not be used by normal
+> consumers. A consumer that needs an engine change that is not released on a
+> public registry must pin the **git commit**, not a version number:
+> `{ git = "https://github.com/kexuejin/luciola", rev = "<sha>" }`. Naming an
 > unpublished version in a dependency is how a consumer repo ends up with
 > `path = "../../luciola/..."` and stops being buildable from a clean clone.
+
+## [0.12.0] — 2026-11-25 (mavenLocal only; not on public registries)
+
+Changes landed on top of `0.11.0`, carried by c524ebc (hardening), a971e0e
+(FFI and version bump), abf0e96 (signaling) and e14415e (CI). Not yet published
+to crates.io / Maven Central / npm.
+
+### Verification before the local publish (2026-11-25)
+
+- Full local gate green: `cargo fmt --all -- --check`, `cargo clippy
+  --all-targets --all-features -- -D warnings`, `cargo test --all-targets
+  --all-features` (all targets, including the 10 MB secure-session transfer and
+  the timing-sensitive ARQ/transfer tests), both Gradle Android/JVM compile
+  tasks and both iOS compile tasks, `cargo build -p luciola-node`, the smoke /
+  forward / contract / WAN / transfer Node suites, the TypeScript api-consumer
+  typecheck, and the signaling Worker's `npm test`.
+- KMP and Swift bindings were regenerated into a temporary directory and
+  diffed against the committed sources: byte-identical; the generated
+  `nativeMain` still uses `kotlinx.cinterop`.
+- mavenLocal publication rebuilt the arm64 `.so` and compared its sha256 with
+  the copy embedded in the published AAR (value recorded above). Compilation
+  and unit/integration tests are what was proven; no real Android/iOS device
+  run, real-NAT two-peer WAN session or external audit backs this version.
+
+### Fixed (security & WAN hardening — `docs/audit-scope.md` self-audit & 2-round review)
+
+- `luciola::wan::adaptive`: fixed `udp_tick` select guard (`direct_write || awaiting_ack.is_some()`) so `MIGRATION_ACK_TIMEOUT` fires if the responder drops `migrate_ack`; aligned post-migration `KIND_CLOSE` half-close/tail delivery with `wan::udp::drive` (`CLOSE_TIMEOUT` + periodic re-advertise after `sent_udp` drains); added `PunchDoneGuard` and `migration_aborted` so relay-quota admission never stalls or waits on a failed punch; deduplicated `recv_ooo` packets and set `MissedTickBehavior::Delay`.
+- `luciola::wan::udp`: separated `last_peer_rx` from `last_keepalive_tx` so our own outbound keepalive pings no longer reset the `CLOSE_TIMEOUT` timer when waiting for a vanished peer; capped `recv_ooo` at `MAX_OOO_PACKETS = 512`.
+- `luciola::wan::signaling`: enforced exact parsed URI host checks (`127.0.0.1`, `localhost`, `::1`) for `ws://` loopback override (rejecting `ws://localhost.attacker.com`) and wrapped derived signaling keys in `Zeroizing`.
+- `luciola-transfer`: fixed `TransferCheckpoint::mark_range` partial-tail chunk bit marking; closed destination `File` handle before atomic `.luciola-part` rename (Windows sharing safety) and committed 0-byte / 100%-resumed files in `FileReceiver::create`; validated `.luciola-part` byte length on resume; hashed open `File` fd in `FileSender::open` and preserved full 64-bit `total_bytes` in deterministic `transfer_id` (capped at `<= 255` UTF-8 bytes); hardened cross-platform `sanitize_file_name` (including Windows reserved stems with trailing spaces/dots such as `"CON .txt"`), ACK `transfer_id` verification, 0-byte transfer ACK, and underlying stream `shutdown()`; enforced `MAX_BITMAP_BYTES = 1 MiB` and `ReceiverConfig::max_file_size` (default 16 GiB).
+- `luciola::link` & `luciola-tunnel`: added `secure_handshake_server_with_policy` so `SecureHub` enforces peer allowlists **before** signing handshake message 2, bounded concurrent handshakes (`64`) and connected peers (`256`), switched `send_to`/`broadcast` to non-blocking `try_send`, and wrapped hub/route secrets in `Zeroizing`; hardened `RoutePolicy::LanThenWan` so security errors (`UntrustedPeer` / `Tamper`) never fall back to WAN; added `Drop` + async endpoint serialization + port range checks to `DirectTunnelSession`.
+- `luciola-cli`: removed hardcoded `"luciola-default-psk"` defaults in `forward` and `transfer`, added `--allow-relay` to `transfer`, enforced `.reject_remote_clients(true)` and `\\.\pipe\` normalization on Windows Named Pipes in `agent`, and serialized agent events via `serde_json` to prevent NDJSON injection.
+- `luciola-uniffi` & `luciola-node`: serialized session lifecycle (`spawn_link` / `attach_wan_channel` / `disconnect` / `close`) with generation counters and cancelable LAN dials, guarded `keepalive_ms == 0`, moved `attach_wan_channel` listener delivery onto `CallbackDispatcher`, and added strict `f64` validation on Node numeric parameters.
+- `deploy/cloudflare-signaling`: raised `ROOM_TTL_MS` from 15 min to 35 min (`> 3 * EPOCH_SECONDS`) so Durable Object replay keys (`nonce:*`) outlive the full `epoch +/- 1` acceptance window, and restricted `x-luciola-epoch` header validation to canonical `u64` decimal strings.
+
+### Added (Rust core, CLI, uniffi KMP/Swift, KMP coroutines, and Node bindings)
+
+- **WAN message data plane on FFI**: `SecureSession::attach_wan_channel` (`luciola-uniffi`) and `SecureChannel::attachWanChannel` (`luciola-node`) take ownership of an established `WanChannel` and drive its `SecureStream` through the existing message/keepalive/stats surface without duplicating channel APIs.
+- **Shared file-transfer driver & FFI parity**: extracted `TransferTransport`, `send_file_over_transport`, `recv_file_over_transport`, `TransferProgress`, `TransferReceipt`, and cooperative cancellation into `luciola_transfer::driver` (with `luciola::transfer_driver` bridging `SecureStream`); exported pin-verified (no-TOFU) `transfer_send_lan`, `transfer_recv_lan`, `transfer_send_wan`, and `transfer_recv_wan` with `TransferCancelHandle` and progress callbacks across both `luciola-uniffi` and `luciola-node`.
+- **Standalone WAN tunnel session**: added `luciola_tunnel::DirectTunnelSession` and FFI `WanTunnelSession::from_wan_channel` / `WanTunnelSession.fromWanChannel` running `MuxSession` + TCP/UDP forwards + ACL over a single `WanChannel` without altering the LAN D8 dual-port `TunnelLink` contract.
+- **Multi-peer hub & explicit route policy across Rust and FFI**: added `luciola::link::hub::SecureHub` and `luciola::wan::route::connect_with_policy` (`LanOnly` / `LanThenWan` / `WanOnly`, reporting honest `ChannelType`), and exposed both `SecureHub` (with live allowlist management) and `connect_with_policy` / `connectWithPolicy` in `luciola-uniffi` (KMP / Swift) and `luciola-node`.
+- **Ergonomic KMP coroutine & `Flow` wrappers**: added `LuciolaCoroutines.kt` in `bindings/luciola-kmp` (`luciolaConnectWan`, `luciolaConnectWithPolicy`, `luciolaTransferSendLanFlow`, `luciolaTransferRecvLanFlow`, `luciolaTransferSendWanFlow`, `luciolaTransferRecvWanFlow`, and `luciolaObserveHubFlow`) wiring Kotlin coroutine cancellation directly to `TransferCancelHandle` and `SecureHub.stop()`.
+- **Cross-platform agent & npm prebuild scaffolding**: added Windows Named Pipe support alongside Unix domain sockets in `luciola-cli agent`, prebuilt optional-package fallback in `bindings/luciola-node/index.js`, and `.github/workflows/npm-prebuild.yml`.
 
 ## [0.11.0] — 2026-11-16
 

@@ -69,6 +69,14 @@ node server.js       # then open http://localhost:3000
 
 ## Quick Start
 
+> **Local-only 0.12.0.** The source tree is at `0.12.0`: it adds the WAN message
+> data plane, a shared file-transfer driver, a multi-peer hub, explicit route
+> policy and a standalone WAN tunnel to **all three binding surfaces**. It is
+> published to `mavenLocal()` on this machine only — not to crates.io, Maven
+> Central, npm or a release tag. The install snippets below stay at the latest
+> public version, `0.11.0`; do not document `0.12.0` as installable from a
+> public registry. See [CHANGELOG.md](CHANGELOG.md) §0.12.0.
+
 ### Install
 
 ```kotlin
@@ -111,6 +119,11 @@ luciola-tunnel = "0.11.0" # mux v2 forwarding (the tunnel section below)
 > WAN section of [SECURITY.md](SECURITY.md). The published coordinate is
 > `io.github.kexuejin:luciola:0.11.0`; do **not** add `mavenLocal()` to a
 > normal consumer — a stale local build can silently shadow the artifact.
+
+> **Since 0.11.0 (0.12.0, local only):** the uniffi (KMP/Swift) and Node
+> surfaces now also carry the WAN message data plane, file transfer and tunnel
+> sessions. The "Rust-core + CLI only" restriction above describes the published
+> 0.11.0 line, not this source tree.
 
 > **Previous release 0.10.0** (2026-11-05) carried the structured error
 > taxonomy and the transfer CLI. Breaking changes in 0.11.0 (WAN handshake,

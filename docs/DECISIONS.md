@@ -20,13 +20,16 @@ measured cost — not for aesthetics.
 
 ## `@luciola/core` is not published on npm
 
-`bindings/luciola-node` is built from source by consumers, and
-`package.json` still carries the same version as the Rust workspace.
+`bindings/luciola-node` is built from source by consumers (or CI workflow
+artifacts from `.github/workflows/npm-prebuild.yml`), and `package.json` still
+carries the same version as the Rust workspace.
 
-**Not done, deliberately.** The Node surface is hand-written N-API code with no
-prebuilt binaries for Windows/Linux, so an npm package would ship a loader that
-fails on most machines. The version is bumped anyway so that a future publish
-would be consistent rather than a surprise.
+**Not done, deliberately.** Although `.github/workflows/npm-prebuild.yml` builds
+and smoke-tests N-API binaries across macOS, Linux, and Windows on tag pushes
+and `bindings/luciola-node/index.js` probes optional `@luciola/core-*` platform
+packages, `@luciola/core` and its platform packages have not been published to
+the public npm registry yet. The version is kept in lockstep so a future npm
+publish is consistent rather than a surprise.
 
 ## `missing_docs` is not denied in `luciola-node`
 
@@ -82,19 +85,21 @@ forward already delivers to that port. A unit test cannot cover this (it needs a
 real device); the fallback is that a failed `adb forward` is now fatal, so a
 same-machine run cannot masquerade as a USB transfer.
 
-## Post-migration EOF travels over UDP and is retransmitted like data
+## Post-migration EOF travels over UDP and is re-advertised until mutual close
 
 A progressive connection that migrated to the direct path ends its half-close
-with a `KIND_CLOSE` datagram inside the ARQ (`sent_udp`), not a relay frame.
+with a `KIND_CLOSE` datagram on the UDP ARQ plane (once `sent_udp` drains), not
+a relay frame.
 
 **Done this way, deliberately.** After the migration barrier both sides have
 stopped writing the relay, so a relay EOF can never arrive; the only honest EOF
-source is the direct path. The marker is tracked in `sent_udp` so the existing
-retransmit/backoff machinery keeps it alive against datagram loss, and the
-receiver answers it with a cumulative ACK and flips `peer_eof` — which is what
-lets the driver's termination condition (`outbound_done && peer_eof`) ever be
-met. A receiver that vanished instead of closing is still bounded by the
-retransmit-rounds cap, matching `udp::drive`'s semantics.
+source is the direct path. Tracking `KIND_CLOSE` inside `sent_udp` would fail
+before the peer could flush its remaining tail whenever the initiator half-closed
+first; instead, `udp_tick` periodically re-advertises `KIND_CLOSE` after
+`sent_udp` is empty while the receiver continues reading and ACKing inbound UDP
+frames until the peer also sends `KIND_CLOSE` (`outbound_done && sent_udp.is_empty() && peer_eof`),
+bounded by `CLOSE_TIMEOUT` if the peer vanishes — matching `wan::udp::drive`'s
+half-close semantics.
 
 ## Relay-quota admission waits for the routing decision, not a deadline
 
